@@ -1,0 +1,36 @@
+# Next.js standalone — 多階段建置（pnpm）
+FROM node:20-alpine AS base
+RUN apk add --no-cache libc6-compat openssl
+WORKDIR /app
+
+FROM base AS deps
+RUN corepack enable && corepack prepare pnpm@latest --activate
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+
+FROM base AS builder
+RUN corepack enable && corepack prepare pnpm@latest --activate
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+# 建置時需 DATABASE_URL（可用占位，僅為 prisma generate；實際連線在運行時）
+ARG DATABASE_URL=postgresql://postgres:placeholder@localhost:5432/postgres
+ENV DATABASE_URL=${DATABASE_URL}
+RUN pnpm exec prisma generate
+RUN pnpm run build
+
+FROM base AS runner
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+USER nextjs
+EXPOSE 3000
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+CMD ["node", "server.js"]

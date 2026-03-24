@@ -1,0 +1,60 @@
+// MES 看板核心資料（PostgreSQL）；同步請使用 `npx prisma db push` 或 migrate
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// 線束車間訂單（與前端 Order 型別對齊；deletedAt 非空表示軟刪除）
+model Order {
+  id            String   @id
+  client        String   @default("")
+  model         String   @default("")
+  qty           Int      @default(1)
+  totalHours    Float    @default(0)
+  sales         String   @default("")
+  deliveryDate  String   @default("")
+  drawing       String   @default("未发图")
+  materials     String   @default("未配料")
+  assignedDay   String   @default("Unscheduled")
+  taskStatus    String   @default("normal")
+  cutStatus     String   @default("pending")
+  boxNumber     Int?
+  worker        String?
+  createdAt     Int
+  isImportError Boolean  @default(false)
+  errorReason   String?
+  drawingUrl    String?
+  activeAlarm   String?
+  totalQty      Int      @default(1)
+  reportedQty   Int      @default(0)
+  isUrgent      Boolean  @default(false)
+  deletedAt     Int?
+  updatedAt     DateTime @updatedAt
+}
+
+model MesWorker {
+  id        String @id @default(cuid())
+  name      String @unique
+  sortOrder Int    @default(0)
+}
+
+model MesActivityLog {
+  id         String @id @default(cuid())
+  ts         Int
+  text       String
+  operator   String?
+  role       String?
+  actionType String?
+}
+
+model MesAppSettings {
+  id            String @id @default("singleton")
+  dailyCapacity Int    @default(980)
+  theme         String @default("dark")
+  layoutMode    String @default("card")
+}
