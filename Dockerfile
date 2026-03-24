@@ -15,8 +15,8 @@ COPY . .
 # 建置時需 DATABASE_URL（可用占位，僅為 prisma generate；實際連線在運行時）
 ARG DATABASE_URL=postgresql://postgres:placeholder@localhost:5432/postgres
 ENV DATABASE_URL=${DATABASE_URL}
-RUN pnpm exec prisma generate
-RUN pnpm run build
+# 映像建置不執行 db push（CI 無內網 DB）；建表請在部署環境執行 pnpm run build 或 prisma db push
+RUN pnpm exec prisma generate && pnpm exec next build
 
 FROM base AS runner
 ENV NODE_ENV=production
