@@ -144,31 +144,8 @@ export default function KanbanApp() {
     setDataReady(false);
     setOfflineMode(false);
 
-    const clientFallback: FetchInitialDataResult = {
-      ok: false,
-      error: 'CLIENT_TIMEOUT',
-      orders: [],
-      workers: ['1号员工', '2号员工'],
-      activityLogs: [],
-      dailyCapacity: 980,
-      theme: 'dark',
-      layoutMode: 'card',
-    };
-
-    /** 須大於伺服端 fetchInitialData 逾時（10s）＋網路與序列化耗時，否則會誤判 CLIENT_TIMEOUT */
-    const CLIENT_MAX_MS = 25_000;
-    let clientTimeoutId: number | undefined;
-
     void (async () => {
-      const timeoutPromise = new Promise<FetchInitialDataResult>((resolve) => {
-        clientTimeoutId = window.setTimeout(() => resolve(clientFallback), CLIENT_MAX_MS);
-      });
-      let res: FetchInitialDataResult;
-      try {
-        res = await Promise.race([fetchInitialData(), timeoutPromise]);
-      } finally {
-        if (clientTimeoutId !== undefined) window.clearTimeout(clientTimeoutId);
-      }
+      const res: FetchInitialDataResult = await fetchInitialData();
       if (cancelled) return;
       setOrders(res.orders ?? []);
       setWorkers(res.workers ?? ['1号员工', '2号员工']);
@@ -179,13 +156,9 @@ export default function KanbanApp() {
       if (!res.ok) {
         setOfflineMode(true);
         console.error('fetchInitialData:', res.error);
-        if (res.error === 'LOAD_TIMEOUT') {
-          toast.error('資料庫讀取逾時，已進入離線模式');
-        } else if (res.error === 'CLIENT_TIMEOUT') {
-          toast.error('資料載入逾時，已進入離線模式');
-        } else {
-          toast.error('載入資料失敗，已進入離線模式（使用預設值）');
-        }
+        toast.error('載入資料失敗，已進入離線模式（使用預設值）');
+      } else {
+        setOfflineMode(false);
       }
       setDataReady(true);
     })();
