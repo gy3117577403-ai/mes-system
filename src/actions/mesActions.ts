@@ -214,14 +214,19 @@ export async function fetchInitialData(): Promise<FetchInitialDataResult> {
     }
   };
 
-  const timeoutFallback = new Promise<FetchInitialDataResult>((resolve) => {
-    setTimeout(() => {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<FetchInitialDataResult>((resolve) => {
+    timeoutId = setTimeout(() => {
       console.log('>>> [DB DEBUG] 步驟：逾時保底（10s）— 先返回空資料');
       resolve(emptyFallback());
     }, FETCH_TIMEOUT_MS);
   });
 
-  return Promise.race([loadFromDb(), timeoutFallback]);
+  try {
+    return await Promise.race([loadFromDb(), timeoutPromise]);
+  } finally {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  }
 }
 
 export async function createOrderAction(data: Partial<Order> & { id: string }): Promise<{ ok: boolean; error?: string }> {
@@ -282,7 +287,7 @@ function buildOrderPatch(updateData: Record<string, unknown>): Record<string, un
     } else if (v === null || v === '') p.worker = null;
     else p.worker = String(v);
   }
-  if ('createdAt' in updateData) setInt('createdAt', updateData.createdAt);
+  if ('createdAt' in updateData) setFloat('createdAt', updateData.createdAt);
   if ('isImportError' in updateData) setBool('isImportError', updateData.isImportError);
   if ('errorReason' in updateData) {
     const v = updateData.errorReason;
@@ -313,7 +318,7 @@ function buildOrderPatch(updateData: Record<string, unknown>): Record<string, un
     if (v === undefined) {
       /* skip */
     } else if (v === null) p.deletedAt = null;
-    else p.deletedAt = Math.trunc(Number(v));
+    else p.deletedAt = Number(v);
   }
 
   return p;

@@ -25,7 +25,8 @@ model Order {
   cutStatus     String   @default("pending")
   boxNumber     Int?
   worker        String?
-  createdAt     Int
+  /// JS 毫秒時間戳；Float → PostgreSQL DOUBLE PRECISION，避免 32 位 INTEGER 溢出
+  createdAt     Float
   isImportError Boolean  @default(false)
   errorReason   String?
   drawingUrl    String?
@@ -33,7 +34,8 @@ model Order {
   totalQty      Int      @default(1)
   reportedQty   Int      @default(0)
   isUrgent      Boolean  @default(false)
-  deletedAt     Int?
+  /// 軟刪除時間戳（毫秒）；Float → DOUBLE PRECISION
+  deletedAt     Float?
   updatedAt     DateTime @updatedAt
 }
 
@@ -45,7 +47,8 @@ model MesWorker {
 
 model MesActivityLog {
   id         String @id @default(cuid())
-  ts         Int
+  /// 日誌時間（毫秒）；Float → DOUBLE PRECISION
+  ts         Float
   text       String
   operator   String?
   role       String?
