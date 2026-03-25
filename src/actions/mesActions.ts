@@ -46,7 +46,66 @@ export type FetchInitialDataResult = {
   layoutMode: LayoutMode;
 };
 
-const FETCH_TIMEOUT_MS = 3000;
+const FETCH_TIMEOUT_MS = 10_000;
+
+function isRecordNotFoundP2025(e: unknown): boolean {
+  return (
+    typeof e === 'object' &&
+    e !== null &&
+    'code' in e &&
+    (e as { code?: string }).code === 'P2025'
+  );
+}
+
+/** 空庫或本地 id 在雲端不存在時，update 會拋 P2025；此預設與 schema 預設一致，供改為新增合併 */
+function defaultOrderUncheckedCreate(id: string) {
+  return {
+    id,
+    client: '',
+    model: '',
+    qty: 1,
+    totalHours: 0,
+    sales: '',
+    deliveryDate: '',
+    drawing: '未发图',
+    materials: '未配料',
+    assignedDay: 'Unscheduled',
+    taskStatus: 'normal',
+    cutStatus: 'pending',
+    boxNumber: null,
+    worker: null,
+    createdAt: Date.now(),
+    isImportError: false,
+    errorReason: null,
+    drawingUrl: null,
+    activeAlarm: null,
+    totalQty: 1,
+    reportedQty: 0,
+    isUrgent: false,
+    deletedAt: null,
+  };
+}
+
+async function orderUpdateOrCreateFromPatch(
+  orderId: string,
+  patch: Record<string, unknown>
+): Promise<void> {
+  const data = patch as Parameters<typeof prisma.order.update>[0]['data'];
+  try {
+    await prisma.order.update({
+      where: { id: orderId },
+      data,
+    });
+  } catch (e) {
+    if (!isRecordNotFoundP2025(e)) throw e;
+    await prisma.order.create({
+      data: {
+        ...defaultOrderUncheckedCreate(orderId),
+        ...patch,
+      } as Parameters<typeof prisma.order.create>[0]['data'],
+    });
+  }
+}
 
 const emptyFallback = (): FetchInitialDataResult => ({
   ok: false,
@@ -59,7 +118,7 @@ const emptyFallback = (): FetchInitialDataResult => ({
   layoutMode: 'card',
 });
 
-/** 一次性載入訂單（未軟刪）、員工名單、日誌、應用設定（含 3s 逾時保底） */
+/** 一次性載入訂單（未軟刪）、員工名單、日誌、應用設定（含 10s 逾時保底） */
 export async function fetchInitialData(): Promise<FetchInitialDataResult> {
   console.log('>>> [DB DEBUG] fetchInitialData — 開始');
 
@@ -93,15 +152,24 @@ export async function fetchInitialData(): Promise<FetchInitialDataResult> {
       const logList = logRows ?? [];
 
       const orders = rowList.map(prismaOrderToFrontend);
-      const workers = workerList.map((w) => w.name);
-      const activityLogs: ActivityLogEntry[] = logList.map((r) => ({
+      const workers = workerList.map((w: { name: string }) => w.name);
+      const activityLogs: ActivityLogEntry[] = logList.map(
+        (r: {
+          id: string;
+          ts: number;
+          text: string;
+          operator: string | null;
+          role: string | null;
+          actionType: string | null;
+        }) => ({
         id: r.id,
         ts: r.ts,
         text: r.text,
         operator: r.operator ?? undefined,
         role: r.role ?? undefined,
         actionType: (r.actionType as ActivityLogEntry['actionType']) ?? 'legacy',
-      }));
+      }),
+    );
 
       const s = settings;
       if (!s) {
@@ -148,7 +216,7 @@ export async function fetchInitialData(): Promise<FetchInitialDataResult> {
 
   const timeoutFallback = new Promise<FetchInitialDataResult>((resolve) => {
     setTimeout(() => {
-      console.log('>>> [DB DEBUG] 步驟：逾時保底（3s）— 先返回空資料');
+      console.log('>>> [DB DEBUG] 步驟：逾時保底（10s）— 先返回空資料');
       resolve(emptyFallback());
     }, FETCH_TIMEOUT_MS);
   });
@@ -260,10 +328,7 @@ export async function updateOrderAction(
     const patch = buildOrderPatch(updateData);
     if (Object.keys(patch).length === 0) return { ok: true };
 
-    await prisma.order.update({
-      where: { id: orderId },
-      data: patch as Parameters<typeof prisma.order.update>[0]['data'],
-    });
+    await orderUpdateOrCreateFromPatch(orderId, patch);
     return { ok: true };
   } catch (e) {
     console.error('[updateOrderAction]', e);
@@ -275,17 +340,13 @@ export async function batchUpdateOrdersAction(
   updates: { id: string; data: Record<string, unknown> }[]
 ): Promise<{ ok: boolean; error?: string }> {
   try {
-    const ops = updates.flatMap(({ id, data }) => {
-      const patch = buildOrderPatch(data);
-      if (Object.keys(patch).length === 0) return [];
-      return [
-        prisma.order.update({
-          where: { id },
-          data: patch as Parameters<typeof prisma.order.update>[0]['data'],
-        }),
-      ];
-    });
-    if (ops.length > 0) await prisma.$transaction(ops);
+    await Promise.all(
+      updates.map(async ({ id, data }) => {
+        const patch = buildOrderPatch(data);
+        if (Object.keys(patch).length === 0) return;
+        await orderUpdateOrCreateFromPatch(id, patch);
+      })
+    );
     return { ok: true };
   } catch (e) {
     console.error('[batchUpdateOrdersAction]', e);
@@ -298,13 +359,23 @@ export async function batchUpdateAssignedDaysAction(
   items: { id: string; assignedDay: string }[]
 ): Promise<{ ok: boolean; error?: string }> {
   try {
-    await prisma.$transaction(
-      items.map(({ id, assignedDay }) =>
-        prisma.order.update({
-          where: { id },
-          data: { assignedDay },
-        })
-      )
+    await Promise.all(
+      items.map(async ({ id, assignedDay }) => {
+        try {
+          await prisma.order.update({
+            where: { id },
+            data: { assignedDay },
+          });
+        } catch (e) {
+          if (!isRecordNotFoundP2025(e)) throw e;
+          await prisma.order.create({
+            data: {
+              ...defaultOrderUncheckedCreate(id),
+              assignedDay,
+            },
+          });
+        }
+      })
     );
     return { ok: true };
   } catch (e) {
@@ -358,7 +429,7 @@ export async function createActivityLogAction(entry: {
       });
       if (old.length > 0) {
         await prisma.mesActivityLog.deleteMany({
-          where: { id: { in: old.map((x) => x.id) } },
+          where: { id: { in: old.map((x: { id: string }) => x.id) } },
         });
       }
     }
