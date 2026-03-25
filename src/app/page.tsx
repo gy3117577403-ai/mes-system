@@ -155,16 +155,20 @@ export default function KanbanApp() {
       layoutMode: 'card',
     };
 
-    /** 若 Server Action 長時間無回應，避免永遠卡在「載入中」 */
-    const CLIENT_MAX_MS = 12000;
+    /** 須大於伺服端 fetchInitialData 逾時（10s）＋網路與序列化耗時，否則會誤判 CLIENT_TIMEOUT */
+    const CLIENT_MAX_MS = 25_000;
+    let clientTimeoutId: number | undefined;
 
     void (async () => {
-      const res = await Promise.race([
-        fetchInitialData(),
-        new Promise<FetchInitialDataResult>((resolve) =>
-          setTimeout(() => resolve(clientFallback), CLIENT_MAX_MS)
-        ),
-      ]);
+      const timeoutPromise = new Promise<FetchInitialDataResult>((resolve) => {
+        clientTimeoutId = window.setTimeout(() => resolve(clientFallback), CLIENT_MAX_MS);
+      });
+      let res: FetchInitialDataResult;
+      try {
+        res = await Promise.race([fetchInitialData(), timeoutPromise]);
+      } finally {
+        if (clientTimeoutId !== undefined) window.clearTimeout(clientTimeoutId);
+      }
       if (cancelled) return;
       setOrders(res.orders ?? []);
       setWorkers(res.workers ?? ['1号员工', '2号员工']);
@@ -1098,7 +1102,7 @@ export default function KanbanApp() {
           role="status"
           className="shrink-0 border-b border-amber-600/40 bg-amber-950/90 px-4 py-2 text-center text-sm text-amber-100"
         >
-          離線模式：無法從本地資料庫載入或已逾時，畫面使用預設資料；請檢查終端日誌或重新整理。
+          離線模式：無法從伺服器／PostgreSQL 載入首包資料或已逾時，畫面使用預設空資料；請檢查網路、環境變數或重新整理。
         </div>
       )}
 
@@ -1132,6 +1136,7 @@ export default function KanbanApp() {
         activityLogs={activityLogs}
         auditModalOpen={auditModalOpen}
         setAuditModalOpen={setAuditModalOpen}
+        offlineMode={offlineMode}
       />
 
       {/* 浮动警报拦截横幅 */}

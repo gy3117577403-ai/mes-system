@@ -69,6 +69,8 @@ interface HeaderProps {
   activityLogs: ActivityLogEntry[];
   auditModalOpen: boolean;
   setAuditModalOpen: (v: boolean) => void;
+  /** false = 已成功從伺服器載入資料庫首包；true = 逾時或失敗，使用預設本地資料 */
+  offlineMode: boolean;
 }
 
 export default function Header({
@@ -101,6 +103,7 @@ export default function Header({
   activityLogs,
   auditModalOpen,
   setAuditModalOpen,
+  offlineMode,
 }: HeaderProps) {
   const { user, logout } = useAuth();
   const [notifOpen, setNotifOpen] = useState(false);
@@ -248,13 +251,27 @@ export default function Header({
                 <span
                   className={cn(
                     'flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full font-medium border',
-                    theme === 'dark'
-                      ? 'bg-emerald-950/60 text-emerald-400 border-emerald-500/20'
-                      : 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                    offlineMode
+                      ? theme === 'dark'
+                        ? 'bg-amber-950/60 text-amber-300 border-amber-500/30'
+                        : 'bg-amber-50 text-amber-900 border-amber-300'
+                      : theme === 'dark'
+                        ? 'bg-cyan-950/60 text-cyan-300 border-cyan-500/25'
+                        : 'bg-cyan-50 text-cyan-900 border-cyan-300'
                   )}
+                  title={
+                    offlineMode
+                      ? '首包資料未從伺服器取得（逾時或錯誤），畫面為預設空資料'
+                      : '已從雲端 PostgreSQL 同步首包資料'
+                  }
                 >
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />{' '}
-                  本地内存极速模式
+                  <span
+                    className={cn(
+                      'w-1.5 h-1.5 rounded-full animate-pulse',
+                      offlineMode ? 'bg-amber-400' : 'bg-cyan-400'
+                    )}
+                  />{' '}
+                  {offlineMode ? '離線預設 · 未同步資料庫' : '雲端資料庫已連線'}
                 </span>
                 <span className={cn('text-sm font-medium', headerMuted(theme))}>
                   总计 <strong className="text-cyan-500 text-lg">{orders.length}</strong> 份排单
