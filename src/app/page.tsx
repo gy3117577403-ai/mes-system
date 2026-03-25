@@ -76,6 +76,22 @@ export default function KanbanApp() {
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('card');
   const [theme, setTheme] = useState<AppTheme>('dark');
   const [mainAppView, setMainAppView] = useState<MainAppView>('kanban');
+  /** 手動點擊「同步/刷新」時為 true，不用於全屏遮罩 */
+  const [isSyncing, setIsSyncing] = useState(false);
+
+  const applyFetchResult = useCallback((res: FetchInitialDataResult) => {
+    setOrders(res.orders ?? []);
+    setWorkers(res.workers ?? ['1号员工', '2号员工']);
+    setActivityLogs(res.activityLogs ?? []);
+    setDailyCapacity(res.dailyCapacity);
+    setTheme(res.theme);
+    setLayoutMode(res.layoutMode);
+    if (!res.ok) {
+      setOfflineMode(true);
+    } else {
+      setOfflineMode(false);
+    }
+  }, []);
 
   const appendAuditLog = useCallback(
     (actionType: AuditActionType, description: string) => {
@@ -147,25 +163,48 @@ export default function KanbanApp() {
     void (async () => {
       const res: FetchInitialDataResult = await fetchInitialData();
       if (cancelled) return;
-      setOrders(res.orders ?? []);
-      setWorkers(res.workers ?? ['1号员工', '2号员工']);
-      setActivityLogs(res.activityLogs ?? []);
-      setDailyCapacity(res.dailyCapacity);
-      setTheme(res.theme);
-      setLayoutMode(res.layoutMode);
+      applyFetchResult(res);
       if (!res.ok) {
-        setOfflineMode(true);
         console.error('fetchInitialData:', res.error);
         toast.error('載入資料失敗，已進入離線模式（使用預設值）');
-      } else {
-        setOfflineMode(false);
       }
       setDataReady(true);
     })();
     return () => {
       cancelled = true;
     };
-  }, [isMounted, user]);
+  }, [isMounted, user, applyFetchResult]);
+
+  const handleSyncRefresh = useCallback(async () => {
+    setIsSyncing(true);
+    try {
+      const res = await fetchInitialData();
+      applyFetchResult(res);
+      if (res.ok) {
+        toast.success('已同步最新資料');
+      } else {
+        console.error('fetchInitialData:', res.error);
+        toast.error('同步失敗，已進入離線模式（使用預設值）');
+      }
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [applyFetchResult]);
+
+  /** 每 30 秒靜默拉取雲端資料，不觸發首屏 Loading、不打斷輸入 */
+  useEffect(() => {
+    if (!isMounted || !user || !dataReady) return;
+    const tick = async () => {
+      try {
+        const res = await fetchInitialData();
+        applyFetchResult(res);
+      } catch (e) {
+        console.error('[silent poll]', e);
+      }
+    };
+    const id = window.setInterval(tick, 30_000);
+    return () => window.clearInterval(id);
+  }, [isMounted, user, dataReady, applyFetchResult]);
 
   const setDailyCapacityPersist = useCallback((val: number) => {
     setDailyCapacity(val);
@@ -1110,6 +1149,8 @@ export default function KanbanApp() {
         auditModalOpen={auditModalOpen}
         setAuditModalOpen={setAuditModalOpen}
         offlineMode={offlineMode}
+        onSyncRefresh={handleSyncRefresh}
+        isSyncing={isSyncing}
       />
 
       {/* 浮动警报拦截横幅 */}

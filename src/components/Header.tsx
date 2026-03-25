@@ -24,6 +24,7 @@ import {
   Gauge,
   Sun,
   Moon,
+  RefreshCw,
 } from 'lucide-react';
 import { Order, ViewMode, MainAppView, ActivityLogEntry, AndonNotification } from '@/types';
 import { useAuth } from '@/context/AuthContext';
@@ -71,6 +72,10 @@ interface HeaderProps {
   setAuditModalOpen: (v: boolean) => void;
   /** false = 已成功從伺服器載入資料庫首包；true = 逾時或失敗，使用預設本地資料 */
   offlineMode: boolean;
+  /** 手動從雲端重新拉取訂單／設定 */
+  onSyncRefresh: () => void | Promise<void>;
+  /** 手動同步進行中（按鈕 loading） */
+  isSyncing: boolean;
 }
 
 export default function Header({
@@ -104,6 +109,8 @@ export default function Header({
   auditModalOpen,
   setAuditModalOpen,
   offlineMode,
+  onSyncRefresh,
+  isSyncing,
 }: HeaderProps) {
   const { user, logout } = useAuth();
   const [notifOpen, setNotifOpen] = useState(false);
@@ -180,6 +187,73 @@ export default function Header({
           </button>
         </div>
       </div>
+
+      {viewMode === 'workshop' && (
+        <header
+          className={cn(
+            'backdrop-blur-xl px-4 md:px-6 py-2 z-30 shrink-0 flex flex-wrap justify-between items-center gap-3 border-b',
+            headerBar(theme)
+          )}
+        >
+          <div className="flex items-center gap-3 min-w-0">
+            <span className={cn('text-sm font-black tracking-tight', headerTitle(theme))}>车间大屏</span>
+            <span
+              className={cn(
+                'flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full font-medium border',
+                offlineMode
+                  ? theme === 'dark'
+                    ? 'bg-amber-950/60 text-amber-300 border-amber-500/30'
+                    : 'bg-amber-50 text-amber-900 border-amber-300'
+                  : theme === 'dark'
+                    ? 'bg-cyan-950/60 text-cyan-300 border-cyan-500/25'
+                    : 'bg-cyan-50 text-cyan-900 border-cyan-300'
+              )}
+            >
+              <span
+                className={cn(
+                  'w-1.5 h-1.5 rounded-full',
+                  offlineMode ? 'bg-amber-400' : 'bg-cyan-400 animate-pulse'
+                )}
+              />
+              {offlineMode ? '離線' : '雲端已連線'}
+            </span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void onSyncRefresh()}
+              disabled={isSyncing}
+              className={cn(
+                'flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-black border transition-all shadow-[0_0_16px_rgba(34,211,238,0.15)]',
+                theme === 'dark'
+                  ? 'bg-gradient-to-r from-cyan-600/90 to-blue-600/90 border-cyan-400/40 text-white hover:from-cyan-500 hover:to-blue-500'
+                  : 'bg-gradient-to-r from-cyan-500 to-blue-600 border-cyan-400 text-white hover:opacity-95',
+                isSyncing && 'opacity-80 cursor-wait'
+              )}
+              title="從雲端重新載入訂單與設定"
+            >
+              {isSyncing ? (
+                <RefreshCw className="w-4 h-4 animate-spin shrink-0" aria-hidden />
+              ) : (
+                <span className="shrink-0" aria-hidden>
+                  🔄
+                </span>
+              )}
+              同步/刷新
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('manager')}
+              className={cn(
+                'text-cyan-500 border border-cyan-500/50 px-3 py-2 rounded-xl flex items-center gap-2 font-bold text-sm',
+                theme === 'dark' ? 'bg-slate-800 hover:bg-slate-700' : 'bg-gray-100 hover:bg-gray-200'
+              )}
+            >
+              排产视图
+            </button>
+          </div>
+        </header>
+      )}
 
       {viewMode === 'manager' && (
         <header
@@ -273,6 +347,28 @@ export default function Header({
                   />{' '}
                   {offlineMode ? '離線預設 · 未同步資料庫' : '雲端資料庫已連線'}
                 </span>
+                <button
+                  type="button"
+                  onClick={() => void onSyncRefresh()}
+                  disabled={isSyncing}
+                  className={cn(
+                    'flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black border transition-all shadow-[0_0_14px_rgba(34,211,238,0.12)]',
+                    theme === 'dark'
+                      ? 'bg-gradient-to-r from-cyan-600/85 to-blue-600/85 border-cyan-400/35 text-white hover:from-cyan-500 hover:to-blue-500'
+                      : 'bg-gradient-to-r from-cyan-500 to-blue-600 border-cyan-400 text-white hover:opacity-95',
+                    isSyncing && 'opacity-80 cursor-wait'
+                  )}
+                  title="從雲端重新載入訂單與設定"
+                >
+                  {isSyncing ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" aria-hidden />
+                  ) : (
+                    <span className="shrink-0" aria-hidden>
+                      🔄
+                    </span>
+                  )}
+                  同步/刷新
+                </button>
                 <span className={cn('text-sm font-medium', headerMuted(theme))}>
                   总计 <strong className="text-cyan-500 text-lg">{orders.length}</strong> 份排单
                 </span>
