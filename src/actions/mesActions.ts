@@ -46,8 +46,6 @@ export type FetchInitialDataResult = {
   layoutMode: LayoutMode;
 };
 
-const FETCH_TIMEOUT_MS = 10_000;
-
 function isRecordNotFoundP2025(e: unknown): boolean {
   return (
     typeof e === 'object' &&
@@ -107,125 +105,98 @@ async function orderUpdateOrCreateFromPatch(
   }
 }
 
-const emptyFallback = (): FetchInitialDataResult => ({
-  ok: false,
-  error: 'LOAD_TIMEOUT',
-  orders: [],
-  workers: ['1号员工', '2号员工'],
-  activityLogs: [],
-  dailyCapacity: 980,
-  theme: 'dark',
-  layoutMode: 'card',
-});
-
-/** 一次性載入訂單（未軟刪）、員工名單、日誌、應用設定（含 10s 逾時保底） */
+/** 一次性載入訂單（未軟刪）、員工名單、日誌、應用設定 */
 export async function fetchInitialData(): Promise<FetchInitialDataResult> {
   console.log('>>> [DB DEBUG] fetchInitialData — 開始');
 
-  const loadFromDb = async (): Promise<FetchInitialDataResult> => {
-    try {
-      console.log('>>> [DB DEBUG] 步驟：ensureAppSettings（讀庫前）');
-      await ensureAppSettings();
-      console.log('>>> [DB DEBUG] 步驟：ensureAppSettings（讀庫後）');
+  try {
+    console.log('>>> [DB DEBUG] 步驟：ensureAppSettings（讀庫前）');
+    await ensureAppSettings();
+    console.log('>>> [DB DEBUG] 步驟：ensureAppSettings（讀庫後）');
 
-      console.log('>>> [DB DEBUG] 步驟：ensureDefaultWorkers（讀庫前）');
-      await ensureDefaultWorkers();
-      console.log('>>> [DB DEBUG] 步驟：ensureDefaultWorkers（讀庫後）');
+    console.log('>>> [DB DEBUG] 步驟：ensureDefaultWorkers（讀庫前）');
+    await ensureDefaultWorkers();
+    console.log('>>> [DB DEBUG] 步驟：ensureDefaultWorkers（讀庫後）');
 
-      console.log('>>> [DB DEBUG] 步驟：Promise.all 查詢（讀庫前）');
-      const [rows, workerRows, logRows, settings] = await Promise.all([
-        prisma.order.findMany({
-          where: { deletedAt: null },
-          orderBy: { createdAt: 'desc' },
-        }),
-        prisma.mesWorker.findMany({ orderBy: { sortOrder: 'asc' } }),
-        prisma.mesActivityLog.findMany({
-          orderBy: { ts: 'desc' },
-          take: 500,
-        }),
-        prisma.mesAppSettings.findUnique({ where: { id: SETTINGS_ID } }),
-      ]);
-      console.log('>>> [DB DEBUG] 步驟：Promise.all 查詢（讀庫後）');
-
-      const rowList = rows ?? [];
-      const workerList = workerRows ?? [];
-      const logList = logRows ?? [];
-
-      const orders = rowList.map(prismaOrderToFrontend);
-      const workers = workerList.map((w: { name: string }) => w.name);
-      const activityLogs: ActivityLogEntry[] = logList.map(
-        (r: {
-          id: string;
-          ts: number;
-          text: string;
-          operator: string | null;
-          role: string | null;
-          actionType: string | null;
-        }) => ({
-        id: r.id,
-        ts: r.ts,
-        text: r.text,
-        operator: r.operator ?? undefined,
-        role: r.role ?? undefined,
-        actionType: (r.actionType as ActivityLogEntry['actionType']) ?? 'legacy',
+    console.log('>>> [DB DEBUG] 步驟：Promise.all 查詢（讀庫前）');
+    const [rows, workerRows, logRows, settings] = await Promise.all([
+      prisma.order.findMany({
+        where: { deletedAt: null },
+        orderBy: { createdAt: 'desc' },
       }),
-    );
+      prisma.mesWorker.findMany({ orderBy: { sortOrder: 'asc' } }),
+      prisma.mesActivityLog.findMany({
+        orderBy: { ts: 'desc' },
+        take: 500,
+      }),
+      prisma.mesAppSettings.findUnique({ where: { id: SETTINGS_ID } }),
+    ]);
+    console.log('>>> [DB DEBUG] 步驟：Promise.all 查詢（讀庫後）');
 
-      const s = settings;
-      if (!s) {
-        console.log('>>> [DB DEBUG] settings 為 null，使用預設設定與空／既有列資料');
-        return {
-          ok: true,
-          orders,
-          workers: workers.length > 0 ? workers : ['1号员工', '2号员工'],
-          activityLogs,
-          dailyCapacity: 980,
-          theme: 'dark',
-          layoutMode: 'card',
-        };
-      }
+    const rowList = rows ?? [];
+    const workerList = workerRows ?? [];
+    const logList = logRows ?? [];
 
-      const theme = (s.theme === 'light' ? 'light' : 'dark') as AppTheme;
-      const layoutMode = (s.layoutMode === 'compact' ? 'compact' : 'card') as LayoutMode;
+    const orders = rowList.map(prismaOrderToFrontend);
+    const workers = workerList.map((w: { name: string }) => w.name);
+    const activityLogs: ActivityLogEntry[] = logList.map(
+      (r: {
+        id: string;
+        ts: number;
+        text: string;
+        operator: string | null;
+        role: string | null;
+        actionType: string | null;
+      }) => ({
+      id: r.id,
+      ts: r.ts,
+      text: r.text,
+      operator: r.operator ?? undefined,
+      role: r.role ?? undefined,
+      actionType: (r.actionType as ActivityLogEntry['actionType']) ?? 'legacy',
+    }),
+  );
 
-      console.log('>>> [DB DEBUG] 步驟：返回結果（成功，前）');
+    const s = settings;
+    if (!s) {
+      console.log('>>> [DB DEBUG] settings 為 null，使用預設設定與空／既有列資料');
       return {
         ok: true,
         orders,
-        workers,
+        workers: workers.length > 0 ? workers : ['1号员工', '2号员工'],
         activityLogs,
-        dailyCapacity: s.dailyCapacity > 0 ? s.dailyCapacity : 980,
-        theme,
-        layoutMode,
-      };
-    } catch (e) {
-      console.error('[fetchInitialData]', e);
-      console.log('>>> [DB DEBUG] 步驟：catch 異常 — 返回錯誤結果');
-      return {
-        ok: false,
-        error: e instanceof Error ? e.message : String(e),
-        orders: [],
-        workers: ['1号员工', '2号员工'],
-        activityLogs: [],
         dailyCapacity: 980,
         theme: 'dark',
         layoutMode: 'card',
       };
     }
-  };
 
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const timeoutPromise = new Promise<FetchInitialDataResult>((resolve) => {
-    timeoutId = setTimeout(() => {
-      console.log('>>> [DB DEBUG] 步驟：逾時保底（10s）— 先返回空資料');
-      resolve(emptyFallback());
-    }, FETCH_TIMEOUT_MS);
-  });
+    const theme = (s.theme === 'light' ? 'light' : 'dark') as AppTheme;
+    const layoutMode = (s.layoutMode === 'compact' ? 'compact' : 'card') as LayoutMode;
 
-  try {
-    return await Promise.race([loadFromDb(), timeoutPromise]);
-  } finally {
-    if (timeoutId !== undefined) clearTimeout(timeoutId);
+    console.log('>>> [DB DEBUG] 步驟：返回結果（成功，前）');
+    return {
+      ok: true,
+      orders,
+      workers,
+      activityLogs,
+      dailyCapacity: s.dailyCapacity > 0 ? s.dailyCapacity : 980,
+      theme,
+      layoutMode,
+    };
+  } catch (e) {
+    console.error('[fetchInitialData]', e);
+    console.log('>>> [DB DEBUG] 步驟：catch 異常 — 返回錯誤結果');
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+      orders: [],
+      workers: ['1号员工', '2号员工'],
+      activityLogs: [],
+      dailyCapacity: 980,
+      theme: 'dark',
+      layoutMode: 'card',
+    };
   }
 }
 
