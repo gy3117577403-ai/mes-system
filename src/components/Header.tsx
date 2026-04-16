@@ -174,13 +174,14 @@ export default function Header({
               onClick={() => void onSyncRefresh()}
               disabled={isSyncing}
               className={cn(
-                'flex h-9 shrink-0 items-center gap-1 rounded-lg border px-2 py-1.5 text-xs font-black shadow-[0_0_12px_rgba(34,211,238,0.12)] transition-all',
+                'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border text-xs font-black shadow-[0_0_12px_rgba(34,211,238,0.12)] transition-all md:h-10 md:w-10 md:rounded-xl',
                 theme === 'dark'
                   ? 'border-cyan-400/40 bg-gradient-to-r from-cyan-600/90 to-blue-600/90 text-white hover:from-cyan-500 hover:to-blue-500'
                   : 'border-cyan-400 bg-gradient-to-r from-cyan-500 to-blue-600 text-white hover:opacity-95',
                 isSyncing && 'cursor-wait opacity-80'
               )}
               title="從雲端重新載入訂單與設定"
+              aria-label="從雲端重新載入訂單與設定"
             >
               {isSyncing ? (
                 <RefreshCw className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
@@ -189,19 +190,18 @@ export default function Header({
                   🔄
                 </span>
               )}
-              <span className="hidden lg:inline-block">同步/刷新</span>
             </button>
             <button
               type="button"
               onClick={() => setViewMode('manager')}
               className={cn(
-                'flex h-9 shrink-0 items-center gap-1 rounded-lg border border-cyan-500/50 px-2 py-1.5 text-xs font-bold text-cyan-500',
+                'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-cyan-500/50 text-cyan-500 md:h-10 md:w-10 md:rounded-xl',
                 theme === 'dark' ? 'bg-slate-800 hover:bg-slate-700' : 'bg-gray-100 hover:bg-gray-200'
               )}
               title="排产视图"
+              aria-label="排产视图"
             >
-              <Monitor className="h-4 w-4 shrink-0" strokeWidth={2.25} aria-hidden />
-              <span className="hidden xl:inline-block">排产视图</span>
+              <Monitor className="h-4 w-4 shrink-0 md:h-[18px] md:w-[18px]" strokeWidth={2.25} aria-hidden />
             </button>
           </div>
         </header>
