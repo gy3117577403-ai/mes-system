@@ -1,6 +1,4 @@
 #!/usr/bin/env sh
-. "$(dirname -- "$0")/_/husky.sh"
-
 echo "🚀 [CI Guard] 正在执行推流前严格校验 (Type-Check & Next Lint)..."
 pnpm run check:all
 
