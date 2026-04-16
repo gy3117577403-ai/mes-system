@@ -145,7 +145,7 @@ export default function Header({
             headerBar(theme)
           )}
         >
-          <div className="flex w-full flex-nowrap items-center gap-1 overflow-hidden px-1 py-2 md:gap-2">
+          <div className="flex w-full flex-nowrap items-center gap-1 overflow-hidden px-1 py-1.5 sm:gap-2">
             <span
               className={cn(
                 'max-w-[4.5rem] shrink-0 truncate text-xs font-black tracking-tight sm:max-w-[6rem] sm:text-sm',
@@ -157,7 +157,7 @@ export default function Header({
             </span>
             <span
               className={cn(
-                'flex max-w-[5rem] shrink-0 items-center gap-1 truncate rounded-full border px-1 py-0.5 text-[10px] font-medium sm:max-w-[7rem] sm:px-1.5 sm:text-xs',
+                'flex shrink-0 items-center gap-0.5 rounded-full border px-0.5 py-0',
                 offlineMode
                   ? theme === 'dark'
                     ? 'border-amber-500/30 bg-amber-950/60 text-amber-300'
@@ -174,7 +174,9 @@ export default function Header({
                   offlineMode ? 'bg-amber-400' : 'bg-cyan-400 animate-pulse'
                 )}
               />
-              <span className="truncate">{offlineMode ? '離線' : '雲端已連線'}</span>
+              <span className="hidden whitespace-nowrap text-[10px] font-medium sm:text-xs xl:inline-block">
+                {offlineMode ? '離線' : '雲端已連線'}
+              </span>
             </span>
             <button
               type="button"
@@ -196,7 +198,7 @@ export default function Header({
                   🔄
                 </span>
               )}
-              <span className="hidden xl:inline-block">同步/刷新</span>
+              <span className="hidden lg:inline-block">同步/刷新</span>
             </button>
             <button
               type="button"
@@ -221,15 +223,15 @@ export default function Header({
             headerBar(theme)
           )}
         >
-          <div className="flex w-full flex-nowrap items-center gap-1 overflow-hidden px-1 py-2 md:gap-2">
-            <div className="shrink-0 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 p-1.5 shadow-[0_0_20px_rgba(34,211,238,0.3)] md:rounded-xl md:p-2.5">
-              <LayoutDashboard className="h-5 w-5 text-white md:h-6 md:w-6" />
+          <div className="flex w-full flex-nowrap items-center gap-1 overflow-hidden px-1 py-1.5 sm:gap-2">
+            <div className="shrink-0 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 p-1 shadow-[0_0_20px_rgba(34,211,238,0.3)] md:rounded-xl md:p-1.5 lg:p-2.5">
+              <LayoutDashboard className="h-4 w-4 text-white md:h-5 md:w-5 lg:h-6 lg:w-6" />
             </div>
             <div className="flex min-w-0 shrink-0 flex-col justify-center gap-0.5 pr-0.5">
-              <div className="flex min-w-0 items-center gap-1 md:gap-2">
+              <div className="flex min-w-0 items-center gap-0.5 sm:gap-1 md:gap-2">
                 <h1
                   className={cn(
-                    'max-w-[5.5rem] truncate text-xs font-bold tracking-tight sm:max-w-[9rem] md:max-w-[12rem] md:text-sm lg:max-w-[16rem] xl:max-w-none xl:whitespace-nowrap xl:text-base',
+                    'max-w-[100px] truncate text-sm font-bold tracking-tight sm:max-w-[150px] lg:max-w-none',
                     headerTitle(theme)
                   )}
                   title="线束车间数字化排产大屏"
@@ -237,7 +239,7 @@ export default function Header({
                   线束车间数字化排产大屏
                 </h1>
                 {user && (
-                  <span className="hidden max-w-[6rem] shrink-0 truncate rounded border border-cyan-500/30 bg-cyan-950/50 px-1 py-0.5 font-mono text-[9px] text-cyan-400/90 sm:inline-block sm:max-w-[8rem] sm:px-1.5 sm:text-[10px] md:text-xs">
+                  <span className="hidden max-w-[5.5rem] shrink-0 truncate rounded border border-cyan-500/30 bg-cyan-950/50 px-0.5 py-0 font-mono text-[9px] text-cyan-400/90 md:inline-block md:max-w-[7rem] md:px-1 md:py-0.5 md:text-[10px] lg:text-xs">
                     {user.username} · {ROLE_LABELS[user.role]} ({ROLE_SHORT[user.role]})
                   </span>
                 )}
@@ -292,7 +294,7 @@ export default function Header({
             )}
             <span
               className={cn(
-                'flex max-w-[4.5rem] shrink-0 items-center gap-1 truncate rounded-full border px-1 py-0.5 text-[10px] font-medium sm:max-w-[6.5rem] sm:px-1.5 sm:text-xs md:max-w-[9rem]',
+                'flex shrink-0 items-center gap-0.5 rounded-full border px-0.5 py-0',
                 offlineMode
                   ? theme === 'dark'
                     ? 'border-amber-500/30 bg-amber-950/60 text-amber-300'
@@ -313,7 +315,7 @@ export default function Header({
                   offlineMode ? 'bg-amber-400' : 'bg-cyan-400'
                 )}
               />
-              <span className="truncate">
+              <span className="hidden whitespace-nowrap text-[10px] font-medium sm:text-xs xl:inline-block">
                 {offlineMode ? '離線預設 · 未同步資料庫' : '雲端資料庫已連線'}
               </span>
             </span>
@@ -337,14 +339,19 @@ export default function Header({
                   🔄
                 </span>
               )}
-              <span className="hidden xl:inline-block">同步/刷新</span>
+              <span className="hidden lg:inline-block">同步/刷新</span>
             </button>
-            <span className={cn('shrink-0 px-0.5 text-xs font-medium leading-none', headerMuted(theme))}>
-              计<strong className="text-sm text-cyan-500 md:text-base">{orders.length}</strong>单
+            <span
+              className={cn(
+                'shrink-0 whitespace-nowrap px-0 text-[10px] font-medium leading-none sm:text-xs',
+                headerMuted(theme)
+              )}
+            >
+              计<strong className="text-cyan-500 sm:text-sm">{orders.length}</strong>单
             </span>
             <span
               className={cn(
-                'flex h-8 shrink-0 cursor-pointer items-center gap-0.5 rounded-md border px-1 py-0.5 text-[10px] font-medium transition-colors md:h-9 md:gap-1 md:rounded-lg md:px-1.5 md:text-xs',
+                'flex h-7 shrink-0 cursor-pointer items-center gap-0.5 whitespace-nowrap rounded border px-0.5 py-0 text-[10px] font-medium transition-colors sm:h-8 sm:text-xs md:h-9 md:rounded-md md:px-1',
                 theme === 'dark'
                   ? 'border-slate-700/50 bg-slate-800/50 text-slate-400 hover:bg-slate-700/80'
                   : 'border-gray-300 bg-gray-100 text-gray-700 hover:bg-gray-200'
@@ -519,7 +526,7 @@ export default function Header({
               title="退出"
             >
               <LogOut className="h-4 w-4 shrink-0" />
-              <span className="hidden xl:inline-block">退出</span>
+              <span className="hidden md:inline-block">退出</span>
             </button>
 
             <div
@@ -531,7 +538,7 @@ export default function Header({
 
             <div
               className={cn(
-                'flex h-9 min-w-[80px] w-20 flex-1 shrink items-center overflow-hidden rounded-lg border px-1.5 shadow-inner sm:h-10 sm:w-32 md:w-48 md:rounded-xl md:px-2',
+                'flex h-8 max-w-[200px] min-w-[60px] w-16 flex-1 shrink items-center overflow-hidden rounded-lg border px-1 shadow-inner sm:h-9 sm:w-24 md:w-32 md:rounded-xl md:px-1.5 lg:w-48 lg:px-2',
                 headerInput(theme)
               )}
             >
