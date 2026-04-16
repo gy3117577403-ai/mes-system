@@ -1,11 +1,8 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
-  Minus,
-  Square,
   X,
   LayoutDashboard,
   Bot,
@@ -116,12 +113,6 @@ export default function Header({
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
 
-  const electron =
-    typeof window !== 'undefined' && (window as any).require
-      ? (window as any).require('electron')
-      : null;
-  const ipcRenderer = electron ? electron.ipcRenderer : null;
-
   const handleEditCapacity = () => {
     const input = window.prompt('请输入新的每日排产工时上限（分钟）：', String(dailyCapacity));
     if (input !== null) {
@@ -144,50 +135,8 @@ export default function Header({
 
   const warehouseUrgent = user?.role === 'Warehouse' && andonNotifications.length > 0;
 
-  const titleBar =
-    theme === 'dark'
-      ? 'bg-slate-950 border-slate-800'
-      : 'bg-gray-100 border-gray-200';
-  const titleBarText = theme === 'dark' ? 'text-slate-400' : 'text-gray-600';
-  const titleBarBtn = theme === 'dark' ? 'hover:bg-slate-800 text-slate-400 hover:text-slate-200' : 'hover:bg-gray-200 text-gray-600 hover:text-gray-900';
-
   return (
     <>
-      <div
-        className={cn('h-8 flex justify-between items-center shrink-0 border-b select-none', titleBar)}
-        style={{ WebkitAppRegion: 'drag' } as any}
-      >
-        <div className="flex items-center pl-3 gap-2">
-          <div className="w-4 h-4 rounded-full bg-blue-600 flex items-center justify-center">
-            <div className="w-1.5 h-1.5 bg-white rounded-full" />
-          </div>
-          <span className={cn('text-[11px] font-medium tracking-wider', titleBarText)}>GGG-AI SYSTEM</span>
-        </div>
-        <div className="flex h-full" style={{ WebkitAppRegion: 'no-drag' } as any}>
-          <button
-            type="button"
-            onClick={() => ipcRenderer?.send('window-min')}
-            className={cn('h-full px-4 transition-colors flex items-center justify-center', titleBarBtn)}
-          >
-            <Minus size={14} />
-          </button>
-          <button
-            type="button"
-            onClick={() => ipcRenderer?.send('window-max')}
-            className={cn('h-full px-4 transition-colors flex items-center justify-center', titleBarBtn)}
-          >
-            <Square size={12} />
-          </button>
-          <button
-            type="button"
-            onClick={() => ipcRenderer?.send('window-close')}
-            className="h-full px-4 hover:bg-red-600 text-slate-400 hover:text-white transition-colors flex items-center justify-center"
-          >
-            <X size={14} />
-          </button>
-        </div>
-      </div>
-
       {viewMode === 'workshop' && (
         <header
           className={cn(
@@ -218,13 +167,14 @@ export default function Header({
               {offlineMode ? '離線' : '雲端已連線'}
             </span>
           </div>
-          <div className="flex w-full min-w-0 flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap scrollbar-hide sm:w-auto sm:justify-end">
+          <div className="w-full min-w-0 overflow-x-auto scrollbar-hide [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:w-auto">
+            <div className="flex min-w-max items-center gap-2 px-2 py-3 sm:justify-end">
             <button
               type="button"
               onClick={() => void onSyncRefresh()}
               disabled={isSyncing}
               className={cn(
-                'flex shrink-0 items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-black border transition-all shadow-[0_0_16px_rgba(34,211,238,0.15)]',
+                'flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border px-3 py-2 text-sm font-black shadow-[0_0_16px_rgba(34,211,238,0.15)] transition-all',
                 theme === 'dark'
                   ? 'bg-gradient-to-r from-cyan-600/90 to-blue-600/90 border-cyan-400/40 text-white hover:from-cyan-500 hover:to-blue-500'
                   : 'bg-gradient-to-r from-cyan-500 to-blue-600 border-cyan-400 text-white hover:opacity-95',
@@ -245,12 +195,13 @@ export default function Header({
               type="button"
               onClick={() => setViewMode('manager')}
               className={cn(
-                'flex shrink-0 items-center gap-2 rounded-xl border border-cyan-500/50 px-3 py-2 text-sm font-bold text-cyan-500',
+                'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-cyan-500/50 px-3 py-2 text-sm font-bold text-cyan-500',
                 theme === 'dark' ? 'bg-slate-800 hover:bg-slate-700' : 'bg-gray-100 hover:bg-gray-200'
               )}
             >
               排产视图
             </button>
+            </div>
           </div>
         </header>
       )}
@@ -282,7 +233,8 @@ export default function Header({
                   </span>
                 )}
               </div>
-              <div className="flex items-center gap-2 mt-1 flex-wrap">
+              <div className="mt-1 w-full min-w-0 overflow-x-auto scrollbar-hide [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                <div className="flex min-w-max items-center gap-2 px-0 py-1">
                 {user?.role === 'Boss' && (
                   <div
                     className={cn(
@@ -295,7 +247,7 @@ export default function Header({
                     <button
                       type="button"
                       onClick={() => setMainAppView('kanban')}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-all duration-300 ${
+                      className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-black transition-all duration-300 ${
                         mainAppView === 'kanban'
                           ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-[0_0_16px_rgba(34,211,238,0.4)]'
                           : theme === 'dark'
@@ -309,7 +261,7 @@ export default function Header({
                     <button
                       type="button"
                       onClick={() => setMainAppView('dashboard')}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-black transition-all duration-300 ${
+                      className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-black transition-all duration-300 ${
                         mainAppView === 'dashboard'
                           ? 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow-[0_0_16px_rgba(167,139,250,0.4)]'
                           : theme === 'dark'
@@ -324,7 +276,7 @@ export default function Header({
                 )}
                 <span
                   className={cn(
-                    'flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full font-medium border',
+                    'flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium',
                     offlineMode
                       ? theme === 'dark'
                         ? 'bg-amber-950/60 text-amber-300 border-amber-500/30'
@@ -352,7 +304,7 @@ export default function Header({
                   onClick={() => void onSyncRefresh()}
                   disabled={isSyncing}
                   className={cn(
-                    'flex shrink-0 items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-black shadow-[0_0_14px_rgba(34,211,238,0.12)] transition-all',
+                    'flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border px-3 py-1.5 text-xs font-black shadow-[0_0_14px_rgba(34,211,238,0.12)] transition-all',
                     theme === 'dark'
                       ? 'bg-gradient-to-r from-cyan-600/85 to-blue-600/85 border-cyan-400/35 text-white hover:from-cyan-500 hover:to-blue-500'
                       : 'bg-gradient-to-r from-cyan-500 to-blue-600 border-cyan-400 text-white hover:opacity-95',
@@ -369,12 +321,12 @@ export default function Header({
                   )}
                   同步/刷新
                 </button>
-                <span className={cn('text-sm font-medium', headerMuted(theme))}>
+                <span className={cn('shrink-0 whitespace-nowrap text-sm font-medium', headerMuted(theme))}>
                   总计 <strong className="text-cyan-500 text-lg">{orders.length}</strong> 份排单
                 </span>
                 <span
                   className={cn(
-                    'text-sm font-medium flex items-center gap-1 px-2 py-1 rounded-lg cursor-pointer transition-colors border',
+                    'flex shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap rounded-lg border px-2 py-1 text-sm font-medium transition-colors',
                     theme === 'dark'
                       ? 'text-slate-400 bg-slate-800/50 hover:bg-slate-700/80 border-slate-700/50'
                       : 'text-gray-700 bg-gray-100 hover:bg-gray-200 border-gray-300'
@@ -385,11 +337,13 @@ export default function Header({
                   单日上限: <strong className="text-indigo-500">{dailyCapacity}</strong> 分钟
                   <Edit3 size={12} className={cn('ml-1', theme === 'dark' ? 'text-slate-500' : 'text-gray-500')} />
                 </span>
+                </div>
               </div>
             </div>
           </div>
 
-          <div className="flex w-full min-w-0 flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap scrollbar-hide md:gap-3 lg:w-auto lg:max-w-none lg:justify-end">
+          <div className="w-full min-w-0 overflow-x-auto scrollbar-hide [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:w-auto lg:max-w-none">
+            <div className="flex min-w-max items-center gap-2 px-2 py-3 md:gap-3 lg:justify-end">
             <div
               className={cn(
                 'flex h-10 shrink-0 overflow-hidden rounded-xl border',
@@ -401,7 +355,7 @@ export default function Header({
                 type="button"
                 onClick={() => setLayoutMode('card')}
                 className={cn(
-                  'px-2.5 flex items-center justify-center transition-colors',
+                  'flex shrink-0 items-center justify-center px-2.5 transition-colors',
                   layoutMode === 'card'
                     ? theme === 'dark'
                       ? 'bg-cyan-600/40 text-cyan-400'
@@ -416,7 +370,7 @@ export default function Header({
                 type="button"
                 onClick={() => setLayoutMode('compact')}
                 className={cn(
-                  'px-2.5 flex items-center justify-center transition-colors border-l',
+                  'flex shrink-0 items-center justify-center border-l px-2.5 transition-colors',
                   layoutMode === 'compact'
                     ? theme === 'dark'
                       ? 'bg-cyan-600/40 text-cyan-400'
@@ -434,7 +388,7 @@ export default function Header({
               type="button"
               onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
               className={cn(
-                'h-10 w-10 flex items-center justify-center rounded-xl border transition-all shrink-0',
+                'flex h-10 w-10 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border transition-all',
                 headerBtnGhost(theme)
               )}
               title={theme === 'dark' ? '切換為白晝模式' : '切換為深色模式'}
@@ -447,7 +401,7 @@ export default function Header({
               <button
                 type="button"
                 onClick={() => setNotifOpen((v) => !v)}
-                className={`relative flex h-10 shrink-0 items-center gap-2 rounded-xl border px-3 text-sm font-bold transition-all duration-300 ${
+                className={`relative flex h-10 shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border px-3 text-sm font-bold transition-all duration-300 ${
                   warehouseUrgent
                     ? 'bg-red-950/80 border-red-500 text-red-300 animate-pulse shadow-[0_0_22px_rgba(239,68,68,0.45)]'
                     : theme === 'dark'
@@ -520,7 +474,7 @@ export default function Header({
               type="button"
               onClick={() => setAuditModalOpen(true)}
               className={cn(
-                'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border transition-all duration-300',
+                'flex h-10 w-10 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border transition-all duration-300',
                 theme === 'dark'
                   ? 'border-slate-600 bg-slate-800/80 text-slate-400 hover:text-cyan-400 hover:border-cyan-500/40'
                   : 'border-gray-300 bg-white text-gray-600 hover:text-cyan-700 hover:border-cyan-400'
@@ -534,7 +488,7 @@ export default function Header({
               type="button"
               onClick={() => logout()}
               className={cn(
-                'flex h-10 shrink-0 items-center gap-1.5 rounded-xl border px-3 text-xs font-bold transition-all',
+                'flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border px-3 text-xs font-bold transition-all',
                 theme === 'dark'
                   ? 'border-slate-600 bg-slate-900/80 text-slate-400 hover:text-red-400 hover:border-red-500/40'
                   : 'border-gray-300 bg-white text-gray-700 hover:text-red-600 hover:border-red-400'
@@ -553,7 +507,7 @@ export default function Header({
 
             <div
               className={cn(
-                'flex h-10 min-w-[150px] max-w-[300px] flex-1 items-center overflow-hidden rounded-xl border px-2 shadow-inner',
+                'flex h-10 w-[200px] shrink-0 items-center overflow-hidden rounded-xl border px-2 shadow-inner sm:w-[250px]',
                 headerInput(theme)
               )}
             >
@@ -564,7 +518,7 @@ export default function Header({
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className={cn(
-                  'min-w-0 flex-1 border-none bg-transparent text-sm outline-none',
+                  'min-w-0 w-full border-none bg-transparent text-sm outline-none',
                   theme === 'dark' ? 'text-slate-200 placeholder:text-slate-600' : 'text-gray-900 placeholder:text-gray-500'
                 )}
               />
@@ -574,7 +528,7 @@ export default function Header({
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
               className={cn(
-                'h-10 shrink-0 cursor-pointer rounded-xl border px-3 text-sm outline-none',
+                'h-10 shrink-0 cursor-pointer whitespace-nowrap rounded-xl border px-3 text-sm outline-none',
                 headerSelect(theme)
               )}
             >
@@ -590,7 +544,7 @@ export default function Header({
               <button
                 type="button"
                 onClick={onOpenQCReview}
-                className="hidden h-10 shrink-0 items-center gap-1.5 rounded-xl border border-amber-500/50 bg-amber-600/30 px-3 text-sm font-bold text-amber-200 transition-all hover:bg-amber-600/50 sm:flex"
+                className="hidden h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border border-amber-500/50 bg-amber-600/30 px-3 text-sm font-bold text-amber-200 transition-all hover:bg-amber-600/50 sm:flex"
               >
                 <ClipboardCheck size={18} />
                 质检审核
@@ -604,7 +558,7 @@ export default function Header({
               onClick={triggerBatchAISchedule}
               disabled={isProcessing}
               className={cn(
-                'flex shrink-0 items-center gap-2 rounded-xl border border-blue-500/50 px-4 py-2 text-sm font-bold shadow-[0_0_12px_rgba(59,130,246,0.2)] transition-all',
+                'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-blue-500/50 px-4 py-2 text-sm font-bold shadow-[0_0_12px_rgba(59,130,246,0.2)] transition-all',
                 theme === 'dark'
                   ? 'bg-slate-800 hover:bg-slate-700 text-slate-200'
                   : 'bg-gray-100 hover:bg-gray-200 text-gray-900',
@@ -623,7 +577,7 @@ export default function Header({
               type="button"
               onClick={() => setIsAddModalOpen(true)}
               className={cn(
-                'flex shrink-0 items-center gap-2 rounded-xl border border-blue-500/50 px-3 py-2 text-sm font-bold shadow-[0_0_8px_rgba(59,130,246,0.2)] transition-all',
+                'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-blue-500/50 px-3 py-2 text-sm font-bold shadow-[0_0_8px_rgba(59,130,246,0.2)] transition-all',
                 theme === 'dark'
                   ? 'bg-slate-800 hover:bg-slate-700 text-slate-200'
                   : 'bg-gray-100 hover:bg-gray-200 text-gray-900'
@@ -645,7 +599,7 @@ export default function Header({
               onClick={() => fileInputRef.current && fileInputRef.current.click()}
               disabled={isProcessing}
               className={cn(
-                'flex shrink-0 items-center gap-2 rounded-xl border border-blue-500/50 px-3 py-2 text-sm font-bold text-blue-500 transition-all',
+                'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-blue-500/50 px-3 py-2 text-sm font-bold text-blue-500 transition-all',
                 theme === 'dark'
                   ? 'bg-slate-800 hover:bg-slate-700'
                   : 'bg-gray-100 hover:bg-gray-200',
@@ -660,7 +614,7 @@ export default function Header({
               type="button"
               onClick={() => setViewMode((v) => (v === 'manager' ? 'workshop' : 'manager'))}
               className={cn(
-                'flex shrink-0 items-center gap-2 rounded-xl border border-cyan-500/50 px-3 py-2 text-sm font-bold text-cyan-500 transition-all',
+                'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-cyan-500/50 px-3 py-2 text-sm font-bold text-cyan-500 transition-all',
                 theme === 'dark'
                   ? 'bg-slate-800 hover:bg-slate-700'
                   : 'bg-gray-100 hover:bg-gray-200'
@@ -674,7 +628,7 @@ export default function Header({
               onClick={triggerClearCompletedData}
               disabled={isProcessing}
               className={cn(
-                'flex shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-sm font-bold transition-all',
+                'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border px-3 py-2 text-sm font-bold transition-all',
                 theme === 'dark'
                   ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600'
                   : 'bg-gray-100 hover:bg-gray-200 text-gray-800 border-gray-300',
@@ -691,7 +645,7 @@ export default function Header({
               onClick={triggerClearAllData}
               disabled={isProcessing}
               className={cn(
-                'flex shrink-0 items-center gap-2 rounded-xl border border-red-500/50 px-3 py-2 text-sm font-bold text-red-500 transition-all',
+                'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-red-500/50 px-3 py-2 text-sm font-bold text-red-500 transition-all',
                 theme === 'dark'
                   ? 'bg-slate-900 hover:bg-red-950/50'
                   : 'bg-white hover:bg-red-50',
@@ -702,6 +656,7 @@ export default function Header({
               <Trash2 size={18} strokeWidth={2.5} />
               <span className="hidden xl:inline">清盘</span>
             </button>
+            </div>
           </div>
         </header>
       )}
