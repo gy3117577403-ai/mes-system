@@ -140,15 +140,18 @@ export default function Header({
       {viewMode === 'workshop' && (
         <header
           className={cn(
-            'backdrop-blur-xl px-4 md:px-6 py-2 z-30 shrink-0 flex flex-col gap-2 min-w-0 sm:flex-row sm:flex-nowrap sm:justify-between sm:items-center sm:gap-3 border-b',
+            'z-30 shrink-0 border-b backdrop-blur-xl',
             headerBar(theme)
           )}
         >
-          <div className="flex items-center gap-3 min-w-0 shrink-0 sm:shrink">
-            <span className={cn('text-sm font-black tracking-tight', headerTitle(theme))}>车间大屏</span>
+          <div className="w-full min-w-0 overflow-x-auto scrollbar-hide [&::-webkit-scrollbar]:hidden">
+            <div className="flex min-w-max items-center gap-3 px-2 py-4 md:px-6">
+            <span className={cn('shrink-0 whitespace-nowrap text-sm font-black tracking-tight', headerTitle(theme))}>
+              车间大屏
+            </span>
             <span
               className={cn(
-                'flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full font-medium border',
+                'flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium',
                 offlineMode
                   ? theme === 'dark'
                     ? 'bg-amber-950/60 text-amber-300 border-amber-500/30'
@@ -160,15 +163,12 @@ export default function Header({
             >
               <span
                 className={cn(
-                  'w-1.5 h-1.5 rounded-full',
+                  'h-1.5 w-1.5 shrink-0 rounded-full',
                   offlineMode ? 'bg-amber-400' : 'bg-cyan-400 animate-pulse'
                 )}
               />
               {offlineMode ? '離線' : '雲端已連線'}
             </span>
-          </div>
-          <div className="w-full min-w-0 overflow-x-auto scrollbar-hide [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:w-auto">
-            <div className="flex min-w-max items-center gap-2 px-2 py-3 sm:justify-end">
             <button
               type="button"
               onClick={() => void onSyncRefresh()}
@@ -209,141 +209,146 @@ export default function Header({
       {viewMode === 'manager' && (
         <header
           className={cn(
-            'backdrop-blur-xl px-4 md:px-6 py-2 z-30 shrink-0 flex min-w-0 flex-col gap-2 transition-all duration-300 lg:flex-row lg:flex-nowrap lg:items-start lg:justify-between lg:gap-3',
+            'z-30 shrink-0 border-b backdrop-blur-xl transition-all duration-300',
             headerBar(theme)
           )}
         >
-          <div className="flex min-w-0 flex-1 items-center gap-3 md:gap-4">
-            <div className="bg-gradient-to-br from-cyan-500 to-blue-600 p-2.5 rounded-xl shadow-[0_0_24px_rgba(34,211,238,0.35)] shrink-0">
-              <LayoutDashboard className="text-white w-6 h-6" />
+          <div className="w-full min-w-0 overflow-x-auto scrollbar-hide [&::-webkit-scrollbar]:hidden">
+            <div className="flex min-w-max items-center gap-3 px-2 py-4 md:px-6">
+            <div className="shrink-0 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 p-2.5 shadow-[0_0_24px_rgba(34,211,238,0.35)]">
+              <LayoutDashboard className="h-6 w-6 text-white" />
             </div>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2 mb-1">
+            <div className="flex shrink-0 flex-col justify-center gap-1 pr-1">
+              <div className="flex items-center gap-2">
                 <h1
                   className={cn(
-                    'text-xl md:text-2xl font-bold tracking-tight truncate',
+                    'whitespace-nowrap text-lg font-bold tracking-tight md:text-xl',
                     headerTitle(theme)
                   )}
                 >
                   线束车间数字化排产大屏
                 </h1>
                 {user && (
-                  <span className="text-xs font-mono text-cyan-400/90 bg-cyan-950/50 border border-cyan-500/30 px-2 py-0.5 rounded-lg shrink-0">
+                  <span className="shrink-0 whitespace-nowrap rounded-lg border border-cyan-500/30 bg-cyan-950/50 px-2 py-0.5 font-mono text-[10px] text-cyan-400/90 sm:text-xs">
                     {user.username} · {ROLE_LABELS[user.role]} ({ROLE_SHORT[user.role]})
                   </span>
                 )}
               </div>
-              <div className="mt-1 w-full min-w-0 overflow-x-auto scrollbar-hide [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                <div className="flex min-w-max items-center gap-2 px-0 py-1">
-                {user?.role === 'Boss' && (
-                  <div
-                    className={cn(
-                      'flex shrink-0 overflow-hidden rounded-xl border p-0.5 shadow-inner',
-                      theme === 'dark'
-                        ? 'border-cyan-500/30 bg-slate-950/60'
-                        : 'border-cyan-400/40 bg-gray-100'
-                    )}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setMainAppView('kanban')}
-                      className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-black transition-all duration-300 ${
-                        mainAppView === 'kanban'
-                          ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-[0_0_16px_rgba(34,211,238,0.4)]'
-                          : theme === 'dark'
-                            ? 'text-slate-500 hover:text-slate-300'
-                            : 'text-gray-500 hover:text-gray-800'
-                      }`}
-                    >
-                      <LayoutGrid className="w-4 h-4" />
-                      看板模式
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setMainAppView('dashboard')}
-                      className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-black transition-all duration-300 ${
-                        mainAppView === 'dashboard'
-                          ? 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow-[0_0_16px_rgba(167,139,250,0.4)]'
-                          : theme === 'dark'
-                            ? 'text-slate-500 hover:text-slate-300'
-                            : 'text-gray-500 hover:text-gray-800'
-                      }`}
-                    >
-                      <Gauge className="w-4 h-4" />
-                      仪表盘
-                    </button>
-                  </div>
+            </div>
+            <div
+              className={cn(
+                'hidden h-10 w-px shrink-0 sm:block',
+                theme === 'dark' ? 'bg-slate-700' : 'bg-gray-300'
+              )}
+            />
+            {user?.role === 'Boss' && (
+              <div
+                className={cn(
+                  'flex shrink-0 overflow-hidden rounded-xl border p-0.5 shadow-inner',
+                  theme === 'dark'
+                    ? 'border-cyan-500/30 bg-slate-950/60'
+                    : 'border-cyan-400/40 bg-gray-100'
                 )}
-                <span
-                  className={cn(
-                    'flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium',
-                    offlineMode
-                      ? theme === 'dark'
-                        ? 'bg-amber-950/60 text-amber-300 border-amber-500/30'
-                        : 'bg-amber-50 text-amber-900 border-amber-300'
-                      : theme === 'dark'
-                        ? 'bg-cyan-950/60 text-cyan-300 border-cyan-500/25'
-                        : 'bg-cyan-50 text-cyan-900 border-cyan-300'
-                  )}
-                  title={
-                    offlineMode
-                      ? '首包資料未從伺服器取得（逾時或錯誤），畫面為預設空資料'
-                      : '已從雲端 PostgreSQL 同步首包資料'
-                  }
-                >
-                  <span
-                    className={cn(
-                      'w-1.5 h-1.5 rounded-full animate-pulse',
-                      offlineMode ? 'bg-amber-400' : 'bg-cyan-400'
-                    )}
-                  />{' '}
-                  {offlineMode ? '離線預設 · 未同步資料庫' : '雲端資料庫已連線'}
-                </span>
+              >
                 <button
                   type="button"
-                  onClick={() => void onSyncRefresh()}
-                  disabled={isSyncing}
-                  className={cn(
-                    'flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border px-3 py-1.5 text-xs font-black shadow-[0_0_14px_rgba(34,211,238,0.12)] transition-all',
-                    theme === 'dark'
-                      ? 'bg-gradient-to-r from-cyan-600/85 to-blue-600/85 border-cyan-400/35 text-white hover:from-cyan-500 hover:to-blue-500'
-                      : 'bg-gradient-to-r from-cyan-500 to-blue-600 border-cyan-400 text-white hover:opacity-95',
-                    isSyncing && 'opacity-80 cursor-wait'
-                  )}
-                  title="從雲端重新載入訂單與設定"
+                  onClick={() => setMainAppView('kanban')}
+                  className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-black transition-all duration-300 ${
+                    mainAppView === 'kanban'
+                      ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-[0_0_16px_rgba(34,211,238,0.4)]'
+                      : theme === 'dark'
+                        ? 'text-slate-500 hover:text-slate-300'
+                        : 'text-gray-500 hover:text-gray-800'
+                  }`}
                 >
-                  {isSyncing ? (
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" aria-hidden />
-                  ) : (
-                    <span className="shrink-0" aria-hidden>
-                      🔄
-                    </span>
-                  )}
-                  同步/刷新
+                  <LayoutGrid className="h-4 w-4 shrink-0" />
+                  看板模式
                 </button>
-                <span className={cn('shrink-0 whitespace-nowrap text-sm font-medium', headerMuted(theme))}>
-                  总计 <strong className="text-cyan-500 text-lg">{orders.length}</strong> 份排单
-                </span>
-                <span
-                  className={cn(
-                    'flex shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap rounded-lg border px-2 py-1 text-sm font-medium transition-colors',
-                    theme === 'dark'
-                      ? 'text-slate-400 bg-slate-800/50 hover:bg-slate-700/80 border-slate-700/50'
-                      : 'text-gray-700 bg-gray-100 hover:bg-gray-200 border-gray-300'
-                  )}
-                  onClick={handleEditCapacity}
-                  title="点击修改日上限"
+                <button
+                  type="button"
+                  onClick={() => setMainAppView('dashboard')}
+                  className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-black transition-all duration-300 ${
+                    mainAppView === 'dashboard'
+                      ? 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow-[0_0_16px_rgba(167,139,250,0.4)]'
+                      : theme === 'dark'
+                        ? 'text-slate-500 hover:text-slate-300'
+                        : 'text-gray-500 hover:text-gray-800'
+                  }`}
                 >
-                  单日上限: <strong className="text-indigo-500">{dailyCapacity}</strong> 分钟
-                  <Edit3 size={12} className={cn('ml-1', theme === 'dark' ? 'text-slate-500' : 'text-gray-500')} />
-                </span>
-                </div>
+                  <Gauge className="h-4 w-4 shrink-0" />
+                  仪表盘
+                </button>
               </div>
-            </div>
-          </div>
-
-          <div className="w-full min-w-0 overflow-x-auto scrollbar-hide [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:w-auto lg:max-w-none">
-            <div className="flex min-w-max items-center gap-2 px-2 py-3 md:gap-3 lg:justify-end">
+            )}
+            <span
+              className={cn(
+                'flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium',
+                offlineMode
+                  ? theme === 'dark'
+                    ? 'border-amber-500/30 bg-amber-950/60 text-amber-300'
+                    : 'border-amber-300 bg-amber-50 text-amber-900'
+                  : theme === 'dark'
+                    ? 'border-cyan-500/25 bg-cyan-950/60 text-cyan-300'
+                    : 'border-cyan-300 bg-cyan-50 text-cyan-900'
+              )}
+              title={
+                offlineMode
+                  ? '首包資料未從伺服器取得（逾時或錯誤），畫面為預設空資料'
+                  : '已從雲端 PostgreSQL 同步首包資料'
+              }
+            >
+              <span
+                className={cn(
+                  'h-1.5 w-1.5 shrink-0 rounded-full animate-pulse',
+                  offlineMode ? 'bg-amber-400' : 'bg-cyan-400'
+                )}
+              />
+              {offlineMode ? '離線預設 · 未同步資料庫' : '雲端資料庫已連線'}
+            </span>
+            <button
+              type="button"
+              onClick={() => void onSyncRefresh()}
+              disabled={isSyncing}
+              className={cn(
+                'flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border px-3 py-1.5 text-xs font-black shadow-[0_0_14px_rgba(34,211,238,0.12)] transition-all',
+                theme === 'dark'
+                  ? 'border-cyan-400/35 bg-gradient-to-r from-cyan-600/85 to-blue-600/85 text-white hover:from-cyan-500 hover:to-blue-500'
+                  : 'border-cyan-400 bg-gradient-to-r from-cyan-500 to-blue-600 text-white hover:opacity-95',
+                isSyncing && 'cursor-wait opacity-80'
+              )}
+              title="從雲端重新載入訂單與設定"
+            >
+              {isSyncing ? (
+                <RefreshCw className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+              ) : (
+                <span className="shrink-0" aria-hidden>
+                  🔄
+                </span>
+              )}
+              同步/刷新
+            </button>
+            <span className={cn('shrink-0 whitespace-nowrap text-sm font-medium', headerMuted(theme))}>
+              总计 <strong className="text-lg text-cyan-500">{orders.length}</strong> 份排单
+            </span>
+            <span
+              className={cn(
+                'flex shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap rounded-lg border px-2 py-1 text-sm font-medium transition-colors',
+                theme === 'dark'
+                  ? 'border-slate-700/50 bg-slate-800/50 text-slate-400 hover:bg-slate-700/80'
+                  : 'border-gray-300 bg-gray-100 text-gray-700 hover:bg-gray-200'
+              )}
+              onClick={handleEditCapacity}
+              title="点击修改日上限"
+            >
+              单日上限: <strong className="text-indigo-500">{dailyCapacity}</strong> 分钟
+              <Edit3 size={12} className={cn('ml-1', theme === 'dark' ? 'text-slate-500' : 'text-gray-500')} />
+            </span>
+            <div
+              className={cn(
+                'hidden h-10 w-px shrink-0 md:block',
+                theme === 'dark' ? 'bg-slate-700' : 'bg-gray-300'
+              )}
+            />
             <div
               className={cn(
                 'flex h-10 shrink-0 overflow-hidden rounded-xl border',
@@ -507,7 +512,7 @@ export default function Header({
 
             <div
               className={cn(
-                'flex h-10 w-[200px] shrink-0 items-center overflow-hidden rounded-xl border px-2 shadow-inner sm:w-[250px]',
+                'flex h-10 min-w-[180px] w-[180px] flex-1 shrink-0 items-center overflow-hidden rounded-xl border px-2 shadow-inner sm:min-w-[240px] sm:w-[240px]',
                 headerInput(theme)
               )}
             >
@@ -518,7 +523,7 @@ export default function Header({
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className={cn(
-                  'min-w-0 w-full border-none bg-transparent text-sm outline-none',
+                  'min-w-0 w-full flex-1 border-none bg-transparent text-sm outline-none',
                   theme === 'dark' ? 'text-slate-200 placeholder:text-slate-600' : 'text-gray-900 placeholder:text-gray-500'
                 )}
               />
