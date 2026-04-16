@@ -155,29 +155,20 @@ export default function Header({
             >
               车间大屏
             </span>
-            <span
+            <div
+              role="status"
               className={cn(
-                'flex shrink-0 items-center gap-0.5 rounded-full border px-0.5 py-0',
+                'h-3 w-3 shrink-0 rounded-full sm:h-4 sm:w-4',
                 offlineMode
-                  ? theme === 'dark'
-                    ? 'border-amber-500/30 bg-amber-950/60 text-amber-300'
-                    : 'border-amber-300 bg-amber-50 text-amber-900'
-                  : theme === 'dark'
-                    ? 'border-cyan-500/25 bg-cyan-950/60 text-cyan-300'
-                    : 'border-cyan-300 bg-cyan-50 text-cyan-900'
+                  ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.55)]'
+                  : 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]'
               )}
-              title={offlineMode ? '離線' : '雲端已連線'}
-            >
-              <span
-                className={cn(
-                  'h-1.5 w-1.5 shrink-0 rounded-full',
-                  offlineMode ? 'bg-amber-400' : 'bg-cyan-400 animate-pulse'
-                )}
-              />
-              <span className="hidden whitespace-nowrap text-[10px] font-medium sm:text-xs xl:inline-block">
-                {offlineMode ? '離線' : '雲端已連線'}
-              </span>
-            </span>
+              title={
+                offlineMode
+                  ? '離線：無法從伺服器載入資料或已逾時'
+                  : '云端资料库已连线'
+              }
+            />
             <button
               type="button"
               onClick={() => void onSyncRefresh()}
@@ -231,12 +222,16 @@ export default function Header({
               {user && (
                 <span
                   className={cn(
-                    'max-w-[7rem] shrink-0 truncate rounded border border-cyan-500/30 bg-cyan-950/50 px-1 py-0.5 font-mono text-[9px] sm:max-w-[9rem] sm:text-[10px] md:text-xs',
+                    'max-w-[6rem] shrink-0 truncate rounded border border-cyan-500/30 bg-cyan-950/50 px-2 py-1 font-mono text-[9px] sm:max-w-[8rem] sm:text-[10px] md:text-xs',
                     theme === 'dark' ? 'text-cyan-400/90' : 'text-cyan-800'
                   )}
-                  title={`${user.username} · ${ROLE_LABELS[user.role]}`}
+                  title={
+                    user.username.trim()
+                      ? `${user.username} · ${ROLE_LABELS[user.role]}`
+                      : ROLE_LABELS[user.role]
+                  }
                 >
-                  {user.username} · {ROLE_LABELS[user.role]} ({ROLE_SHORT[user.role]})
+                  {ROLE_LABELS[user.role]} ({ROLE_SHORT[user.role]})
                 </span>
               )}
             </div>
@@ -287,33 +282,20 @@ export default function Header({
                 </button>
               </div>
             )}
-            <span
+            <div
+              role="status"
               className={cn(
-                'flex shrink-0 items-center gap-0.5 rounded-full border px-0.5 py-0',
+                'h-3 w-3 shrink-0 rounded-full sm:h-4 sm:w-4',
                 offlineMode
-                  ? theme === 'dark'
-                    ? 'border-amber-500/30 bg-amber-950/60 text-amber-300'
-                    : 'border-amber-300 bg-amber-50 text-amber-900'
-                  : theme === 'dark'
-                    ? 'border-cyan-500/25 bg-cyan-950/60 text-cyan-300'
-                    : 'border-cyan-300 bg-cyan-50 text-cyan-900'
+                  ? 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.55)]'
+                  : 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]'
               )}
               title={
                 offlineMode
-                  ? '首包資料未從伺服器取得（逾時或錯誤），畫面為預設空資料'
-                  : '已從雲端 PostgreSQL 同步首包資料'
+                  ? '離線：無法從伺服器載入資料或已逾時（使用預設本地資料）'
+                  : '云端资料库已连线'
               }
-            >
-              <span
-                className={cn(
-                  'h-1.5 w-1.5 shrink-0 rounded-full animate-pulse',
-                  offlineMode ? 'bg-amber-400' : 'bg-cyan-400'
-                )}
-              />
-              <span className="hidden whitespace-nowrap text-[10px] font-medium sm:text-xs xl:inline-block">
-                {offlineMode ? '離線預設 · 未同步資料庫' : '雲端資料庫已連線'}
-              </span>
-            </span>
+            />
             <button
               type="button"
               onClick={() => void onSyncRefresh()}
