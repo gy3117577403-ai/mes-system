@@ -1094,7 +1094,7 @@ export default function KanbanApp() {
   return (
     <div
       className={cn(
-        'h-screen w-full font-sans flex flex-col overflow-hidden transition-colors duration-500',
+        'flex h-screen w-full max-w-[100vw] flex-col overflow-x-hidden overflow-y-hidden font-sans transition-colors duration-500',
         pageShell(theme)
       )}
       suppressHydrationWarning

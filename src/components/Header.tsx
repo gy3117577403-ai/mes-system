@@ -144,7 +144,7 @@ export default function Header({
             headerBar(theme)
           )}
         >
-          <div className="w-full min-w-0 overflow-x-auto scrollbar-hide [&::-webkit-scrollbar]:hidden">
+          <div className="w-full max-w-full min-w-0 overflow-x-auto scrollbar-hide [&::-webkit-scrollbar]:hidden">
             <div className="flex min-w-max items-center gap-3 px-2 py-4 md:px-6">
             <span className={cn('shrink-0 whitespace-nowrap text-sm font-black tracking-tight', headerTitle(theme))}>
               车间大屏
@@ -213,7 +213,7 @@ export default function Header({
             headerBar(theme)
           )}
         >
-          <div className="w-full min-w-0 overflow-x-auto scrollbar-hide [&::-webkit-scrollbar]:hidden">
+          <div className="w-full max-w-full min-w-0 overflow-x-auto scrollbar-hide [&::-webkit-scrollbar]:hidden">
             <div className="flex min-w-max items-center gap-3 px-2 py-4 md:px-6">
             <div className="shrink-0 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 p-2.5 shadow-[0_0_24px_rgba(34,211,238,0.35)]">
               <LayoutDashboard className="h-6 w-6 text-white" />
