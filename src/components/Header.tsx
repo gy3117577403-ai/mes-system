@@ -253,7 +253,7 @@ export default function Header({
                 <button
                   type="button"
                   onClick={() => setMainAppView('kanban')}
-                  className={`flex h-8 shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-black transition-all duration-300 md:h-9 md:px-2.5 ${
+                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[11px] font-black transition-all duration-300 md:h-9 md:w-9 ${
                     mainAppView === 'kanban'
                       ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-[0_0_16px_rgba(34,211,238,0.4)]'
                       : theme === 'dark'
@@ -261,14 +261,14 @@ export default function Header({
                         : 'text-gray-500 hover:text-gray-800'
                   }`}
                   title="看板模式"
+                  aria-label="看板模式"
                 >
                   <LayoutGrid className="h-3.5 w-3.5 shrink-0 md:h-4 md:w-4" />
-                  <span className="hidden xl:inline-block">看板模式</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setMainAppView('dashboard')}
-                  className={`flex h-8 shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-black transition-all duration-300 md:h-9 md:px-2.5 ${
+                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[11px] font-black transition-all duration-300 md:h-9 md:w-9 ${
                     mainAppView === 'dashboard'
                       ? 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow-[0_0_16px_rgba(167,139,250,0.4)]'
                       : theme === 'dark'
@@ -276,9 +276,9 @@ export default function Header({
                         : 'text-gray-500 hover:text-gray-800'
                   }`}
                   title="仪表盘"
+                  aria-label="仪表盘"
                 >
                   <Gauge className="h-3.5 w-3.5 shrink-0 md:h-4 md:w-4" />
-                  <span className="hidden xl:inline-block">仪表盘</span>
                 </button>
               </div>
             )}
@@ -301,22 +301,22 @@ export default function Header({
               onClick={() => void onSyncRefresh()}
               disabled={isSyncing}
               className={cn(
-                'flex h-9 shrink-0 items-center gap-1 rounded-lg border px-2 py-1.5 text-xs font-black shadow-[0_0_12px_rgba(34,211,238,0.12)] transition-all',
+                'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border text-xs font-black shadow-[0_0_12px_rgba(34,211,238,0.12)] transition-all md:h-10 md:w-10 md:rounded-xl',
                 theme === 'dark'
                   ? 'border-cyan-400/35 bg-gradient-to-r from-cyan-600/85 to-blue-600/85 text-white hover:from-cyan-500 hover:to-blue-500'
                   : 'border-cyan-400 bg-gradient-to-r from-cyan-500 to-blue-600 text-white hover:opacity-95',
                 isSyncing && 'cursor-wait opacity-80'
               )}
               title="從雲端重新載入訂單與設定"
+              aria-label="從雲端重新載入訂單與設定"
             >
               {isSyncing ? (
-                <RefreshCw className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+                <RefreshCw className="h-3.5 w-3.5 shrink-0 animate-spin md:h-4 md:w-4" aria-hidden />
               ) : (
                 <span className="shrink-0" aria-hidden>
                   🔄
                 </span>
               )}
-              <span className="hidden lg:inline-block">同步/刷新</span>
             </button>
             <span
               className={cn(
@@ -408,7 +408,9 @@ export default function Header({
               <button
                 type="button"
                 onClick={() => setNotifOpen((v) => !v)}
-                className={`relative flex h-9 shrink-0 items-center gap-1 rounded-lg border px-2 text-xs font-bold transition-all duration-300 md:h-10 md:gap-1.5 md:rounded-xl md:px-2.5 md:text-sm ${
+                title="安灯调度"
+                aria-label="安灯调度"
+                className={`relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border text-xs font-bold transition-all duration-300 md:h-10 md:w-10 md:rounded-xl md:text-sm ${
                   warehouseUrgent
                     ? 'bg-red-950/80 border-red-500 text-red-300 animate-pulse shadow-[0_0_22px_rgba(239,68,68,0.45)]'
                     : theme === 'dark'
@@ -419,7 +421,6 @@ export default function Header({
                 <BellRing
                   className={`h-4 w-4 shrink-0 md:h-5 md:w-5 ${andonNotifications.length > 0 ? 'text-red-400' : theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}
                 />
-                <span className="hidden xl:inline-block">安灯调度</span>
                 {andonNotifications.length > 0 && (
                   <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-red-600 text-[10px] font-black text-white border border-red-400">
                     {andonNotifications.length}
@@ -552,10 +553,11 @@ export default function Header({
               <button
                 type="button"
                 onClick={onOpenQCReview}
-                className="hidden h-9 shrink-0 items-center gap-1 rounded-lg border border-amber-500/50 bg-amber-600/30 px-2 text-xs font-bold text-amber-200 transition-all hover:bg-amber-600/50 sm:flex md:h-10 md:rounded-xl md:px-2.5 md:text-sm"
+                className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-amber-500/50 bg-amber-600/30 text-xs font-bold text-amber-200 transition-all hover:bg-amber-600/50 sm:flex md:h-10 md:w-10 md:rounded-xl md:text-sm"
+                title="质检审核"
+                aria-label="质检审核"
               >
                 <ClipboardCheck className="h-4 w-4 shrink-0 md:h-[18px] md:w-[18px]" />
-                <span className="hidden xl:inline-block">质检审核</span>
               </button>
             )}
 
@@ -566,35 +568,35 @@ export default function Header({
               onClick={triggerBatchAISchedule}
               disabled={isProcessing}
               className={cn(
-                'flex h-9 shrink-0 items-center gap-1 rounded-lg border border-blue-500/50 px-2 text-xs font-bold shadow-[0_0_10px_rgba(59,130,246,0.2)] transition-all md:h-10 md:rounded-xl md:px-2.5 md:text-sm',
+                'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-blue-500/50 text-xs font-bold shadow-[0_0_10px_rgba(59,130,246,0.2)] transition-all md:h-10 md:w-10 md:rounded-xl md:text-sm',
                 theme === 'dark'
                   ? 'bg-slate-800 text-slate-200 hover:bg-slate-700'
                   : 'bg-gray-100 text-gray-900 hover:bg-gray-200',
                 isProcessing && 'cursor-wait opacity-70'
               )}
               title="AI 排产"
+              aria-label="AI 排产"
             >
               {isProcessing ? (
                 <div className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-white border-t-transparent md:h-4 md:w-4" />
               ) : (
                 <Bot className="h-4 w-4 shrink-0 md:h-[18px] md:w-[18px]" strokeWidth={2.5} />
               )}
-              <span className="hidden xl:inline-block">⚡ AI 排产</span>
             </button>
 
             <button
               type="button"
               onClick={() => setIsAddModalOpen(true)}
               className={cn(
-                'flex h-9 shrink-0 items-center gap-1 rounded-lg border border-blue-500/50 px-2 text-xs font-bold shadow-[0_0_8px_rgba(59,130,246,0.2)] transition-all md:h-10 md:rounded-xl md:px-2.5 md:text-sm',
+                'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-blue-500/50 text-xs font-bold shadow-[0_0_8px_rgba(59,130,246,0.2)] transition-all md:h-10 md:w-10 md:rounded-xl md:text-sm',
                 theme === 'dark'
                   ? 'bg-slate-800 text-slate-200 hover:bg-slate-700'
                   : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
               )}
               title="录入"
+              aria-label="录入"
             >
-              <Plus className="h-4 w-4 shrink-0 md:h-[18px] md:w-[18px]" strokeWidth={3} />{' '}
-              <span className="hidden xl:inline-block">录入</span>
+              <Plus className="h-4 w-4 shrink-0 md:h-[18px] md:w-[18px]" strokeWidth={3} />
             </button>
 
             <input
@@ -610,33 +612,31 @@ export default function Header({
               onClick={() => fileInputRef.current && fileInputRef.current.click()}
               disabled={isProcessing}
               className={cn(
-                'flex h-9 shrink-0 items-center gap-1 rounded-lg border border-blue-500/50 px-2 text-xs font-bold text-blue-500 transition-all md:h-10 md:rounded-xl md:px-2.5 md:text-sm',
+                'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-blue-500/50 text-xs font-bold text-blue-500 transition-all md:h-10 md:w-10 md:rounded-xl md:text-sm',
                 theme === 'dark'
                   ? 'bg-slate-800 hover:bg-slate-700'
                   : 'bg-gray-100 hover:bg-gray-200',
                 isProcessing && 'cursor-wait opacity-70'
               )}
               title="Excel 导入"
+              aria-label="Excel 导入"
             >
               <UploadCloud className="h-4 w-4 shrink-0 md:h-[18px] md:w-[18px]" strokeWidth={2.5} />
-              <span className="hidden xl:inline-block">Excel</span>
             </button>
 
             <button
               type="button"
               onClick={() => setViewMode((v) => (v === 'manager' ? 'workshop' : 'manager'))}
               className={cn(
-                'flex h-9 shrink-0 items-center gap-1 rounded-lg border border-cyan-500/50 px-2 text-xs font-bold text-cyan-500 transition-all md:h-10 md:rounded-xl md:px-2.5 md:text-sm',
+                'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-cyan-500/50 text-xs font-bold text-cyan-500 transition-all md:h-10 md:w-10 md:rounded-xl md:text-sm',
                 theme === 'dark'
                   ? 'bg-slate-800 hover:bg-slate-700'
                   : 'bg-gray-100 hover:bg-gray-200'
               )}
               title={viewMode === 'manager' ? '车间大屏' : '排产视图'}
+              aria-label={viewMode === 'manager' ? '车间大屏' : '排产视图'}
             >
               <Monitor className="h-4 w-4 shrink-0 md:h-[18px] md:w-[18px]" strokeWidth={2.25} />
-              <span className="hidden xl:inline-block">
-                {viewMode === 'manager' ? '车间大屏' : '排产视图'}
-              </span>
             </button>
 
             <button
@@ -644,16 +644,16 @@ export default function Header({
               onClick={triggerClearCompletedData}
               disabled={isProcessing}
               className={cn(
-                'flex h-9 shrink-0 items-center gap-1 rounded-lg border px-2 text-xs font-bold transition-all md:h-10 md:rounded-xl md:px-2.5 md:text-sm',
+                'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border text-xs font-bold transition-all md:h-10 md:w-10 md:rounded-xl md:text-sm',
                 theme === 'dark'
                   ? 'border-slate-600 bg-slate-800 text-slate-300 hover:bg-slate-700'
                   : 'border-gray-300 bg-gray-100 text-gray-800 hover:bg-gray-200',
                 isProcessing && 'cursor-wait opacity-70'
               )}
               title="仅清除已完成"
+              aria-label="仅清除已完成"
             >
               <Eraser className="h-4 w-4 shrink-0 text-slate-400 md:h-[18px] md:w-[18px]" strokeWidth={2.5} />
-              <span className="hidden xl:inline-block">清理完成</span>
             </button>
 
             <button
@@ -661,16 +661,16 @@ export default function Header({
               onClick={triggerClearAllData}
               disabled={isProcessing}
               className={cn(
-                'flex h-9 shrink-0 items-center gap-1 rounded-lg border border-red-500/50 px-2 text-xs font-bold text-red-500 transition-all md:h-10 md:rounded-xl md:px-2.5 md:text-sm',
+                'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-red-500/50 text-xs font-bold text-red-500 transition-all md:h-10 md:w-10 md:rounded-xl md:text-sm',
                 theme === 'dark'
                   ? 'bg-slate-900 hover:bg-red-950/50'
                   : 'bg-white hover:bg-red-50',
                 isProcessing && 'cursor-wait opacity-70'
               )}
               title="清空全部"
+              aria-label="清空全部"
             >
               <Trash2 className="h-4 w-4 shrink-0 md:h-[18px] md:w-[18px]" strokeWidth={2.5} />
-              <span className="hidden xl:inline-block">清盘</span>
             </button>
           </div>
         </header>
