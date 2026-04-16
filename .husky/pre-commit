@@ -1,0 +1,2 @@
+#!/usr/bin/env sh
+# 嚴格校驗已掛載於 pre-push（pnpm run check:all）

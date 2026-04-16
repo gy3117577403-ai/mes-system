@@ -11,9 +11,13 @@ const eslintConfig = defineConfig([
     ".next/**",
     "out/**",
     "build/**",
+    "dist/**",
     "next-env.d.ts",
     // 舊版參考源碼，不參與 ESLint
     "_legacy_code/**",
+    // Electron 入口與 Node 腳本（非 Next 編譯目標）
+    "main.js",
+    "scripts/**",
   ]),
 ]);
 

@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+echo "🚀 [CI Guard] 正在执行推流前严格校验 (Type-Check & Next Lint)..."
+pnpm run check:all
+
+if [ $? -ne 0 ]; then
+  echo "❌ [CI Guard] 致命错误：校验失败！为保护云端生产环境，已无情拦截本次 Push。"
+  exit 1
+fi
+echo "✅ [CI Guard] 校验完美通过，放行推流到 GitHub。"

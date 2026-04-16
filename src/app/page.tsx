@@ -156,7 +156,6 @@ export default function KanbanApp() {
     }
     let cancelled = false;
     /* 載入開始前須同步重置，避免與下方 fetch 完成回調的競態 */
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional load lifecycle reset
     setDataReady(false);
     setOfflineMode(false);
 

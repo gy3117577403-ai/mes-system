@@ -9,9 +9,12 @@
     "dev:3000": "next dev -p 3000 -H 127.0.0.1",
     "build": "prisma generate && prisma db push && next build",
     "start": "next start -p 3456 -H 127.0.0.1",
-    "lint": "eslint",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint .",
+    "check:all": "pnpm run type-check && pnpm run lint",
     "db:check": "node scripts/check-db-counts.cjs",
-    "build-exe": "electron-builder --win"
+    "build-exe": "electron-builder --win",
+    "prepare": "husky"
   },
   "build": {
     "appId": "com.mes.system",
@@ -50,6 +53,7 @@
     "electron-builder": "^26.8.1",
     "eslint": "^9",
     "eslint-config-next": "16.2.1",
+    "husky": "^9.1.7",
     "prisma": "6.19.0",
     "tailwindcss": "^4",
     "typescript": "^5"
