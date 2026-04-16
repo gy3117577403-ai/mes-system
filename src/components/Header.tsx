@@ -22,6 +22,7 @@ import {
   Sun,
   Moon,
   RefreshCw,
+  Monitor,
 } from 'lucide-react';
 import { Order, ViewMode, MainAppView, ActivityLogEntry, AndonNotification } from '@/types';
 import { useAuth } from '@/context/AuthContext';
@@ -144,22 +145,28 @@ export default function Header({
             headerBar(theme)
           )}
         >
-          <div className="w-full max-w-full min-w-0 overflow-x-auto scrollbar-hide [&::-webkit-scrollbar]:hidden">
-            <div className="flex min-w-max items-center gap-3 px-2 py-4 md:px-6">
-            <span className={cn('shrink-0 whitespace-nowrap text-sm font-black tracking-tight', headerTitle(theme))}>
+          <div className="flex w-full flex-nowrap items-center gap-1 overflow-hidden px-1 py-2 md:gap-2">
+            <span
+              className={cn(
+                'max-w-[4.5rem] shrink-0 truncate text-xs font-black tracking-tight sm:max-w-[6rem] sm:text-sm',
+                headerTitle(theme)
+              )}
+              title="车间大屏"
+            >
               车间大屏
             </span>
             <span
               className={cn(
-                'flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium',
+                'flex max-w-[5rem] shrink-0 items-center gap-1 truncate rounded-full border px-1 py-0.5 text-[10px] font-medium sm:max-w-[7rem] sm:px-1.5 sm:text-xs',
                 offlineMode
                   ? theme === 'dark'
-                    ? 'bg-amber-950/60 text-amber-300 border-amber-500/30'
-                    : 'bg-amber-50 text-amber-900 border-amber-300'
+                    ? 'border-amber-500/30 bg-amber-950/60 text-amber-300'
+                    : 'border-amber-300 bg-amber-50 text-amber-900'
                   : theme === 'dark'
-                    ? 'bg-cyan-950/60 text-cyan-300 border-cyan-500/25'
-                    : 'bg-cyan-50 text-cyan-900 border-cyan-300'
+                    ? 'border-cyan-500/25 bg-cyan-950/60 text-cyan-300'
+                    : 'border-cyan-300 bg-cyan-50 text-cyan-900'
               )}
+              title={offlineMode ? '離線' : '雲端已連線'}
             >
               <span
                 className={cn(
@@ -167,41 +174,42 @@ export default function Header({
                   offlineMode ? 'bg-amber-400' : 'bg-cyan-400 animate-pulse'
                 )}
               />
-              {offlineMode ? '離線' : '雲端已連線'}
+              <span className="truncate">{offlineMode ? '離線' : '雲端已連線'}</span>
             </span>
             <button
               type="button"
               onClick={() => void onSyncRefresh()}
               disabled={isSyncing}
               className={cn(
-                'flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border px-3 py-2 text-sm font-black shadow-[0_0_16px_rgba(34,211,238,0.15)] transition-all',
+                'flex h-9 shrink-0 items-center gap-1 rounded-lg border px-2 py-1.5 text-xs font-black shadow-[0_0_12px_rgba(34,211,238,0.12)] transition-all',
                 theme === 'dark'
-                  ? 'bg-gradient-to-r from-cyan-600/90 to-blue-600/90 border-cyan-400/40 text-white hover:from-cyan-500 hover:to-blue-500'
-                  : 'bg-gradient-to-r from-cyan-500 to-blue-600 border-cyan-400 text-white hover:opacity-95',
-                isSyncing && 'opacity-80 cursor-wait'
+                  ? 'border-cyan-400/40 bg-gradient-to-r from-cyan-600/90 to-blue-600/90 text-white hover:from-cyan-500 hover:to-blue-500'
+                  : 'border-cyan-400 bg-gradient-to-r from-cyan-500 to-blue-600 text-white hover:opacity-95',
+                isSyncing && 'cursor-wait opacity-80'
               )}
               title="從雲端重新載入訂單與設定"
             >
               {isSyncing ? (
-                <RefreshCw className="w-4 h-4 animate-spin shrink-0" aria-hidden />
+                <RefreshCw className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
               ) : (
                 <span className="shrink-0" aria-hidden>
                   🔄
                 </span>
               )}
-              同步/刷新
+              <span className="hidden xl:inline-block">同步/刷新</span>
             </button>
             <button
               type="button"
               onClick={() => setViewMode('manager')}
               className={cn(
-                'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-cyan-500/50 px-3 py-2 text-sm font-bold text-cyan-500',
+                'flex h-9 shrink-0 items-center gap-1 rounded-lg border border-cyan-500/50 px-2 py-1.5 text-xs font-bold text-cyan-500',
                 theme === 'dark' ? 'bg-slate-800 hover:bg-slate-700' : 'bg-gray-100 hover:bg-gray-200'
               )}
+              title="排产视图"
             >
-              排产视图
+              <Monitor className="h-4 w-4 shrink-0" strokeWidth={2.25} aria-hidden />
+              <span className="hidden xl:inline-block">排产视图</span>
             </button>
-            </div>
           </div>
         </header>
       )}
@@ -213,23 +221,23 @@ export default function Header({
             headerBar(theme)
           )}
         >
-          <div className="w-full max-w-full min-w-0 overflow-x-auto scrollbar-hide [&::-webkit-scrollbar]:hidden">
-            <div className="flex min-w-max items-center gap-3 px-2 py-4 md:px-6">
-            <div className="shrink-0 rounded-xl bg-gradient-to-br from-cyan-500 to-blue-600 p-2.5 shadow-[0_0_24px_rgba(34,211,238,0.35)]">
-              <LayoutDashboard className="h-6 w-6 text-white" />
+          <div className="flex w-full flex-nowrap items-center gap-1 overflow-hidden px-1 py-2 md:gap-2">
+            <div className="shrink-0 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 p-1.5 shadow-[0_0_20px_rgba(34,211,238,0.3)] md:rounded-xl md:p-2.5">
+              <LayoutDashboard className="h-5 w-5 text-white md:h-6 md:w-6" />
             </div>
-            <div className="flex shrink-0 flex-col justify-center gap-1 pr-1">
-              <div className="flex items-center gap-2">
+            <div className="flex min-w-0 shrink-0 flex-col justify-center gap-0.5 pr-0.5">
+              <div className="flex min-w-0 items-center gap-1 md:gap-2">
                 <h1
                   className={cn(
-                    'whitespace-nowrap text-lg font-bold tracking-tight md:text-xl',
+                    'max-w-[5.5rem] truncate text-xs font-bold tracking-tight sm:max-w-[9rem] md:max-w-[12rem] md:text-sm lg:max-w-[16rem] xl:max-w-none xl:whitespace-nowrap xl:text-base',
                     headerTitle(theme)
                   )}
+                  title="线束车间数字化排产大屏"
                 >
                   线束车间数字化排产大屏
                 </h1>
                 {user && (
-                  <span className="shrink-0 whitespace-nowrap rounded-lg border border-cyan-500/30 bg-cyan-950/50 px-2 py-0.5 font-mono text-[10px] text-cyan-400/90 sm:text-xs">
+                  <span className="hidden max-w-[6rem] shrink-0 truncate rounded border border-cyan-500/30 bg-cyan-950/50 px-1 py-0.5 font-mono text-[9px] text-cyan-400/90 sm:inline-block sm:max-w-[8rem] sm:px-1.5 sm:text-[10px] md:text-xs">
                     {user.username} · {ROLE_LABELS[user.role]} ({ROLE_SHORT[user.role]})
                   </span>
                 )}
@@ -244,7 +252,7 @@ export default function Header({
             {user?.role === 'Boss' && (
               <div
                 className={cn(
-                  'flex shrink-0 overflow-hidden rounded-xl border p-0.5 shadow-inner',
+                  'flex h-8 shrink-0 items-center overflow-hidden rounded-lg border p-0.5 shadow-inner md:h-9 md:rounded-xl',
                   theme === 'dark'
                     ? 'border-cyan-500/30 bg-slate-950/60'
                     : 'border-cyan-400/40 bg-gray-100'
@@ -253,36 +261,38 @@ export default function Header({
                 <button
                   type="button"
                   onClick={() => setMainAppView('kanban')}
-                  className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-black transition-all duration-300 ${
+                  className={`flex h-8 shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-black transition-all duration-300 md:h-9 md:px-2.5 ${
                     mainAppView === 'kanban'
                       ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white shadow-[0_0_16px_rgba(34,211,238,0.4)]'
                       : theme === 'dark'
                         ? 'text-slate-500 hover:text-slate-300'
                         : 'text-gray-500 hover:text-gray-800'
                   }`}
+                  title="看板模式"
                 >
-                  <LayoutGrid className="h-4 w-4 shrink-0" />
-                  看板模式
+                  <LayoutGrid className="h-3.5 w-3.5 shrink-0 md:h-4 md:w-4" />
+                  <span className="hidden xl:inline-block">看板模式</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setMainAppView('dashboard')}
-                  className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-xs font-black transition-all duration-300 ${
+                  className={`flex h-8 shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-[11px] font-black transition-all duration-300 md:h-9 md:px-2.5 ${
                     mainAppView === 'dashboard'
                       ? 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white shadow-[0_0_16px_rgba(167,139,250,0.4)]'
                       : theme === 'dark'
                         ? 'text-slate-500 hover:text-slate-300'
                         : 'text-gray-500 hover:text-gray-800'
                   }`}
+                  title="仪表盘"
                 >
-                  <Gauge className="h-4 w-4 shrink-0" />
-                  仪表盘
+                  <Gauge className="h-3.5 w-3.5 shrink-0 md:h-4 md:w-4" />
+                  <span className="hidden xl:inline-block">仪表盘</span>
                 </button>
               </div>
             )}
             <span
               className={cn(
-                'flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium',
+                'flex max-w-[4.5rem] shrink-0 items-center gap-1 truncate rounded-full border px-1 py-0.5 text-[10px] font-medium sm:max-w-[6.5rem] sm:px-1.5 sm:text-xs md:max-w-[9rem]',
                 offlineMode
                   ? theme === 'dark'
                     ? 'border-amber-500/30 bg-amber-950/60 text-amber-300'
@@ -303,14 +313,16 @@ export default function Header({
                   offlineMode ? 'bg-amber-400' : 'bg-cyan-400'
                 )}
               />
-              {offlineMode ? '離線預設 · 未同步資料庫' : '雲端資料庫已連線'}
+              <span className="truncate">
+                {offlineMode ? '離線預設 · 未同步資料庫' : '雲端資料庫已連線'}
+              </span>
             </span>
             <button
               type="button"
               onClick={() => void onSyncRefresh()}
               disabled={isSyncing}
               className={cn(
-                'flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border px-3 py-1.5 text-xs font-black shadow-[0_0_14px_rgba(34,211,238,0.12)] transition-all',
+                'flex h-9 shrink-0 items-center gap-1 rounded-lg border px-2 py-1.5 text-xs font-black shadow-[0_0_12px_rgba(34,211,238,0.12)] transition-all',
                 theme === 'dark'
                   ? 'border-cyan-400/35 bg-gradient-to-r from-cyan-600/85 to-blue-600/85 text-white hover:from-cyan-500 hover:to-blue-500'
                   : 'border-cyan-400 bg-gradient-to-r from-cyan-500 to-blue-600 text-white hover:opacity-95',
@@ -325,14 +337,14 @@ export default function Header({
                   🔄
                 </span>
               )}
-              同步/刷新
+              <span className="hidden xl:inline-block">同步/刷新</span>
             </button>
-            <span className={cn('shrink-0 whitespace-nowrap text-sm font-medium', headerMuted(theme))}>
-              总计 <strong className="text-lg text-cyan-500">{orders.length}</strong> 份排单
+            <span className={cn('shrink-0 px-0.5 text-xs font-medium leading-none', headerMuted(theme))}>
+              计<strong className="text-sm text-cyan-500 md:text-base">{orders.length}</strong>单
             </span>
             <span
               className={cn(
-                'flex shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap rounded-lg border px-2 py-1 text-sm font-medium transition-colors',
+                'flex h-8 shrink-0 cursor-pointer items-center gap-0.5 rounded-md border px-1 py-0.5 text-[10px] font-medium transition-colors md:h-9 md:gap-1 md:rounded-lg md:px-1.5 md:text-xs',
                 theme === 'dark'
                   ? 'border-slate-700/50 bg-slate-800/50 text-slate-400 hover:bg-slate-700/80'
                   : 'border-gray-300 bg-gray-100 text-gray-700 hover:bg-gray-200'
@@ -340,8 +352,10 @@ export default function Header({
               onClick={handleEditCapacity}
               title="点击修改日上限"
             >
-              单日上限: <strong className="text-indigo-500">{dailyCapacity}</strong> 分钟
-              <Edit3 size={12} className={cn('ml-1', theme === 'dark' ? 'text-slate-500' : 'text-gray-500')} />
+              <span className="hidden xl:inline-block">上限 </span>
+              <strong className="text-indigo-500">{dailyCapacity}</strong>
+              <span className="hidden xl:inline-block">′</span>
+              <Edit3 className={cn('h-3 w-3 shrink-0 md:h-3.5 md:w-3.5', theme === 'dark' ? 'text-slate-500' : 'text-gray-500')} />
             </span>
             <div
               className={cn(
@@ -351,7 +365,7 @@ export default function Header({
             />
             <div
               className={cn(
-                'flex h-10 shrink-0 overflow-hidden rounded-xl border',
+                'flex h-9 shrink-0 overflow-hidden rounded-lg border md:h-10 md:rounded-xl',
                 theme === 'dark' ? 'border-slate-600 bg-slate-900/80' : 'border-gray-300 bg-gray-100'
               )}
               title="看板视图：卡片 / 精简列表"
@@ -360,7 +374,7 @@ export default function Header({
                 type="button"
                 onClick={() => setLayoutMode('card')}
                 className={cn(
-                  'flex shrink-0 items-center justify-center px-2.5 transition-colors',
+                  'flex h-9 w-9 shrink-0 items-center justify-center transition-colors md:h-10 md:w-10',
                   layoutMode === 'card'
                     ? theme === 'dark'
                       ? 'bg-cyan-600/40 text-cyan-400'
@@ -369,13 +383,13 @@ export default function Header({
                 )}
                 aria-pressed={layoutMode === 'card'}
               >
-                <LayoutGrid className="w-4 h-4" />
+                <LayoutGrid className="h-4 w-4 shrink-0" />
               </button>
               <button
                 type="button"
                 onClick={() => setLayoutMode('compact')}
                 className={cn(
-                  'flex shrink-0 items-center justify-center border-l px-2.5 transition-colors',
+                  'flex h-9 w-9 shrink-0 items-center justify-center border-l transition-colors md:h-10 md:w-10',
                   layoutMode === 'compact'
                     ? theme === 'dark'
                       ? 'bg-cyan-600/40 text-cyan-400'
@@ -385,7 +399,7 @@ export default function Header({
                 )}
                 aria-pressed={layoutMode === 'compact'}
               >
-                <List className="w-4 h-4" />
+                <List className="h-4 w-4 shrink-0" />
               </button>
             </div>
 
@@ -393,20 +407,24 @@ export default function Header({
               type="button"
               onClick={() => setTheme((t) => (t === 'dark' ? 'light' : 'dark'))}
               className={cn(
-                'flex h-10 w-10 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border transition-all',
+                'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition-all md:h-10 md:w-10 md:rounded-xl',
                 headerBtnGhost(theme)
               )}
               title={theme === 'dark' ? '切換為白晝模式' : '切換為深色模式'}
               aria-label={theme === 'dark' ? '白晝模式' : '深色模式'}
             >
-              {theme === 'dark' ? <Sun className="w-5 h-5 text-amber-400" /> : <Moon className="w-5 h-5 text-slate-700" />}
+              {theme === 'dark' ? (
+                <Sun className="h-4 w-4 shrink-0 text-amber-400 md:h-5 md:w-5" />
+              ) : (
+                <Moon className="h-4 w-4 shrink-0 text-slate-700 md:h-5 md:w-5" />
+              )}
             </button>
 
             <div ref={notifRef} className="relative shrink-0">
               <button
                 type="button"
                 onClick={() => setNotifOpen((v) => !v)}
-                className={`relative flex h-10 shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border px-3 text-sm font-bold transition-all duration-300 ${
+                className={`relative flex h-9 shrink-0 items-center gap-1 rounded-lg border px-2 text-xs font-bold transition-all duration-300 md:h-10 md:gap-1.5 md:rounded-xl md:px-2.5 md:text-sm ${
                   warehouseUrgent
                     ? 'bg-red-950/80 border-red-500 text-red-300 animate-pulse shadow-[0_0_22px_rgba(239,68,68,0.45)]'
                     : theme === 'dark'
@@ -415,9 +433,9 @@ export default function Header({
                 }`}
               >
                 <BellRing
-                  className={`w-5 h-5 ${andonNotifications.length > 0 ? 'text-red-400' : theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}
+                  className={`h-4 w-4 shrink-0 md:h-5 md:w-5 ${andonNotifications.length > 0 ? 'text-red-400' : theme === 'dark' ? 'text-slate-500' : 'text-gray-500'}`}
                 />
-                <span>安灯调度</span>
+                <span className="hidden xl:inline-block">安灯调度</span>
                 {andonNotifications.length > 0 && (
                   <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-red-600 text-[10px] font-black text-white border border-red-400">
                     {andonNotifications.length}
@@ -479,28 +497,29 @@ export default function Header({
               type="button"
               onClick={() => setAuditModalOpen(true)}
               className={cn(
-                'flex h-10 w-10 shrink-0 items-center justify-center whitespace-nowrap rounded-xl border transition-all duration-300',
+                'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border transition-all duration-300 md:h-10 md:w-10 md:rounded-xl',
                 theme === 'dark'
                   ? 'border-slate-600 bg-slate-800/80 text-slate-400 hover:text-cyan-400 hover:border-cyan-500/40'
                   : 'border-gray-300 bg-white text-gray-600 hover:text-cyan-700 hover:border-cyan-400'
               )}
               title="审计日志"
             >
-              <UserCheck className="w-5 h-5" />
+              <UserCheck className="h-4 w-4 shrink-0 md:h-5 md:w-5" />
             </button>
 
             <button
               type="button"
               onClick={() => logout()}
               className={cn(
-                'flex h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border px-3 text-xs font-bold transition-all',
+                'flex h-9 shrink-0 items-center gap-1 rounded-lg border px-2 text-xs font-bold transition-all md:h-10 md:rounded-xl md:px-2.5',
                 theme === 'dark'
                   ? 'border-slate-600 bg-slate-900/80 text-slate-400 hover:text-red-400 hover:border-red-500/40'
                   : 'border-gray-300 bg-white text-gray-700 hover:text-red-600 hover:border-red-400'
               )}
+              title="退出"
             >
-              <LogOut className="w-4 h-4" />
-              退出
+              <LogOut className="h-4 w-4 shrink-0" />
+              <span className="hidden xl:inline-block">退出</span>
             </button>
 
             <div
@@ -512,18 +531,18 @@ export default function Header({
 
             <div
               className={cn(
-                'flex h-10 min-w-[180px] w-[180px] flex-1 shrink-0 items-center overflow-hidden rounded-xl border px-2 shadow-inner sm:min-w-[240px] sm:w-[240px]',
+                'flex h-9 min-w-[80px] w-20 flex-1 shrink items-center overflow-hidden rounded-lg border px-1.5 shadow-inner sm:h-10 sm:w-32 md:w-48 md:rounded-xl md:px-2',
                 headerInput(theme)
               )}
             >
-              <Search size={16} className={cn('mr-2 shrink-0', theme === 'dark' ? 'text-slate-500' : 'text-gray-500')} />
+              <Search size={14} className={cn('mr-1 shrink-0 md:mr-2 md:h-4 md:w-4', theme === 'dark' ? 'text-slate-500' : 'text-gray-500')} />
               <input
                 type="text"
                 placeholder="搜索客户 / 型号..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className={cn(
-                  'min-w-0 w-full flex-1 border-none bg-transparent text-sm outline-none',
+                  'min-w-0 w-full flex-1 border-none bg-transparent text-xs outline-none md:text-sm',
                   theme === 'dark' ? 'text-slate-200 placeholder:text-slate-600' : 'text-gray-900 placeholder:text-gray-500'
                 )}
               />
@@ -533,7 +552,7 @@ export default function Header({
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
               className={cn(
-                'h-10 shrink-0 cursor-pointer whitespace-nowrap rounded-xl border px-3 text-sm outline-none',
+                'h-9 min-w-0 max-w-[5.25rem] shrink-0 cursor-pointer truncate rounded-lg border px-1.5 text-[11px] outline-none sm:max-w-[6.5rem] sm:px-2 md:h-10 md:max-w-none md:rounded-xl md:px-3 md:text-sm',
                 headerSelect(theme)
               )}
             >
@@ -549,10 +568,10 @@ export default function Header({
               <button
                 type="button"
                 onClick={onOpenQCReview}
-                className="hidden h-10 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border border-amber-500/50 bg-amber-600/30 px-3 text-sm font-bold text-amber-200 transition-all hover:bg-amber-600/50 sm:flex"
+                className="hidden h-9 shrink-0 items-center gap-1 rounded-lg border border-amber-500/50 bg-amber-600/30 px-2 text-xs font-bold text-amber-200 transition-all hover:bg-amber-600/50 sm:flex md:h-10 md:rounded-xl md:px-2.5 md:text-sm"
               >
-                <ClipboardCheck size={18} />
-                质检审核
+                <ClipboardCheck className="h-4 w-4 shrink-0 md:h-[18px] md:w-[18px]" />
+                <span className="hidden xl:inline-block">质检审核</span>
               </button>
             )}
 
@@ -563,32 +582,35 @@ export default function Header({
               onClick={triggerBatchAISchedule}
               disabled={isProcessing}
               className={cn(
-                'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-blue-500/50 px-4 py-2 text-sm font-bold shadow-[0_0_12px_rgba(59,130,246,0.2)] transition-all',
+                'flex h-9 shrink-0 items-center gap-1 rounded-lg border border-blue-500/50 px-2 text-xs font-bold shadow-[0_0_10px_rgba(59,130,246,0.2)] transition-all md:h-10 md:rounded-xl md:px-2.5 md:text-sm',
                 theme === 'dark'
-                  ? 'bg-slate-800 hover:bg-slate-700 text-slate-200'
-                  : 'bg-gray-100 hover:bg-gray-200 text-gray-900',
-                isProcessing && 'opacity-70 cursor-wait'
+                  ? 'bg-slate-800 text-slate-200 hover:bg-slate-700'
+                  : 'bg-gray-100 text-gray-900 hover:bg-gray-200',
+                isProcessing && 'cursor-wait opacity-70'
               )}
+              title="AI 排产"
             >
               {isProcessing ? (
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                <div className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-white border-t-transparent md:h-4 md:w-4" />
               ) : (
-                <Bot size={18} strokeWidth={2.5} />
+                <Bot className="h-4 w-4 shrink-0 md:h-[18px] md:w-[18px]" strokeWidth={2.5} />
               )}
-              <span className="hidden xl:inline">⚡ AI 排产</span>
+              <span className="hidden xl:inline-block">⚡ AI 排产</span>
             </button>
 
             <button
               type="button"
               onClick={() => setIsAddModalOpen(true)}
               className={cn(
-                'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-blue-500/50 px-3 py-2 text-sm font-bold shadow-[0_0_8px_rgba(59,130,246,0.2)] transition-all',
+                'flex h-9 shrink-0 items-center gap-1 rounded-lg border border-blue-500/50 px-2 text-xs font-bold shadow-[0_0_8px_rgba(59,130,246,0.2)] transition-all md:h-10 md:rounded-xl md:px-2.5 md:text-sm',
                 theme === 'dark'
-                  ? 'bg-slate-800 hover:bg-slate-700 text-slate-200'
-                  : 'bg-gray-100 hover:bg-gray-200 text-gray-900'
+                  ? 'bg-slate-800 text-slate-200 hover:bg-slate-700'
+                  : 'bg-gray-100 text-gray-900 hover:bg-gray-200'
               )}
+              title="录入"
             >
-              <Plus size={18} strokeWidth={3} /> <span className="hidden sm:inline">录入</span>
+              <Plus className="h-4 w-4 shrink-0 md:h-[18px] md:w-[18px]" strokeWidth={3} />{' '}
+              <span className="hidden xl:inline-block">录入</span>
             </button>
 
             <input
@@ -604,28 +626,33 @@ export default function Header({
               onClick={() => fileInputRef.current && fileInputRef.current.click()}
               disabled={isProcessing}
               className={cn(
-                'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-blue-500/50 px-3 py-2 text-sm font-bold text-blue-500 transition-all',
+                'flex h-9 shrink-0 items-center gap-1 rounded-lg border border-blue-500/50 px-2 text-xs font-bold text-blue-500 transition-all md:h-10 md:rounded-xl md:px-2.5 md:text-sm',
                 theme === 'dark'
                   ? 'bg-slate-800 hover:bg-slate-700'
                   : 'bg-gray-100 hover:bg-gray-200',
-                isProcessing && 'opacity-70 cursor-wait'
+                isProcessing && 'cursor-wait opacity-70'
               )}
+              title="Excel 导入"
             >
-              <UploadCloud size={18} strokeWidth={2.5} />
-              <span className="hidden lg:inline">Excel</span>
+              <UploadCloud className="h-4 w-4 shrink-0 md:h-[18px] md:w-[18px]" strokeWidth={2.5} />
+              <span className="hidden xl:inline-block">Excel</span>
             </button>
 
             <button
               type="button"
               onClick={() => setViewMode((v) => (v === 'manager' ? 'workshop' : 'manager'))}
               className={cn(
-                'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-cyan-500/50 px-3 py-2 text-sm font-bold text-cyan-500 transition-all',
+                'flex h-9 shrink-0 items-center gap-1 rounded-lg border border-cyan-500/50 px-2 text-xs font-bold text-cyan-500 transition-all md:h-10 md:rounded-xl md:px-2.5 md:text-sm',
                 theme === 'dark'
                   ? 'bg-slate-800 hover:bg-slate-700'
                   : 'bg-gray-100 hover:bg-gray-200'
               )}
+              title={viewMode === 'manager' ? '车间大屏' : '排产视图'}
             >
-              {viewMode === 'manager' ? '车间大屏' : '排产视图'}
+              <Monitor className="h-4 w-4 shrink-0 md:h-[18px] md:w-[18px]" strokeWidth={2.25} />
+              <span className="hidden xl:inline-block">
+                {viewMode === 'manager' ? '车间大屏' : '排产视图'}
+              </span>
             </button>
 
             <button
@@ -633,16 +660,16 @@ export default function Header({
               onClick={triggerClearCompletedData}
               disabled={isProcessing}
               className={cn(
-                'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border px-3 py-2 text-sm font-bold transition-all',
+                'flex h-9 shrink-0 items-center gap-1 rounded-lg border px-2 text-xs font-bold transition-all md:h-10 md:rounded-xl md:px-2.5 md:text-sm',
                 theme === 'dark'
-                  ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600'
-                  : 'bg-gray-100 hover:bg-gray-200 text-gray-800 border-gray-300',
-                isProcessing && 'opacity-70 cursor-wait'
+                  ? 'border-slate-600 bg-slate-800 text-slate-300 hover:bg-slate-700'
+                  : 'border-gray-300 bg-gray-100 text-gray-800 hover:bg-gray-200',
+                isProcessing && 'cursor-wait opacity-70'
               )}
               title="仅清除已完成"
             >
-              <Eraser size={18} strokeWidth={2.5} className="text-slate-400" />
-              <span className="hidden xl:inline">清理完成</span>
+              <Eraser className="h-4 w-4 shrink-0 text-slate-400 md:h-[18px] md:w-[18px]" strokeWidth={2.5} />
+              <span className="hidden xl:inline-block">清理完成</span>
             </button>
 
             <button
@@ -650,18 +677,17 @@ export default function Header({
               onClick={triggerClearAllData}
               disabled={isProcessing}
               className={cn(
-                'flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-red-500/50 px-3 py-2 text-sm font-bold text-red-500 transition-all',
+                'flex h-9 shrink-0 items-center gap-1 rounded-lg border border-red-500/50 px-2 text-xs font-bold text-red-500 transition-all md:h-10 md:rounded-xl md:px-2.5 md:text-sm',
                 theme === 'dark'
                   ? 'bg-slate-900 hover:bg-red-950/50'
                   : 'bg-white hover:bg-red-50',
-                isProcessing && 'opacity-70 cursor-wait'
+                isProcessing && 'cursor-wait opacity-70'
               )}
               title="清空全部"
             >
-              <Trash2 size={18} strokeWidth={2.5} />
-              <span className="hidden xl:inline">清盘</span>
+              <Trash2 className="h-4 w-4 shrink-0 md:h-[18px] md:w-[18px]" strokeWidth={2.5} />
+              <span className="hidden xl:inline-block">清盘</span>
             </button>
-            </div>
           </div>
         </header>
       )}
