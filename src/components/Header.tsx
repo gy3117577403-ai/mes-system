@@ -224,26 +224,21 @@ export default function Header({
           )}
         >
           <div className="flex w-full flex-nowrap items-center gap-1 overflow-hidden px-1 py-1.5 sm:gap-2">
-            <div className="shrink-0 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 p-1 shadow-[0_0_20px_rgba(34,211,238,0.3)] md:rounded-xl md:p-1.5 lg:p-2.5">
-              <LayoutDashboard className="h-4 w-4 text-white md:h-5 md:w-5 lg:h-6 lg:w-6" />
-            </div>
-            <div className="flex min-w-0 shrink-0 flex-col justify-center gap-0.5 pr-0.5">
-              <div className="flex min-w-0 items-center gap-0.5 sm:gap-1 md:gap-2">
-                <h1
-                  className={cn(
-                    'max-w-[100px] truncate text-sm font-bold tracking-tight sm:max-w-[150px] lg:max-w-none',
-                    headerTitle(theme)
-                  )}
-                  title="线束车间数字化排产大屏"
-                >
-                  线束车间数字化排产大屏
-                </h1>
-                {user && (
-                  <span className="hidden max-w-[5.5rem] shrink-0 truncate rounded border border-cyan-500/30 bg-cyan-950/50 px-0.5 py-0 font-mono text-[9px] text-cyan-400/90 md:inline-block md:max-w-[7rem] md:px-1 md:py-0.5 md:text-[10px] lg:text-xs">
-                    {user.username} · {ROLE_LABELS[user.role]} ({ROLE_SHORT[user.role]})
-                  </span>
-                )}
+            <div className="flex shrink-0 items-center gap-1">
+              <div className="rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 p-1 shadow-[0_0_20px_rgba(34,211,238,0.3)] md:rounded-xl md:p-1.5 lg:p-2.5">
+                <LayoutDashboard className="h-4 w-4 text-white md:h-5 md:w-5 lg:h-6 lg:w-6" />
               </div>
+              {user && (
+                <span
+                  className={cn(
+                    'max-w-[7rem] shrink-0 truncate rounded border border-cyan-500/30 bg-cyan-950/50 px-1 py-0.5 font-mono text-[9px] sm:max-w-[9rem] sm:text-[10px] md:text-xs',
+                    theme === 'dark' ? 'text-cyan-400/90' : 'text-cyan-800'
+                  )}
+                  title={`${user.username} · ${ROLE_LABELS[user.role]}`}
+                >
+                  {user.username} · {ROLE_LABELS[user.role]} ({ROLE_SHORT[user.role]})
+                </span>
+              )}
             </div>
             <div
               className={cn(
