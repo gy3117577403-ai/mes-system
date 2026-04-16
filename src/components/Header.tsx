@@ -191,11 +191,11 @@ export default function Header({
       {viewMode === 'workshop' && (
         <header
           className={cn(
-            'backdrop-blur-xl px-4 md:px-6 py-2 z-30 shrink-0 flex flex-wrap justify-between items-center gap-3 border-b',
+            'backdrop-blur-xl px-4 md:px-6 py-2 z-30 shrink-0 flex flex-col gap-2 min-w-0 sm:flex-row sm:flex-nowrap sm:justify-between sm:items-center sm:gap-3 border-b',
             headerBar(theme)
           )}
         >
-          <div className="flex items-center gap-3 min-w-0">
+          <div className="flex items-center gap-3 min-w-0 shrink-0 sm:shrink">
             <span className={cn('text-sm font-black tracking-tight', headerTitle(theme))}>车间大屏</span>
             <span
               className={cn(
@@ -218,13 +218,13 @@ export default function Header({
               {offlineMode ? '離線' : '雲端已連線'}
             </span>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex w-full min-w-0 flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap scrollbar-hide sm:w-auto sm:justify-end">
             <button
               type="button"
               onClick={() => void onSyncRefresh()}
               disabled={isSyncing}
               className={cn(
-                'flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-black border transition-all shadow-[0_0_16px_rgba(34,211,238,0.15)]',
+                'flex shrink-0 items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-black border transition-all shadow-[0_0_16px_rgba(34,211,238,0.15)]',
                 theme === 'dark'
                   ? 'bg-gradient-to-r from-cyan-600/90 to-blue-600/90 border-cyan-400/40 text-white hover:from-cyan-500 hover:to-blue-500'
                   : 'bg-gradient-to-r from-cyan-500 to-blue-600 border-cyan-400 text-white hover:opacity-95',
@@ -245,7 +245,7 @@ export default function Header({
               type="button"
               onClick={() => setViewMode('manager')}
               className={cn(
-                'text-cyan-500 border border-cyan-500/50 px-3 py-2 rounded-xl flex items-center gap-2 font-bold text-sm',
+                'flex shrink-0 items-center gap-2 rounded-xl border border-cyan-500/50 px-3 py-2 text-sm font-bold text-cyan-500',
                 theme === 'dark' ? 'bg-slate-800 hover:bg-slate-700' : 'bg-gray-100 hover:bg-gray-200'
               )}
             >
@@ -258,11 +258,11 @@ export default function Header({
       {viewMode === 'manager' && (
         <header
           className={cn(
-            'backdrop-blur-xl px-4 md:px-6 py-2 z-30 shrink-0 flex flex-wrap justify-between items-center gap-3 transition-all duration-300',
+            'backdrop-blur-xl px-4 md:px-6 py-2 z-30 shrink-0 flex min-w-0 flex-col gap-2 transition-all duration-300 lg:flex-row lg:flex-nowrap lg:items-start lg:justify-between lg:gap-3',
             headerBar(theme)
           )}
         >
-          <div className="flex items-center gap-3 md:gap-4 min-w-0 flex-1">
+          <div className="flex min-w-0 flex-1 items-center gap-3 md:gap-4">
             <div className="bg-gradient-to-br from-cyan-500 to-blue-600 p-2.5 rounded-xl shadow-[0_0_24px_rgba(34,211,238,0.35)] shrink-0">
               <LayoutDashboard className="text-white w-6 h-6" />
             </div>
@@ -286,7 +286,7 @@ export default function Header({
                 {user?.role === 'Boss' && (
                   <div
                     className={cn(
-                      'flex rounded-xl overflow-hidden border p-0.5 shadow-inner',
+                      'flex shrink-0 overflow-hidden rounded-xl border p-0.5 shadow-inner',
                       theme === 'dark'
                         ? 'border-cyan-500/30 bg-slate-950/60'
                         : 'border-cyan-400/40 bg-gray-100'
@@ -352,7 +352,7 @@ export default function Header({
                   onClick={() => void onSyncRefresh()}
                   disabled={isSyncing}
                   className={cn(
-                    'flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-black border transition-all shadow-[0_0_14px_rgba(34,211,238,0.12)]',
+                    'flex shrink-0 items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-black shadow-[0_0_14px_rgba(34,211,238,0.12)] transition-all',
                     theme === 'dark'
                       ? 'bg-gradient-to-r from-cyan-600/85 to-blue-600/85 border-cyan-400/35 text-white hover:from-cyan-500 hover:to-blue-500'
                       : 'bg-gradient-to-r from-cyan-500 to-blue-600 border-cyan-400 text-white hover:opacity-95',
@@ -389,10 +389,10 @@ export default function Header({
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 md:gap-3 justify-end">
+          <div className="flex w-full min-w-0 flex-nowrap items-center gap-2 overflow-x-auto whitespace-nowrap scrollbar-hide md:gap-3 lg:w-auto lg:max-w-none lg:justify-end">
             <div
               className={cn(
-                'flex rounded-xl border overflow-hidden h-10 shrink-0',
+                'flex h-10 shrink-0 overflow-hidden rounded-xl border',
                 theme === 'dark' ? 'border-slate-600 bg-slate-900/80' : 'border-gray-300 bg-gray-100'
               )}
               title="看板视图：卡片 / 精简列表"
@@ -443,11 +443,11 @@ export default function Header({
               {theme === 'dark' ? <Sun className="w-5 h-5 text-amber-400" /> : <Moon className="w-5 h-5 text-slate-700" />}
             </button>
 
-            <div ref={notifRef} className="relative">
+            <div ref={notifRef} className="relative shrink-0">
               <button
                 type="button"
                 onClick={() => setNotifOpen((v) => !v)}
-                className={`relative flex items-center gap-2 h-10 px-3 rounded-xl border text-sm font-bold transition-all duration-300 ${
+                className={`relative flex h-10 shrink-0 items-center gap-2 rounded-xl border px-3 text-sm font-bold transition-all duration-300 ${
                   warehouseUrgent
                     ? 'bg-red-950/80 border-red-500 text-red-300 animate-pulse shadow-[0_0_22px_rgba(239,68,68,0.45)]'
                     : theme === 'dark'
@@ -520,7 +520,7 @@ export default function Header({
               type="button"
               onClick={() => setAuditModalOpen(true)}
               className={cn(
-                'h-10 w-10 flex items-center justify-center rounded-xl border transition-all duration-300',
+                'flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border transition-all duration-300',
                 theme === 'dark'
                   ? 'border-slate-600 bg-slate-800/80 text-slate-400 hover:text-cyan-400 hover:border-cyan-500/40'
                   : 'border-gray-300 bg-white text-gray-600 hover:text-cyan-700 hover:border-cyan-400'
@@ -534,7 +534,7 @@ export default function Header({
               type="button"
               onClick={() => logout()}
               className={cn(
-                'h-10 flex items-center gap-1.5 px-3 rounded-xl border text-xs font-bold transition-all',
+                'flex h-10 shrink-0 items-center gap-1.5 rounded-xl border px-3 text-xs font-bold transition-all',
                 theme === 'dark'
                   ? 'border-slate-600 bg-slate-900/80 text-slate-400 hover:text-red-400 hover:border-red-500/40'
                   : 'border-gray-300 bg-white text-gray-700 hover:text-red-600 hover:border-red-400'
@@ -544,11 +544,16 @@ export default function Header({
               退出
             </button>
 
-            <div className={cn('w-px h-8 hidden sm:block', theme === 'dark' ? 'bg-slate-700' : 'bg-gray-300')} />
+            <div
+              className={cn(
+                'hidden h-8 w-px shrink-0 sm:block',
+                theme === 'dark' ? 'bg-slate-700' : 'bg-gray-300'
+              )}
+            />
 
             <div
               className={cn(
-                'flex items-center rounded-xl overflow-hidden h-10 px-2 shadow-inner border',
+                'flex h-10 min-w-[150px] max-w-[300px] flex-1 items-center overflow-hidden rounded-xl border px-2 shadow-inner',
                 headerInput(theme)
               )}
             >
@@ -559,7 +564,7 @@ export default function Header({
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 className={cn(
-                  'bg-transparent border-none outline-none text-sm w-28 sm:w-36 focus:w-44 transition-all',
+                  'min-w-0 flex-1 border-none bg-transparent text-sm outline-none',
                   theme === 'dark' ? 'text-slate-200 placeholder:text-slate-600' : 'text-gray-900 placeholder:text-gray-500'
                 )}
               />
@@ -568,7 +573,10 @@ export default function Header({
             <select
               value={statusFilter}
               onChange={(e) => setStatusFilter(e.target.value)}
-              className={cn('h-10 px-3 rounded-xl text-sm outline-none cursor-pointer border', headerSelect(theme))}
+              className={cn(
+                'h-10 shrink-0 cursor-pointer rounded-xl border px-3 text-sm outline-none',
+                headerSelect(theme)
+              )}
             >
               <option value="all">所有状态</option>
               <option value="normal">正常排产</option>
@@ -582,21 +590,21 @@ export default function Header({
               <button
                 type="button"
                 onClick={onOpenQCReview}
-                className="hidden sm:flex items-center gap-1.5 bg-amber-600/30 hover:bg-amber-600/50 border border-amber-500/50 text-amber-200 h-10 px-3 rounded-xl text-sm font-bold transition-all"
+                className="hidden h-10 shrink-0 items-center gap-1.5 rounded-xl border border-amber-500/50 bg-amber-600/30 px-3 text-sm font-bold text-amber-200 transition-all hover:bg-amber-600/50 sm:flex"
               >
                 <ClipboardCheck size={18} />
                 质检审核
               </button>
             )}
 
-            <div className="w-px h-8 bg-slate-700 hidden lg:block" />
+            <div className="hidden h-8 w-px shrink-0 bg-slate-700 lg:block" />
 
             <button
               type="button"
               onClick={triggerBatchAISchedule}
               disabled={isProcessing}
               className={cn(
-                'border border-blue-500/50 px-4 py-2 rounded-xl shadow-[0_0_12px_rgba(59,130,246,0.2)] flex items-center gap-2 transition-all font-bold text-sm',
+                'flex shrink-0 items-center gap-2 rounded-xl border border-blue-500/50 px-4 py-2 text-sm font-bold shadow-[0_0_12px_rgba(59,130,246,0.2)] transition-all',
                 theme === 'dark'
                   ? 'bg-slate-800 hover:bg-slate-700 text-slate-200'
                   : 'bg-gray-100 hover:bg-gray-200 text-gray-900',
@@ -615,7 +623,7 @@ export default function Header({
               type="button"
               onClick={() => setIsAddModalOpen(true)}
               className={cn(
-                'border border-blue-500/50 px-3 py-2 rounded-xl shadow-[0_0_8px_rgba(59,130,246,0.2)] flex items-center gap-2 transition-all font-bold text-sm',
+                'flex shrink-0 items-center gap-2 rounded-xl border border-blue-500/50 px-3 py-2 text-sm font-bold shadow-[0_0_8px_rgba(59,130,246,0.2)] transition-all',
                 theme === 'dark'
                   ? 'bg-slate-800 hover:bg-slate-700 text-slate-200'
                   : 'bg-gray-100 hover:bg-gray-200 text-gray-900'
@@ -637,7 +645,7 @@ export default function Header({
               onClick={() => fileInputRef.current && fileInputRef.current.click()}
               disabled={isProcessing}
               className={cn(
-                'text-blue-500 border border-blue-500/50 px-3 py-2 rounded-xl flex items-center gap-2 transition-all font-bold text-sm',
+                'flex shrink-0 items-center gap-2 rounded-xl border border-blue-500/50 px-3 py-2 text-sm font-bold text-blue-500 transition-all',
                 theme === 'dark'
                   ? 'bg-slate-800 hover:bg-slate-700'
                   : 'bg-gray-100 hover:bg-gray-200',
@@ -652,7 +660,7 @@ export default function Header({
               type="button"
               onClick={() => setViewMode((v) => (v === 'manager' ? 'workshop' : 'manager'))}
               className={cn(
-                'text-cyan-500 border border-cyan-500/50 px-3 py-2 rounded-xl flex items-center gap-2 transition-all font-bold text-sm',
+                'flex shrink-0 items-center gap-2 rounded-xl border border-cyan-500/50 px-3 py-2 text-sm font-bold text-cyan-500 transition-all',
                 theme === 'dark'
                   ? 'bg-slate-800 hover:bg-slate-700'
                   : 'bg-gray-100 hover:bg-gray-200'
@@ -666,7 +674,7 @@ export default function Header({
               onClick={triggerClearCompletedData}
               disabled={isProcessing}
               className={cn(
-                'border px-3 py-2 rounded-xl flex items-center gap-2 transition-all font-bold text-sm',
+                'flex shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-sm font-bold transition-all',
                 theme === 'dark'
                   ? 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-600'
                   : 'bg-gray-100 hover:bg-gray-200 text-gray-800 border-gray-300',
@@ -683,7 +691,7 @@ export default function Header({
               onClick={triggerClearAllData}
               disabled={isProcessing}
               className={cn(
-                'text-red-500 border border-red-500/50 px-3 py-2 rounded-xl flex items-center gap-2 transition-all font-bold text-sm',
+                'flex shrink-0 items-center gap-2 rounded-xl border border-red-500/50 px-3 py-2 text-sm font-bold text-red-500 transition-all',
                 theme === 'dark'
                   ? 'bg-slate-900 hover:bg-red-950/50'
                   : 'bg-white hover:bg-red-50',
