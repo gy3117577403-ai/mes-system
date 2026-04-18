@@ -1,7 +1,5 @@
 'use client';
 
-import React from 'react';
-
 /**
  * 車間執行儀表骨架（Phase 2 注入點）。
  *

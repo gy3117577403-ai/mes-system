@@ -1,7 +1,5 @@
 'use client';
 
-import React from 'react';
-
 /**
  * KPI／異常工時審核骨架（Phase 2 注入點）。
  *

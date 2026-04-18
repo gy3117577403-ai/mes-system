@@ -1,7 +1,5 @@
 'use client';
 
-import React from 'react';
-
 /**
  * 排產日曆／產線負載看板骨架（Phase 2 注入點）。
  *
