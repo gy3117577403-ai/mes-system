@@ -4,6 +4,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, XCircle, CheckCircle2, Package, X, UserCircle } from 'lucide-react';
+import { isGridBoxOccupied } from '@/lib/boxNumber';
 
 export function AddOrderModal({
   isOpen,
@@ -138,7 +139,7 @@ export function BoxSelectionModal({
 
             <div className="grid grid-cols-6 gap-4">
               {Array.from({ length: 30 }, (_, i) => i + 1).map(num => {
-                const isOccupied = occupiedBoxes.includes(num);
+                const isOccupied = isGridBoxOccupied(occupiedBoxes, num);
                 return (
                   <button
                     key={num}

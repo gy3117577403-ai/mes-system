@@ -5,7 +5,13 @@ export type TaskStatusMES =
   | 'anomaly'
   | 'completed'
   | 'PendingQC'
-  | 'Rework';
+  | 'Rework'
+  /** 柔性排產管線狀態（與 Prisma 字串並存，舊資料仍可能為 normal 等） */
+  | 'PENDING'
+  | 'SCHEDULED'
+  | 'IN_PROGRESS'
+  | 'PAUSED'
+  | 'COMPLETED';
 
 export interface Order {
   id: string;
@@ -18,11 +24,14 @@ export interface Order {
   drawing: string;
   materials: string;
   assignedDay: string;
-  /** MES 擴展：含 PendingQC（待質檢）、Rework（返工） */
+  /** MES 擴展：含 PendingQC（待質檢）、Rework（返工）；並含 PENDING／SCHEDULED／IN_PROGRESS／PAUSED／COMPLETED 管線語義 */
   taskStatus: string;
   cutStatus: string;
-  boxNumber: number | null;
+  /** 周轉箱編號（字串，如 "05"） */
+  boxNumber: string | null;
   worker?: string;
+  /** 可選：關聯 `MesWorker.id`；與 `worker` 顯示名並存 */
+  workerId?: string | null;
   createdAt: number;
   isImportError?: boolean;
   errorReason?: string;
@@ -36,6 +45,14 @@ export interface Order {
   reportedQty: number;
   /** PMC 急單綠色通道：圖紙已發即可進就緒池，且 AI 不自動排產 */
   isUrgent: boolean;
+  /** 圖紙／工藝綠燈 */
+  isDrawingReady: boolean;
+  /** 物料齊套綠燈 */
+  isMaterialReady: boolean;
+  /** 紅燈阻斷原因（與 taskStatus=PAUSED 搭配） */
+  exceptionRemark?: string;
+  /** AI 或計劃員給出的具體排產日／星期描述（Asia/Shanghai 語意） */
+  plannedDate?: string;
 }
 
 export type ViewMode = 'manager' | 'workshop';

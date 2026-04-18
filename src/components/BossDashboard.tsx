@@ -16,6 +16,7 @@ import {
   Tooltip,
 } from 'recharts';
 import { Order, AlarmKind } from '@/types';
+import { isOrderCompletedStatus } from '@/lib/orderStatus';
 
 const COLORS = ['#f87171', '#60a5fa', '#a78bfa', '#fbbf24'];
 
@@ -53,7 +54,7 @@ export default function BossDashboard({ orders }: BossDashboardProps) {
     const today = dayjs().startOf('day');
     const in3 = today.add(3, 'day');
     const urgent = orders.filter((o) => {
-      if (!o.deliveryDate || o.taskStatus === 'completed') return false;
+      if (!o.deliveryDate || isOrderCompletedStatus(o.taskStatus)) return false;
       const d = dayjs(o.deliveryDate);
       if (!d.isValid()) return false;
       if (d.isBefore(today, 'day') || d.isAfter(in3, 'day')) return false;

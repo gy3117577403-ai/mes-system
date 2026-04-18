@@ -2,6 +2,7 @@
   "name": "gg-ai",
   "version": "0.1.0",
   "private": true,
+  "description": "线束 MES — Next.js + Prisma(PostgreSQL) + Server Actions；生产构建含 prisma generate / db push",
   "main": "main.js",
   "scripts": {
     "dev": "node scripts/print-dev-url.mjs && next dev -p 3456 -H 127.0.0.1",
@@ -30,6 +31,8 @@
     "@hello-pangea/dnd": "^18.0.1",
     "@prisma/client": "6.19.0",
     "canvas-confetti": "^1.9.4",
+    "date-fns": "^4.1.0",
+    "date-fns-tz": "^3.2.0",
     "dayjs": "^1.11.20",
     "framer-motion": "^12.38.0",
     "lucide-react": "^1.0.1",
@@ -40,7 +43,8 @@
     "react-hot-toast": "^2.6.0",
     "recharts": "^3.8.0",
     "uuid": "^13.0.0",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

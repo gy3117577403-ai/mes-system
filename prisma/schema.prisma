@@ -18,13 +18,22 @@ model Order {
   totalHours    Float    @default(0)
   sales         String   @default("")
   deliveryDate  String   @default("")
+  /// 圖紙／工藝備註文字（與 isDrawingReady 布林紅綠燈並存）
   drawing       String   @default("未发图")
+  /// 物料備註文字（與 isMaterialReady 布林紅綠燈並存）
   materials     String   @default("未配料")
   assignedDay   String   @default("Unscheduled")
+  /// 任務狀態（字串儲存；語義擴充含：PENDING 待排、SCHEDULED 已排程、IN_PROGRESS 進行中、PAUSED 暫停／紅燈阻斷、COMPLETED 完工；並兼容舊值如 normal、PendingQC、Rework、completed）
   taskStatus    String   @default("normal")
   cutStatus     String   @default("pending")
-  boxNumber     Int?
+  /// 周轉箱編號，支援 "05" 等字串格式
+  boxNumber     String?
+  /// 派工顯示名（與 mesWorker 並存，兼容舊資料僅有名稱無外鍵）
   worker        String?
+  /// 可選外鍵：關聯到 MesWorker；清空時 onDelete 由 SetNull 處理
+  workerId      String?
+  mesWorker     MesWorker? @relation(fields: [workerId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  abnormalClaims MesAbnormalClaim[]
   /// JS 毫秒時間戳；Float → PostgreSQL DOUBLE PRECISION，避免 32 位 INTEGER 溢出
   createdAt     Float
   isImportError Boolean  @default(false)
@@ -34,6 +43,14 @@ model Order {
   totalQty      Int      @default(1)
   reportedQty   Int      @default(0)
   isUrgent      Boolean  @default(false)
+  /// 圖紙／工藝是否就緒（綠燈）
+  isDrawingReady  Boolean @default(false)
+  /// 物料是否齊套（綠燈）
+  isMaterialReady Boolean @default(false)
+  /// 紅燈阻斷時由 PMC／系統寫入的異常說明
+  exceptionRemark String?
+  /// AI 或計劃員排定後的具體星期／日期描述（建議 Asia/Shanghai 語意）
+  plannedDate     String?
   /// 軟刪除時間戳（毫秒）；Float → DOUBLE PRECISION
   deletedAt     Float?
   updatedAt     DateTime @updatedAt
@@ -43,6 +60,7 @@ model MesWorker {
   id        String @id @default(cuid())
   name      String @unique
   sortOrder Int    @default(0)
+  orders    Order[]
 }
 
 model MesActivityLog {
@@ -60,4 +78,20 @@ model MesAppSettings {
   dailyCapacity Int    @default(980)
   theme         String @default("dark")
   layoutMode    String @default("card")
+}
+
+/// 車間異常工時申報（小程序／終端提交；管理端核銷）
+model MesAbnormalClaim {
+  id           String @id @default(cuid())
+  orderId      String
+  order        Order  @relation(fields: [orderId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  workerName   String
+  claimedHours Float
+  reason       String
+  /// PENDING 待審、APPROVED 已通過、REJECTED 已駁回
+  status       String @default("PENDING")
+  /// 建立時間（JS 毫秒時間戳）
+  createdAt    Float
+
+  @@index([orderId])
 }

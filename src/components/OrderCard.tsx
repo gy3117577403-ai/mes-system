@@ -21,6 +21,7 @@ import {
   employeeReadOnlyFields,
   isBoss,
 } from '@/lib/rbac';
+import { isOrderCompletedStatus } from '@/lib/orderStatus';
 import type { AppTheme, LayoutMode } from '@/lib/uiTheme';
 
 export interface OrderCardRbacProps {
@@ -263,7 +264,7 @@ export default function EnhancedOrderCard({
           </div>
         </div>
 
-        {(task.totalQty ?? 0) > 0 && task.taskStatus !== 'completed' && (
+        {(task.totalQty ?? 0) > 0 && !isOrderCompletedStatus(task.taskStatus) && (
           <div
             className={`text-[10px] font-mono mb-1.5 ${dimBody ? 'opacity-40' : ''} ${
               theme === 'dark' ? 'text-slate-500' : 'text-gray-600'

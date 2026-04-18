@@ -16,11 +16,13 @@ import {
 } from '@/components/mes/WorkshopMESModals';
 import type { AppTheme } from '@/lib/uiTheme';
 import { cn, workshopRoot, workshopTitle, workshopDayTab } from '@/lib/uiTheme';
+import { isOrderCompletedStatus } from '@/lib/orderStatus';
 
 interface WorkshopViewProps {
   orders: Order[];
   updateOrderData: (id: string, field: string, value: any) => void;
-  occupiedBoxes: number[];
+  /** 已被占用的周轉箱編號字串列表（如 "05"），與選盤整數比對時會正規化 */
+  occupiedBoxes: (string | null | undefined)[];
   workers: string[];
   setWorkers: React.Dispatch<React.SetStateAction<string[]>>;
   setViewMode: (m: 'manager' | 'workshop') => void;
@@ -106,11 +108,12 @@ export default function WorkshopView({
     const taskModel = orders.find((o) => o.id === tId)?.model ?? tId.slice(-6);
     setBoxModal({ isOpen: false, taskId: null });
 
-    withUndo(String(taskModel), `锁定 ${boxNum} 号周转箱`, () => {
-      updateOrderData(tId, 'boxNumber', boxNum);
+    const boxStr = String(Math.trunc(boxNum)).padStart(2, '0');
+    withUndo(String(taskModel), `锁定 ${boxStr} 号周转箱`, () => {
+      updateOrderData(tId, 'boxNumber', boxStr);
       updateOrderData(tId, 'cutStatus', 'completed');
-      appendActivityLog('锁定箱号', `订单 ${taskModel} 已锁定 ${boxNum} 号周转箱`);
-      toast.success(`成功锁定 ${boxNum} 号箱！`);
+      appendActivityLog('锁定箱号', `订单 ${taskModel} 已锁定 ${boxStr} 号周转箱`);
+      toast.success(`成功锁定 ${boxStr} 号箱！`);
       confetti({
         particleCount: 150,
         spread: 80,
@@ -155,7 +158,7 @@ export default function WorkshopView({
   ];
 
   const workshopVisible = (o: Order) =>
-    o.taskStatus !== 'completed' && o.taskStatus !== 'PendingQC';
+    !isOrderCompletedStatus(o.taskStatus) && o.taskStatus !== 'PendingQC';
 
   const activeTasks = orders.filter(
     (o) => o.assignedDay === activeDay && workshopVisible(o)

@@ -19,6 +19,7 @@ export function prismaOrderToFrontend(row: PrismaOrder): Order {
     cutStatus: row.cutStatus,
     boxNumber: row.boxNumber,
     worker: row.worker ?? undefined,
+    workerId: row.workerId ?? undefined,
     createdAt: row.createdAt,
     isImportError: row.isImportError,
     errorReason: row.errorReason ?? undefined,
@@ -27,6 +28,10 @@ export function prismaOrderToFrontend(row: PrismaOrder): Order {
     totalQty: row.totalQty,
     reportedQty: row.reportedQty,
     isUrgent: row.isUrgent,
+    isDrawingReady: row.isDrawingReady,
+    isMaterialReady: row.isMaterialReady,
+    exceptionRemark: row.exceptionRemark ?? undefined,
+    plannedDate: row.plannedDate ?? undefined,
   });
 }
 
@@ -47,6 +52,7 @@ export function frontendOrderToPrismaCreate(o: Order) {
     cutStatus: o.cutStatus,
     boxNumber: o.boxNumber,
     worker: o.worker ?? null,
+    workerId: o.workerId ?? null,
     createdAt: o.createdAt,
     isImportError: o.isImportError ?? false,
     errorReason: o.errorReason ?? null,
@@ -55,6 +61,10 @@ export function frontendOrderToPrismaCreate(o: Order) {
     totalQty: o.totalQty,
     reportedQty: o.reportedQty,
     isUrgent: o.isUrgent,
+    isDrawingReady: o.isDrawingReady,
+    isMaterialReady: o.isMaterialReady,
+    exceptionRemark: o.exceptionRemark ?? null,
+    plannedDate: o.plannedDate ?? null,
     deletedAt: null as number | null,
   };
 }

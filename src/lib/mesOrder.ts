@@ -1,4 +1,5 @@
 import { Order } from '@/types';
+import { nowEpochMsForMesStorage } from '@/lib/datetimeShanghai';
 
 export type AlarmKind = 'Material' | 'Maintenance' | 'QC';
 
@@ -7,6 +8,14 @@ export function normalizeOrder(raw: Partial<Order> & { id: string }): Order {
   const qty = Number(raw.qty) || 1;
   const totalQty = raw.totalQty != null ? Number(raw.totalQty) : qty;
   const reportedQty = raw.reportedQty != null ? Number(raw.reportedQty) : 0;
+
+  const boxRaw = raw.boxNumber;
+  const boxNumber =
+    boxRaw === null || boxRaw === undefined || boxRaw === ''
+      ? null
+      : typeof boxRaw === 'number'
+        ? String(Math.trunc(boxRaw)).padStart(2, '0')
+        : String(boxRaw).trim() || null;
 
   return {
     id: raw.id,
@@ -21,9 +30,15 @@ export function normalizeOrder(raw: Partial<Order> & { id: string }): Order {
     assignedDay: raw.assignedDay ?? 'Unscheduled',
     taskStatus: raw.taskStatus ?? 'normal',
     cutStatus: raw.cutStatus ?? 'pending',
-    boxNumber: raw.boxNumber ?? null,
+    boxNumber,
     worker: raw.worker,
-    createdAt: raw.createdAt ?? Date.now(),
+    workerId:
+      raw.workerId === undefined
+        ? undefined
+        : raw.workerId === null || raw.workerId === ''
+          ? null
+          : String(raw.workerId),
+    createdAt: raw.createdAt ?? nowEpochMsForMesStorage(),
     isImportError: raw.isImportError,
     errorReason: raw.errorReason,
     drawingUrl: raw.drawingUrl ?? '',
@@ -31,6 +46,10 @@ export function normalizeOrder(raw: Partial<Order> & { id: string }): Order {
     totalQty: Math.max(1, totalQty),
     reportedQty: Math.max(0, reportedQty),
     isUrgent: raw.isUrgent === true,
+    isDrawingReady: raw.isDrawingReady === true,
+    isMaterialReady: raw.isMaterialReady === true,
+    exceptionRemark: raw.exceptionRemark ?? undefined,
+    plannedDate: raw.plannedDate ?? undefined,
   };
 }
 

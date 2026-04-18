@@ -2,6 +2,11 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 'use client';
 
+/**
+ * Phase 2 預留：`ScheduleBoard`、`WorkshopDashboard`、`KpiReview` 將承接本檔中
+ * 排產、車間儀表與 KPI／異常審核相關 UI 的漸進式拆分（`fetchInitialData` 與 RBAC 保持不變）。
+ */
+
 import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import * as XLSX from 'xlsx';
@@ -44,6 +49,7 @@ import {
   type FetchInitialDataResult,
 } from '@/actions/mesActions';
 import { diffOrder } from '@/lib/orderDiff';
+import { isOrderCompletedStatus } from '@/lib/orderStatus';
 
 const ALARM_MSG: Record<AlarmKind, string> = {
   Material: '物料准备',
@@ -276,8 +282,8 @@ export default function KanbanApp() {
   const occupiedBoxes = useMemo(
     () =>
       orders
-        .filter((o) => o.taskStatus !== 'completed' && o.boxNumber)
-        .map((o) => o.boxNumber as number),
+        .filter((o) => !isOrderCompletedStatus(o.taskStatus) && o.boxNumber)
+        .map((o) => o.boxNumber),
     [orders]
   );
 
@@ -287,13 +293,13 @@ export default function KanbanApp() {
   );
 
   const alarmCount = useMemo(
-    () => orders.filter((o) => o.activeAlarm != null && o.taskStatus !== 'completed').length,
+    () => orders.filter((o) => o.activeAlarm != null && !isOrderCompletedStatus(o.taskStatus)).length,
     [orders]
   );
 
   const andonNotifications = useMemo<AndonNotification[]>(() => {
     return orders
-      .filter((o) => o.activeAlarm != null && o.taskStatus !== 'completed')
+      .filter((o) => o.activeAlarm != null && !isOrderCompletedStatus(o.taskStatus))
       .map((o) => ({
         id: `andon-${o.id}-${o.activeAlarm}`,
         ts: o.createdAt,
@@ -322,7 +328,7 @@ export default function KanbanApp() {
   // 3. 核心业务规则与三大状态池 (隔离、待排产、已排产)
   // ==========================================
   const getCardStatus = (task: Order) => {
-    if (task.taskStatus === 'completed') return 'completed';
+    if (isOrderCompletedStatus(task.taskStatus)) return 'completed';
     if (task.taskStatus === 'PendingQC') return 'pendingQC';
     if (task.taskStatus === 'Rework') return 'rework';
     if (task.taskStatus === 'anomaly') return 'anomaly';
@@ -347,7 +353,7 @@ export default function KanbanApp() {
       }
       // 状态过滤
       if (statusFilter !== 'all') {
-        if (statusFilter === 'completed' && t.taskStatus !== 'completed') return false;
+        if (statusFilter === 'completed' && !isOrderCompletedStatus(t.taskStatus)) return false;
         if (statusFilter === 'normal' && t.taskStatus !== 'normal') return false;
         if (statusFilter === 'anomaly' && t.taskStatus !== 'anomaly') return false;
         if (statusFilter === 'pendingQC' && t.taskStatus !== 'PendingQC') return false;
@@ -366,7 +372,7 @@ export default function KanbanApp() {
     const ready: Order[] = [];
 
     filteredOrders.forEach((task) => {
-      if (task.taskStatus === 'completed') return;
+      if (isOrderCompletedStatus(task.taskStatus)) return;
       if (task.taskStatus === 'PendingQC') return;
       if (task.assignedDay !== 'Unscheduled') return;
 
@@ -397,8 +403,8 @@ export default function KanbanApp() {
   // ==========================================
   const findBestDayForTaskTime = (taskTime: number, currentOrdersExcludingTask: Order[]) => {
     const currentLoads: Record<string, number> = { Monday: 0, Tuesday: 0, Wednesday: 0, Thursday: 0, Friday: 0, Saturday: 0 };
-    currentOrdersExcludingTask.forEach(task => {
-      if (task.taskStatus !== 'completed' && task.assignedDay !== 'Unscheduled' && DAYS.find(d => d.key === task.assignedDay)) {
+    currentOrdersExcludingTask.forEach((task) => {
+      if (!isOrderCompletedStatus(task.taskStatus) && task.assignedDay !== 'Unscheduled' && DAYS.find(d => d.key === task.assignedDay)) {
         currentLoads[task.assignedDay] += (Number(task.totalHours) || 0);
       }
     });
@@ -610,7 +616,7 @@ export default function KanbanApp() {
   };
 
   const triggerClearCompletedData = () => {
-    const completedOrders = orders.filter(t => t.taskStatus === 'completed');
+    const completedOrders = orders.filter((t) => isOrderCompletedStatus(t.taskStatus));
     if (completedOrders.length === 0) {
       showAlert("提示", "当前没有已完成的订单需要清理。");
       return;
@@ -620,7 +626,7 @@ export default function KanbanApp() {
       `将从看板中永久移除 ${completedOrders.length} 份【已完成】的订单记录。\n未完成的排单将予以保留，确定执行清理吗？`,
       () => {
         setDialog(prev => ({ ...prev, isOpen: false }));
-        setOrders(prev => prev.filter(t => t.taskStatus !== 'completed'));
+        setOrders((prev) => prev.filter((t) => !isOrderCompletedStatus(t.taskStatus)));
         void softDeleteOrdersAction('completed');
         showAlert("成功", "已完成的订单清理完毕！");
       }
@@ -667,7 +673,7 @@ export default function KanbanApp() {
           const ordersBeforeAi = orders;
           const currentLoads: Record<string, number> = { Monday: 0, Tuesday: 0, Wednesday: 0, Thursday: 0, Friday: 0, Saturday: 0 };
           orders.forEach(task => {
-            if (task.taskStatus !== 'completed' && task.assignedDay !== 'Unscheduled' && DAYS.find(d => d.key === task.assignedDay)) {
+            if (!isOrderCompletedStatus(task.taskStatus) && task.assignedDay !== 'Unscheduled' && DAYS.find(d => d.key === task.assignedDay)) {
               currentLoads[task.assignedDay] += (Number(task.totalHours) || 0);
             }
           });
@@ -731,7 +737,7 @@ export default function KanbanApp() {
                 const dayTasks = updatedOrders.filter(
                   (t) =>
                     t.assignedDay === day &&
-                    t.taskStatus !== 'completed' &&
+                    !isOrderCompletedStatus(t.taskStatus) &&
                     !isDeliverySoon(t.deliveryDate)
                 );
                 for (const dt of dayTasks) {

@@ -3,6 +3,21 @@
 import { prisma } from '@/lib/prisma';
 import { normalizeOrder } from '@/lib/mesOrder';
 import { prismaOrderToFrontend, frontendOrderToPrismaCreate } from '@/lib/mesDbMappers';
+import { formatMsToShanghaiLocale, nowEpochMsForMesStorage } from '@/lib/datetimeShanghai';
+import {
+  activityLogEntryZ,
+  addWorkerNameZ,
+  approveAbnormalClaimInputZ,
+  batchAssignedDaysZ,
+  batchUpdateOrdersZ,
+  createAbnormalClaimInputZ,
+  createOrderActionInputZ,
+  orderIdZ,
+  patchMesSettingsZ,
+  softDeleteModeZ,
+  toggleOrderReadyInputZ,
+  updateOrderDataZ,
+} from '@/lib/mesActionZod';
 import type { Order } from '@/types';
 import type { ActivityLogEntry } from '@/types';
 import type { AppTheme, LayoutMode } from '@/lib/uiTheme';
@@ -72,7 +87,8 @@ function defaultOrderUncheckedCreate(id: string) {
     cutStatus: 'pending',
     boxNumber: null,
     worker: null,
-    createdAt: Date.now(),
+    workerId: null,
+    createdAt: nowEpochMsForMesStorage(),
     isImportError: false,
     errorReason: null,
     drawingUrl: null,
@@ -80,6 +96,10 @@ function defaultOrderUncheckedCreate(id: string) {
     totalQty: 1,
     reportedQty: 0,
     isUrgent: false,
+    isDrawingReady: false,
+    isMaterialReady: false,
+    exceptionRemark: null,
+    plannedDate: null,
     deletedAt: null,
   };
 }
@@ -201,8 +221,12 @@ export async function fetchInitialData(): Promise<FetchInitialDataResult> {
 }
 
 export async function createOrderAction(data: Partial<Order> & { id: string }): Promise<{ ok: boolean; error?: string }> {
+  const parsed = createOrderActionInputZ.safeParse(data);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues.map((i) => i.message).join('; ') };
+  }
   try {
-    const o = normalizeOrder(data);
+    const o = normalizeOrder(parsed.data as Partial<Order> & { id: string });
     await prisma.order.create({
       data: frontendOrderToPrismaCreate(o),
     });
@@ -249,7 +273,10 @@ function buildOrderPatch(updateData: Record<string, unknown>): Record<string, un
     if (v === undefined) {
       /* skip */
     } else if (v === null) p.boxNumber = null;
-    else p.boxNumber = Math.trunc(Number(v));
+    else {
+      const s = String(v).trim();
+      p.boxNumber = s === '' ? null : s;
+    }
   }
   if ('worker' in updateData) {
     const v = updateData.worker;
@@ -257,6 +284,13 @@ function buildOrderPatch(updateData: Record<string, unknown>): Record<string, un
       /* skip */
     } else if (v === null || v === '') p.worker = null;
     else p.worker = String(v);
+  }
+  if ('workerId' in updateData) {
+    const v = updateData.workerId;
+    if (v === undefined) {
+      /* skip */
+    } else if (v === null || v === '') p.workerId = null;
+    else p.workerId = String(v);
   }
   if ('createdAt' in updateData) setFloat('createdAt', updateData.createdAt);
   if ('isImportError' in updateData) setBool('isImportError', updateData.isImportError);
@@ -284,6 +318,22 @@ function buildOrderPatch(updateData: Record<string, unknown>): Record<string, un
   if ('totalQty' in updateData) setInt('totalQty', updateData.totalQty);
   if ('reportedQty' in updateData) setInt('reportedQty', updateData.reportedQty);
   if ('isUrgent' in updateData) setBool('isUrgent', updateData.isUrgent);
+  if ('isDrawingReady' in updateData) setBool('isDrawingReady', updateData.isDrawingReady);
+  if ('isMaterialReady' in updateData) setBool('isMaterialReady', updateData.isMaterialReady);
+  if ('exceptionRemark' in updateData) {
+    const v = updateData.exceptionRemark;
+    if (v === undefined) {
+      /* skip */
+    } else if (v === null) p.exceptionRemark = null;
+    else p.exceptionRemark = String(v);
+  }
+  if ('plannedDate' in updateData) {
+    const v = updateData.plannedDate;
+    if (v === undefined) {
+      /* skip */
+    } else if (v === null) p.plannedDate = null;
+    else p.plannedDate = String(v);
+  }
   if ('deletedAt' in updateData) {
     const v = updateData.deletedAt;
     if (v === undefined) {
@@ -295,16 +345,61 @@ function buildOrderPatch(updateData: Record<string, unknown>): Record<string, un
   return p;
 }
 
-/** 通用單筆更新（欄位名與前端 Order 一致） */
+/**
+ * 通用單筆更新（欄位名與前端 Order 一致）。
+ * 入參經 Zod 校驗；可選 `expectedUpdatedAt` 與庫中 `updatedAt` 對齊作樂觀併發防護。
+ */
 export async function updateOrderAction(
   orderId: string,
-  updateData: Record<string, unknown>
+  updateData: Record<string, unknown>,
+  options?: { expectedUpdatedAt?: string | number | Date }
 ): Promise<{ ok: boolean; error?: string }> {
+  const idRes = orderIdZ.safeParse(orderId);
+  if (!idRes.success) {
+    return { ok: false, error: idRes.error.issues.map((i) => i.message).join('; ') };
+  }
+  const dataRes = updateOrderDataZ.safeParse(updateData);
+  if (!dataRes.success) {
+    return { ok: false, error: dataRes.error.issues.map((i) => i.message).join('; ') };
+  }
+
+  const id = idRes.data;
+  const safeUpdate = dataRes.data;
+
+  console.warn('[MES][updateOrderAction] write-trace', {
+    orderId: id,
+    keys: Object.keys(safeUpdate),
+    shanghaiAt: formatMsToShanghaiLocale(nowEpochMsForMesStorage()),
+    optimisticLock: options?.expectedUpdatedAt != null,
+  });
+
   try {
-    const patch = buildOrderPatch(updateData);
+    if (options?.expectedUpdatedAt != null) {
+      const row = await prisma.order.findUnique({
+        where: { id },
+        select: { updatedAt: true },
+      });
+      if (row) {
+        const expected = new Date(options.expectedUpdatedAt).getTime();
+        const actual = row.updatedAt.getTime();
+        if (Number.isFinite(expected) && Math.abs(actual - expected) > 2) {
+          console.warn('[MES][updateOrderAction] optimistic-lock-mismatch', {
+            orderId: id,
+            expectedRowVersionMs: expected,
+            actualRowVersionMs: actual,
+          });
+          return {
+            ok: false,
+            error: '并发冲突：订单已在其它终端更新，请刷新后重试',
+          };
+        }
+      }
+    }
+
+    const patch = buildOrderPatch(safeUpdate);
     if (Object.keys(patch).length === 0) return { ok: true };
 
-    await orderUpdateOrCreateFromPatch(orderId, patch);
+    await orderUpdateOrCreateFromPatch(id, patch);
     return { ok: true };
   } catch (e) {
     console.error('[updateOrderAction]', e);
@@ -315,9 +410,13 @@ export async function updateOrderAction(
 export async function batchUpdateOrdersAction(
   updates: { id: string; data: Record<string, unknown> }[]
 ): Promise<{ ok: boolean; error?: string }> {
+  const listRes = batchUpdateOrdersZ.safeParse(updates);
+  if (!listRes.success) {
+    return { ok: false, error: listRes.error.issues.map((i) => i.message).join('; ') };
+  }
   try {
     await Promise.all(
-      updates.map(async ({ id, data }) => {
+      listRes.data.map(async ({ id, data }) => {
         const patch = buildOrderPatch(data);
         if (Object.keys(patch).length === 0) return;
         await orderUpdateOrCreateFromPatch(id, patch);
@@ -334,9 +433,13 @@ export async function batchUpdateOrdersAction(
 export async function batchUpdateAssignedDaysAction(
   items: { id: string; assignedDay: string }[]
 ): Promise<{ ok: boolean; error?: string }> {
+  const parsed = batchAssignedDaysZ.safeParse(items);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues.map((i) => i.message).join('; ') };
+  }
   try {
     await Promise.all(
-      items.map(async ({ id, assignedDay }) => {
+      parsed.data.map(async ({ id, assignedDay }) => {
         try {
           await prisma.order.update({
             where: { id },
@@ -361,8 +464,11 @@ export async function batchUpdateAssignedDaysAction(
 }
 
 export async function addWorkerAction(name: string): Promise<{ ok: boolean; error?: string }> {
-  const n = name.trim();
-  if (!n) return { ok: false, error: 'empty name' };
+  const nameRes = addWorkerNameZ.safeParse(name);
+  if (!nameRes.success) {
+    return { ok: false, error: nameRes.error.issues.map((i) => i.message).join('; ') };
+  }
+  const n = nameRes.data;
   try {
     const max = await prisma.mesWorker.aggregate({ _max: { sortOrder: true } });
     const sortOrder = (max._max.sortOrder ?? -1) + 1;
@@ -384,15 +490,20 @@ export async function createActivityLogAction(entry: {
   role?: string;
   actionType?: string;
 }): Promise<{ ok: boolean; error?: string }> {
+  const parsed = activityLogEntryZ.safeParse(entry);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues.map((i) => i.message).join('; ') };
+  }
+  const e = parsed.data;
   try {
     await prisma.mesActivityLog.create({
       data: {
-        id: entry.id,
-        ts: entry.ts,
-        text: entry.text,
-        operator: entry.operator ?? null,
-        role: entry.role ?? null,
-        actionType: entry.actionType ?? null,
+        id: e.id,
+        ts: e.ts,
+        text: e.text,
+        operator: e.operator ?? null,
+        role: e.role ?? null,
+        actionType: e.actionType ?? null,
       },
     });
     const cnt = await prisma.mesActivityLog.count();
@@ -421,16 +532,19 @@ export async function patchMesSettingsAction(partial: {
   theme?: AppTheme;
   layoutMode?: LayoutMode;
 }): Promise<{ ok: boolean; error?: string }> {
+  const parsed = patchMesSettingsZ.safeParse(partial);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues.map((i) => i.message).join('; ') };
+  }
+  const p = parsed.data;
   try {
     await ensureAppSettings();
     await prisma.mesAppSettings.update({
       where: { id: SETTINGS_ID },
       data: {
-        ...(partial.dailyCapacity != null && partial.dailyCapacity > 0
-          ? { dailyCapacity: partial.dailyCapacity }
-          : {}),
-        ...(partial.theme != null ? { theme: partial.theme } : {}),
-        ...(partial.layoutMode != null ? { layoutMode: partial.layoutMode } : {}),
+        ...(p.dailyCapacity != null && p.dailyCapacity > 0 ? { dailyCapacity: p.dailyCapacity } : {}),
+        ...(p.theme != null ? { theme: p.theme } : {}),
+        ...(p.layoutMode != null ? { layoutMode: p.layoutMode } : {}),
       },
     });
     return { ok: true };
@@ -442,11 +556,16 @@ export async function patchMesSettingsAction(partial: {
 
 /** 軟刪除：completed = 僅已完成訂單；all = 全部未刪訂單 */
 export async function softDeleteOrdersAction(mode: 'completed' | 'all'): Promise<{ ok: boolean; error?: string }> {
-  const now = Date.now();
+  const modeRes = softDeleteModeZ.safeParse(mode);
+  if (!modeRes.success) {
+    return { ok: false, error: modeRes.error.issues.map((i) => i.message).join('; ') };
+  }
+  const m = modeRes.data;
+  const now = nowEpochMsForMesStorage();
   try {
-    if (mode === 'completed') {
+    if (m === 'completed') {
       await prisma.order.updateMany({
-        where: { deletedAt: null, taskStatus: 'completed' },
+        where: { deletedAt: null, taskStatus: { in: ['completed', 'COMPLETED'] } },
         data: { deletedAt: now },
       });
     } else {
@@ -458,6 +577,153 @@ export async function softDeleteOrdersAction(mode: 'completed' | 'all'): Promise
     return { ok: true };
   } catch (e) {
     console.error('[softDeleteOrdersAction]', e);
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * 切換訂單「圖紙／工藝」或「物料」紅綠燈就緒狀態。
+ *
+ * 業務意圖：
+ * - 變紅（未就緒）：寫入對應布林、將管線狀態置為 `PAUSED`，並寫入 `exceptionRemark`（阻斷原因）。
+ * - 變綠（已就緒）：寫入對應布林；僅當圖紙與物料**皆**為綠燈時才解除 `PAUSED` 並清空 `exceptionRemark`，否則維持暫停並自動切換為另一側的預設阻斷說明。
+ * - 可選 `boxNo`：同步鎖定周轉箱字串編號（如 "05"）。
+ */
+export async function toggleOrderReadyStatus(
+  orderId: string,
+  type: 'DRAWING' | 'MATERIAL',
+  isReady: boolean,
+  exception?: string,
+  boxNo?: string
+): Promise<{ ok: boolean; error?: string }> {
+  const parsed = toggleOrderReadyInputZ.safeParse({ orderId, type, isReady, exception, boxNo });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues.map((i) => i.message).join('; ') };
+  }
+  const { orderId: id, type: toggleType, isReady: ready, exception: ex, boxNo: bx } = parsed.data;
+
+  try {
+    const trimmedBox = bx?.trim();
+    const defaultException =
+      toggleType === 'DRAWING' ? '图纸／工艺未就绪' : '物料未齐套';
+    const remarkOnRed = ex?.trim() || defaultException;
+
+    const existing = await prisma.order.findUnique({ where: { id } });
+    const nextDrawing =
+      toggleType === 'DRAWING' ? ready : (existing?.isDrawingReady ?? false);
+    const nextMaterial =
+      toggleType === 'MATERIAL' ? ready : (existing?.isMaterialReady ?? false);
+
+    const patch: Record<string, unknown> =
+      toggleType === 'DRAWING' ? { isDrawingReady: ready } : { isMaterialReady: ready };
+
+    if (trimmedBox) {
+      patch.boxNumber = trimmedBox;
+    }
+
+    if (!ready) {
+      patch.taskStatus = 'PAUSED';
+      patch.exceptionRemark = remarkOnRed;
+    } else if (nextDrawing && nextMaterial) {
+      patch.taskStatus = 'PENDING';
+      patch.exceptionRemark = null;
+    } else {
+      patch.taskStatus = 'PAUSED';
+      patch.exceptionRemark = !nextMaterial ? '物料未齐套' : '图纸／工艺未就绪';
+    }
+
+    await orderUpdateOrCreateFromPatch(id, patch);
+    return { ok: true };
+  } catch (e) {
+    console.error('[toggleOrderReadyStatus]', e);
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * 車間工人（或後續小程序）申報異常工時；預設為待審 `PENDING`。
+ *
+ * @param input.orderId 關聯工單主鍵
+ * @param input.workerName 申報人姓名
+ * @param input.claimedHours 申報異常工時（小時，浮點）
+ * @param input.reason 異常原因說明
+ */
+export async function createAbnormalClaimAction(input: {
+  orderId: string;
+  workerName: string;
+  claimedHours: number;
+  reason: string;
+}): Promise<{ ok: boolean; error?: string; claimId?: string }> {
+  const parsed = createAbnormalClaimInputZ.safeParse(input);
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues.map((i) => i.message).join('; ') };
+  }
+  const { orderId, workerName, claimedHours, reason } = parsed.data;
+
+  try {
+    const row = await prisma.mesAbnormalClaim.create({
+      data: {
+        orderId,
+        workerName,
+        claimedHours,
+        reason,
+        status: 'PENDING',
+        createdAt: nowEpochMsForMesStorage(),
+      },
+    });
+    return { ok: true, claimId: row.id };
+  } catch (e) {
+    console.error('[createAbnormalClaimAction]', e);
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * 管理員核銷通過：將申報單標記為 `APPROVED`，並把申報工時累加到關聯訂單的 `totalHours`（產能／成本口徑）。
+ *
+ * @param claimId 申報列主鍵（cuid）
+ */
+export async function approveAbnormalClaimAction(
+  claimId: string
+): Promise<{ ok: boolean; error?: string }> {
+  const parsed = approveAbnormalClaimInputZ.safeParse({ claimId });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues.map((i) => i.message).join('; ') };
+  }
+  const { claimId: id } = parsed.data;
+
+  try {
+    await prisma.$transaction(async (tx) => {
+      const claim = await tx.mesAbnormalClaim.findUnique({ where: { id } });
+      if (!claim) {
+        throw new Error('申報記錄不存在');
+      }
+      if (claim.status !== 'PENDING') {
+        throw new Error('僅能核銷待審狀態的申報');
+      }
+
+      await tx.mesAbnormalClaim.update({
+        where: { id },
+        data: { status: 'APPROVED' },
+      });
+
+      try {
+        await tx.order.update({
+          where: { id: claim.orderId },
+          data: {
+            totalHours: {
+              increment: claim.claimedHours,
+            },
+          },
+        });
+      } catch (err) {
+        if (!isRecordNotFoundP2025(err)) throw err;
+        throw new Error('關聯訂單不存在，無法累加工時');
+      }
+    });
+    return { ok: true };
+  } catch (e) {
+    console.error('[approveAbnormalClaimAction]', e);
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 }

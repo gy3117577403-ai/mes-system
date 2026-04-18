@@ -8,6 +8,7 @@ import { Order, DAYS } from '@/types';
 import { UserRole } from '@/types/auth';
 import EnhancedOrderCard, { OrderCardRbacProps } from './OrderCard';
 import { canUseKanbanDnD } from '@/lib/rbac';
+import { isOrderCompletedStatus } from '@/lib/orderStatus';
 import type { AppTheme, LayoutMode } from '@/lib/uiTheme';
 import {
   cn,
@@ -226,7 +227,7 @@ export default function KanbanBoard({
           {DAYS.map((day) => {
             const dayTasks = orders.filter((t) => t.assignedDay === day.key);
             const totalMins = dayTasks
-              .filter((t) => t.taskStatus !== 'completed')
+              .filter((t) => !isOrderCompletedStatus(t.taskStatus))
               .reduce((sum, t) => sum + (Number(t.totalHours) || 0), 0);
             const loadPercent = Math.min(100, Math.round((totalMins / dailyCapacity) * 100));
             const isOverloaded = totalMins > dailyCapacity;
