@@ -68,16 +68,19 @@ export default function WorkshopAnalyticsModal({
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto custom-scrollbar p-6 space-y-8">
-          <section>
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto custom-scrollbar p-6 space-y-8">
+          <section className="min-h-0 min-w-0 shrink-0">
             <h3 className="text-sm font-bold text-slate-400 mb-3 tracking-widest uppercase">
               员工产能 · 订单数 / 工时（分钟）
             </h3>
-            <div className="h-80 w-full min-h-[280px]">
+            <div className="relative h-80 min-h-[300px] w-full min-w-[240px] shrink-0">
               {chartData.length === 0 ? (
-                <p className="text-slate-500 text-center py-16">暂无派工数据</p>
+                <p className="flex min-h-[300px] w-full items-center justify-center text-center text-slate-500">
+                  暂无派工数据
+                </p>
               ) : (
-                <ResponsiveContainer width="100%" height="100%">
+                <div className="absolute inset-0 h-full min-h-[280px] w-full min-w-0">
+                  <ResponsiveContainer width="100%" height="100%" minHeight={280} minWidth={240}>
                   <BarChart data={chartData} margin={{ top: 8, right: 8, left: 8, bottom: 8 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                     <XAxis dataKey="name" tick={{ fill: '#94a3b8', fontSize: 12 }} />
@@ -95,6 +98,7 @@ export default function WorkshopAnalyticsModal({
                     <Bar dataKey="工时分钟" fill="#34d399" name="工时(分钟)" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
+                </div>
               )}
             </div>
           </section>

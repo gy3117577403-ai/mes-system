@@ -1217,7 +1217,9 @@ export default function KanbanApp() {
           onAddWorker={handleAddWorkerMes}
         />
       ) : user.role === 'Boss' && mainAppView === 'dashboard' ? (
-        <BossDashboard orders={orders} />
+        <div className="flex flex-1 min-h-0 min-w-0 w-full flex-col overflow-hidden">
+          <BossDashboard orders={orders} />
+        </div>
       ) : (
         <KanbanBoard
           orders={filteredOrders}

@@ -74,11 +74,12 @@ export default function BossDashboard({ orders }: BossDashboardProps) {
   }, [orders]);
 
   return (
-    <div className="flex-1 min-h-0 overflow-auto p-4 md:p-6">
-      <div className="max-w-[1600px] mx-auto grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <div className="flex flex-1 min-h-0 min-w-0 h-full w-full overflow-auto p-4 md:p-6">
+      <div className="max-w-[1600px] mx-auto grid min-h-0 w-full min-w-0 grid-cols-1 gap-6 lg:grid-cols-2">
         <NeonPanel title="安灯异常统计 (今日 Mock)" subtitle="缺料 / 维修 / 质检">
-          <div className="h-[320px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className="relative h-[320px] min-h-[300px] w-full min-w-[240px] shrink-0">
+            <div className="absolute inset-0 h-full min-h-[280px] w-full min-w-0">
+              <ResponsiveContainer width="100%" height="100%" minHeight={280} minWidth={240}>
               <PieChart>
                 <Pie
                   data={pieData}
@@ -104,12 +105,14 @@ export default function BossDashboard({ orders }: BossDashboardProps) {
                 <Legend />
               </PieChart>
             </ResponsiveContainer>
+            </div>
           </div>
         </NeonPanel>
 
         <NeonPanel title="延期预警雷达" subtitle="未来 3 日内交期 · 尚未排产">
-          <div className="h-[320px] w-full">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className="relative h-[320px] min-h-[300px] w-full min-w-[240px] shrink-0">
+            <div className="absolute inset-0 h-full min-h-[280px] w-full min-w-0">
+              <ResponsiveContainer width="100%" height="100%" minHeight={280} minWidth={240}>
               <RadarChart data={radarData} cx="50%" cy="50%" outerRadius="75%">
                 <PolarGrid stroke="rgba(148,163,184,0.3)" />
                 <PolarAngleAxis dataKey="model" tick={{ fill: '#94a3b8', fontSize: 8 }} />
@@ -131,6 +134,7 @@ export default function BossDashboard({ orders }: BossDashboardProps) {
                 <Legend />
               </RadarChart>
             </ResponsiveContainer>
+            </div>
           </div>
         </NeonPanel>
       </div>
@@ -148,7 +152,7 @@ function NeonPanel({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-cyan-500/20 bg-slate-900/60 backdrop-blur-xl p-5 shadow-[0_0_40px_rgba(34,211,238,0.08),inset_0_1px_0_rgba(255,255,255,0.05)] transition-all duration-300 hover:shadow-[0_0_50px_rgba(34,211,238,0.12)]">
+    <div className="min-w-0 rounded-2xl border border-cyan-500/20 bg-slate-900/60 backdrop-blur-xl p-5 shadow-[0_0_40px_rgba(34,211,238,0.08),inset_0_1px_0_rgba(255,255,255,0.05)] transition-all duration-300 hover:shadow-[0_0_50px_rgba(34,211,238,0.12)]">
       <div className="mb-4">
         <h2 className="text-lg font-black text-white tracking-wide">{title}</h2>
         {subtitle && <p className="text-xs text-slate-500 mt-1">{subtitle}</p>}
