@@ -31,6 +31,43 @@ import type { AppTheme, LayoutMode } from '@/lib/uiTheme';
 
 const SETTINGS_ID = 'singleton';
 
+type MesInteractiveTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+
+/**
+ * 批次導入前：刪除庫內同【客戶+型號+計劃週錨點】且未軟刪之舊單，避免三胞胎累積（硬刪）。
+ */
+async function deleteOrdersMatchingImportPairsForWeek(
+  tx: MesInteractiveTx,
+  pairs: { client: string; model: string }[],
+  weekStartMs: number,
+  weekEndMs: number
+): Promise<number> {
+  if (pairs.length === 0) return 0;
+  const CHUNK = 40;
+  let deleted = 0;
+  for (let i = 0; i < pairs.length; i += CHUNK) {
+    const chunk = pairs.slice(i, i + CHUNK);
+    const hits = await tx.order.findMany({
+      where: {
+        deletedAt: null,
+        OR: chunk.map((p) => ({ client: p.client, model: p.model })),
+      },
+      select: { id: true, plannedDate: true },
+    });
+    const ids = hits
+      .filter((h) => {
+        const a = plannedDateAnchorEpochMs(h.plannedDate);
+        return a != null && a >= weekStartMs && a <= weekEndMs;
+      })
+      .map((h) => h.id);
+    if (ids.length > 0) {
+      const r = await tx.order.deleteMany({ where: { id: { in: ids } } });
+      deleted += r.count;
+    }
+  }
+  return deleted;
+}
+
 async function ensureAppSettings() {
   await prisma.mesAppSettings.upsert({
     where: { id: SETTINGS_ID },
@@ -314,8 +351,23 @@ export async function importOrdersOverwriteWeekAction(
         throw new Error('targetWeekStart 無法對應為有效週一錨點');
       }
 
-      let n = 0;
+      const pairMap = new Map<string, { client: string; model: string }>();
+      const lastRawByPair = new Map<string, (typeof list)[number]>();
       for (const raw of list) {
+        const o = normalizeOrder({
+          ...(raw as Partial<Order> & { id: string }),
+          plannedDate: plannedMsStr,
+        });
+        const ck = `${o.client.trim()}\0${o.model.trim()}`;
+        pairMap.set(ck, { client: o.client.trim(), model: o.model.trim() });
+        lastRawByPair.set(ck, raw);
+      }
+      const uniquePairs = [...pairMap.values()];
+      await deleteOrdersMatchingImportPairsForWeek(tx, uniquePairs, weekStartMs, weekEndMs);
+
+      const dedupedRaws = [...lastRawByPair.values()];
+      let n = 0;
+      for (const raw of dedupedRaws) {
         const o = normalizeOrder({
           ...(raw as Partial<Order> & { id: string }),
           plannedDate: plannedMsStr,
@@ -327,6 +379,8 @@ export async function importOrdersOverwriteWeekAction(
           create: data,
           update: {
             ...rest,
+            isDrawingReady: data.isDrawingReady,
+            isMaterialReady: data.isMaterialReady,
             isArchived: false,
             deletedAt: null,
           },
@@ -874,6 +928,13 @@ export type ProductionAuditOrderLine = {
   totalHours: number;
 };
 
+/** 審計明細去重鍵：同型號下客戶與計劃工時完全一致視為重複列 */
+function auditOrderLineFingerprint(line: ProductionAuditOrderLine): string {
+  const cust = (line.customerName ?? '').trim();
+  const th = Math.round((Number(line.totalHours) || 0) * 1000) / 1000;
+  return `${cust}\t${th}`;
+}
+
 /** 未完工型號行（`partNumber` 對應 `Order.model`） */
 export type ProductionAuditPendingModelRow = {
   partNumber: string;
@@ -975,8 +1036,9 @@ function toAuditOrderLine(r: {
     customerName: (r.client ?? '').trim(),
     plannedDate: r.plannedDate?.trim() ? r.plannedDate.trim() : null,
     deliveryDate: (r.deliveryDate ?? '').trim(),
-    isDrawingReady: r.isDrawingReady === false ? false : true,
-    isMaterialReady: r.isMaterialReady === false ? false : true,
+    /** 與庫存布林嚴格對齊：僅 `true` 視為已就緒，避免把 null/undefined 誤當已齊 */
+    isDrawingReady: r.isDrawingReady === true,
+    isMaterialReady: r.isMaterialReady === true,
     exceptionRemark: String(r.exceptionRemark ?? '').trim(),
     assignedDay: (r.assignedDay ?? '').trim(),
     taskStatus: String(r.taskStatus ?? '').trim(),
@@ -1022,6 +1084,7 @@ export async function fetchProductionAuditSummaryAction(weekOffset = 0): Promise
       prisma.order.findMany({
         where: {
           deletedAt: null,
+          isArchived: false,
           AND: [{ taskStatus: { not: 'COMPLETED' } }, { taskStatus: { not: 'completed' } }],
         },
         select: ORDER_AUDIT_SELECT,
@@ -1074,17 +1137,32 @@ export async function fetchProductionAuditSummaryAction(weekOffset = 0): Promise
     const completedRows = completedCandidates;
 
     const weekBurnByModel = new Map<string, number>();
+    const burnFpByModel = new Map<string, Set<string>>();
     for (const r of completedRows) {
       const k = partKey(r.model);
+      const line = toAuditOrderLine(r);
+      const fp = auditOrderLineFingerprint(line);
+      const seenB = burnFpByModel.get(k) ?? new Set<string>();
+      if (seenB.has(fp)) continue;
+      seenB.add(fp);
+      burnFpByModel.set(k, seenB);
       const th = Number(r.totalHours) || 0;
       weekBurnByModel.set(k, (weekBurnByModel.get(k) ?? 0) + th);
     }
 
     const pendingAgg = new Map<string, ModelWeekAcc>();
     const pendingLinesByModel = new Map<string, ProductionAuditOrderLine[]>();
+    const pendingFpByModel = new Map<string, Set<string>>();
 
     for (const r of pendingRows) {
       const key = partKey(r.model);
+      const line = toAuditOrderLine(r);
+      const fp = auditOrderLineFingerprint(line);
+      const seen = pendingFpByModel.get(key) ?? new Set<string>();
+      if (seen.has(fp)) continue;
+      seen.add(fp);
+      pendingFpByModel.set(key, seen);
+
       const plannedPiece = r.totalQty ?? r.qty;
       const th = Number(r.totalHours) || 0;
       const acc =
@@ -1105,16 +1183,24 @@ export async function fetchProductionAuditSummaryAction(weekOffset = 0): Promise
       acc.plannedQty += plannedPiece;
       acc.plannedHours += th;
       const arr = pendingLinesByModel.get(key) ?? [];
-      arr.push(toAuditOrderLine(r));
+      arr.push(line);
       pendingLinesByModel.set(key, arr);
       pendingAgg.set(key, acc);
     }
 
     const completedAgg = new Map<string, ModelWeekAcc>();
     const completedLinesByModel = new Map<string, ProductionAuditOrderLine[]>();
+    const completedFpByModel = new Map<string, Set<string>>();
 
     for (const r of completedRows) {
       const key = partKey(r.model);
+      const line = toAuditOrderLine(r);
+      const fp = auditOrderLineFingerprint(line);
+      const seen = completedFpByModel.get(key) ?? new Set<string>();
+      if (seen.has(fp)) continue;
+      seen.add(fp);
+      completedFpByModel.set(key, seen);
+
       const plannedPiece = r.totalQty ?? r.qty;
       const th = Number(r.totalHours) || 0;
       const acc =
@@ -1135,7 +1221,7 @@ export async function fetchProductionAuditSummaryAction(weekOffset = 0): Promise
       acc.plannedQty += plannedPiece;
       acc.plannedHours += th;
       const arr = completedLinesByModel.get(key) ?? [];
-      arr.push(toAuditOrderLine(r));
+      arr.push(line);
       completedLinesByModel.set(key, arr);
       completedAgg.set(key, acc);
     }
@@ -1170,10 +1256,12 @@ export async function fetchProductionAuditSummaryAction(weekOffset = 0): Promise
     completedModels.sort((a, b) => b.actualQty - a.actualQty);
 
     const modelKeys = new Set<string>([...pendingAgg.keys(), ...completedAgg.keys()]);
-    const completedInWeekCount = completedRows.length;
-    const pendingBacklogCount = pendingRows.length;
-    const burnedHours = Math.round(completedRows.reduce((s, r) => s + (Number(r.totalHours) || 0), 0) * 1000) / 1000;
-    const plannedHours = Math.round(pendingRows.reduce((s, r) => s + (Number(r.totalHours) || 0), 0) * 1000) / 1000;
+    const completedInWeekCount = [...completedAgg.values()].reduce((s, v) => s + v.completedOrderCount, 0);
+    const pendingBacklogCount = [...pendingAgg.values()].reduce((s, v) => s + v.pendingOrderCount, 0);
+    const burnedHours =
+      Math.round([...completedAgg.values()].reduce((s, v) => s + v.burnedHours, 0) * 1000) / 1000;
+    const plannedHours =
+      Math.round([...pendingAgg.values()].reduce((s, v) => s + v.pendingHours, 0) * 1000) / 1000;
 
     return {
       ok: true,

@@ -50,6 +50,18 @@ function hasAssignedDay(assignedDay: string): boolean {
   return true;
 }
 
+function dedupeAuditOrderLinesForDisplay(orders: ProductionAuditOrderLine[]): ProductionAuditOrderLine[] {
+  const seen = new Set<string>();
+  const out: ProductionAuditOrderLine[] = [];
+  for (const o of orders) {
+    const fp = `${(o.customerName ?? '').trim()}\t${Math.round((Number(o.totalHours) || 0) * 1000) / 1000}`;
+    if (seen.has(fp)) continue;
+    seen.add(fp);
+    out.push(o);
+  }
+  return out;
+}
+
 function schedulingStatusText(order: ProductionAuditOrderLine): string {
   if (order.isDrawingReady === false) return '图纸未下发';
   if (order.isMaterialReady === false) return '缺料';
@@ -333,6 +345,7 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
 }
 
 function PendingModelCard({ model }: { model: ProductionAuditPendingModelRow }) {
+  const orderLines = useMemo(() => dedupeAuditOrderLinesForDisplay(model.orders), [model.orders]);
   const hourPct = pct(model.modelWeekBurnedHours, model.modelWeekPlannedHours);
   return (
     <li className="rounded-xl border border-slate-800/90 bg-slate-950/50 px-3 py-3 pb-4 md:px-4 md:py-4">
@@ -358,7 +371,7 @@ function PendingModelCard({ model }: { model: ProductionAuditPendingModelRow }) 
       <div className="mt-3 space-y-2 rounded-lg border border-slate-800/50 bg-slate-900/40 p-3">
         <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">订单明细</p>
         <div className="space-y-2">
-          {model.orders.map((o) => (
+          {orderLines.map((o) => (
             <div
               key={o.id}
               className="flex items-start justify-between gap-3 rounded-md bg-slate-950/35 px-2.5 py-2 md:gap-4 md:px-3"
@@ -378,6 +391,7 @@ function PendingModelCard({ model }: { model: ProductionAuditPendingModelRow }) 
 }
 
 function CompletedModelCard({ model }: { model: ProductionAuditCompletedModelRow }) {
+  const orderLines = useMemo(() => dedupeAuditOrderLinesForDisplay(model.orders), [model.orders]);
   const qtyPct = pct(model.actualQty, model.modelWeekPlannedQty);
   return (
     <li className="rounded-xl border border-slate-800/90 bg-slate-950/50 px-3 py-3 pb-4 md:px-4 md:py-4">
@@ -403,7 +417,7 @@ function CompletedModelCard({ model }: { model: ProductionAuditCompletedModelRow
       <div className="mt-3 space-y-2 rounded-lg border border-slate-800/50 bg-slate-900/40 p-3">
         <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">订单明细</p>
         <div className="space-y-2">
-          {model.orders.map((o) => (
+          {orderLines.map((o) => (
             <div
               key={o.id}
               className="flex items-start justify-between gap-3 rounded-md bg-slate-950/35 px-2.5 py-2 md:gap-4 md:px-3"
