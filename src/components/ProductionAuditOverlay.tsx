@@ -1,7 +1,6 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { format, isValid, parseISO } from 'date-fns';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ChevronDown, Search, X } from 'lucide-react';
 import {
@@ -13,7 +12,7 @@ import {
   type ProductionAuditSummaryResult,
 } from '@/actions/mesActions';
 import { cn } from '@/lib/uiTheme';
-import { formatMsToShanghaiLocale, plannedDateAnchorEpochMs } from '@/lib/datetimeShanghai';
+import { formatMsToShanghaiLocale } from '@/lib/datetimeShanghai';
 
 interface ProductionAuditOverlayProps {
   isOpen: boolean;
@@ -23,33 +22,6 @@ interface ProductionAuditOverlayProps {
 function pct(numerator: number, denominator: number): number {
   if (denominator <= 0) return 0;
   return Math.min(100, Math.round((numerator / denominator) * 1000) / 10);
-}
-
-function formatAuditDueDate(plannedDate: string | null, deliveryDate: string): string {
-  const anchor = plannedDateAnchorEpochMs(plannedDate);
-  if (anchor != null) {
-    return formatMsToShanghaiLocale(anchor).slice(0, 10);
-  }
-  for (const raw of [plannedDate, deliveryDate]) {
-    if (!raw?.trim()) continue;
-    const s = raw.trim();
-    const isoPrefix = s.match(/^(\d{4}-\d{2}-\d{2})/);
-    if (isoPrefix) {
-      const d = parseISO(isoPrefix[1]);
-      if (isValid(d)) return format(d, 'yyyy-MM-dd');
-    }
-  }
-  if (plannedDate?.trim()) return plannedDate.trim();
-  if (deliveryDate?.trim()) return deliveryDate.trim();
-  return '—';
-}
-
-function hasAssignedDay(assignedDay: string): boolean {
-  const t = (assignedDay ?? '').trim();
-  if (!t) return false;
-  const lower = t.toLowerCase();
-  if (t === 'Unscheduled' || t === '未排程' || lower === 'unscheduled') return false;
-  return true;
 }
 
 function dedupeAuditOrderLinesForDisplay(orders: ProductionAuditOrderLine[]): ProductionAuditOrderLine[] {
@@ -64,83 +36,50 @@ function dedupeAuditOrderLinesForDisplay(orders: ProductionAuditOrderLine[]): Pr
   return out;
 }
 
-/** 單行狀態：圖紙／物料嚴格 `=== true`／`=== false` */
-function OrderStatusInline({ order }: { order: ProductionAuditOrderLine }) {
-  const pieces: React.ReactNode[] = [];
-
-  if (order.isDrawingReady === true) {
-    pieces.push(
-      <span key="dr" className="text-slate-400">
-        <span className="mr-1 opacity-70" aria-hidden>
-          🟢
-        </span>
-        图纸已就绪
-      </span>
-    );
-  } else if (order.isDrawingReady === false) {
-    pieces.push(
-      <span key="dr" className="inline-flex items-center gap-1.5 text-red-400/95">
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.6)]" aria-hidden />
-        图纸未下发
-      </span>
-    );
-  } else {
-    pieces.push(
-      <span key="dr-unknown" className="inline-flex items-center gap-1.5 text-red-400/90">
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" aria-hidden />
-        图纸未下发
-      </span>
-    );
-  }
-
-  if (order.isMaterialReady === true) {
-    pieces.push(
-      <span key="mr" className="text-slate-400">
-        <span className="mr-1 opacity-70" aria-hidden>
-          🟢
-        </span>
-        物料已齐
-      </span>
-    );
-  } else if (order.isMaterialReady === false) {
-    pieces.push(
-      <span key="mr" className="text-amber-400/85">
-        <span className="mr-1" aria-hidden>
-          🟡
-        </span>
-        缺料
-      </span>
-    );
-  }
-
-  if (hasAssignedDay(order.assignedDay)) {
-    pieces.push(
-      <span key="ad" className="text-slate-400">
-        排产 {order.assignedDay}
-      </span>
-    );
-  } else if (order.isDrawingReady === true && order.isMaterialReady === true) {
-    pieces.push(
-      <span key="idle" className="text-slate-500">
-        待排产
-      </span>
-    );
-  } else if (pieces.length === 0) {
-    pieces.push(
-      <span key="idle2" className="text-slate-500">
-        待排产
-      </span>
-    );
-  }
-
+/** 圖紙／物料：僅 `=== true` 為綠點，其餘（含 `false`／未同步）按未就緒顯示 */
+function DrawingMaterialDots({ order }: { order: ProductionAuditOrderLine }) {
+  const drOk = order.isDrawingReady === true;
+  const mrOk = order.isMaterialReady === true;
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-xs leading-relaxed tracking-wide">
-      {pieces.map((node, i) => (
-        <React.Fragment key={i}>
-          {i > 0 ? <span className="text-slate-600" aria-hidden>|</span> : null}
-          {node}
-        </React.Fragment>
-      ))}
+    <span className="inline-flex items-center gap-4 text-xs text-slate-400">
+      <span className="inline-flex items-center gap-2">
+        <span className="text-slate-500">图纸</span>
+        {drOk ? (
+          <span className="h-2 w-2 rounded-full bg-emerald-500/90" title="图纸已就绪" />
+        ) : (
+          <span
+            className="h-2 w-2 rounded-full bg-red-500 shadow-[0_0_6px_rgba(239,68,68,0.45)]"
+            title="图纸未下发"
+          />
+        )}
+      </span>
+      <span className="inline-flex items-center gap-2">
+        <span className="text-slate-500">物料</span>
+        {mrOk ? (
+          <span className="h-2 w-2 rounded-full bg-emerald-500/90" title="物料已齐" />
+        ) : (
+          <span className="h-2 w-2 rounded-full bg-amber-500/85" title="缺料" />
+        )}
+      </span>
+    </span>
+  );
+}
+
+function OrderDetailOneLine({ order }: { order: ProductionAuditOrderLine }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm leading-relaxed">
+      <span className="min-w-0 truncate font-medium text-slate-100">{order.customerName || '—'}</span>
+      <span className="text-slate-600" aria-hidden>
+        |
+      </span>
+      <span className="tabular-nums text-slate-300">
+        数量: {order.actualQuantity} / {order.totalQuantity}
+      </span>
+      <span className="text-slate-600" aria-hidden>
+        |
+      </span>
+      <span className="text-slate-500">状态</span>
+      <DrawingMaterialDots order={order} />
     </div>
   );
 }
@@ -446,15 +385,9 @@ function CollapsiblePendingRow({
               {orderLines.map((o, idx) => (
                 <div
                   key={`${model.partNumber}-${idx}-${o.customerName}`}
-                  className="flex flex-col gap-2 border-b border-white/[0.05] py-3 last:border-0 sm:flex-row sm:items-center sm:gap-6 sm:py-2.5"
+                  className="border-b border-white/[0.05] py-3 last:border-0"
                 >
-                  <span className="min-w-0 flex-1 truncate text-sm leading-relaxed text-slate-200">{o.customerName || '—'}</span>
-                  <span className="shrink-0 whitespace-nowrap text-sm tabular-nums text-slate-500">
-                    {formatAuditDueDate(o.plannedDate, o.deliveryDate)}
-                  </span>
-                  <div className="min-w-0 flex-1 sm:flex-[1.2]">
-                    <OrderStatusInline order={o} />
-                  </div>
+                  <OrderDetailOneLine order={o} />
                 </div>
               ))}
             </motion.div>
@@ -524,15 +457,9 @@ function CollapsibleCompletedRow({
               {orderLines.map((o, idx) => (
                 <div
                   key={`${model.partNumber}-${idx}-${o.customerName}`}
-                  className="flex flex-col gap-2 border-b border-white/[0.05] py-3 last:border-0 sm:flex-row sm:items-center sm:gap-6 sm:py-2.5"
+                  className="border-b border-white/[0.05] py-3 last:border-0"
                 >
-                  <span className="min-w-0 flex-1 truncate text-sm leading-relaxed text-slate-200">{o.customerName || '—'}</span>
-                  <span className="shrink-0 whitespace-nowrap text-sm tabular-nums text-slate-500">
-                    {formatAuditDueDate(o.plannedDate, o.deliveryDate)}
-                  </span>
-                  <div className="min-w-0 flex-1 sm:flex-[1.2]">
-                    <OrderStatusInline order={o} />
-                  </div>
+                  <OrderDetailOneLine order={o} />
                 </div>
               ))}
             </motion.div>

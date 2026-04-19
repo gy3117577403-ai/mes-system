@@ -28,8 +28,31 @@ import {
 import type { Order } from '@/types';
 import type { ActivityLogEntry } from '@/types';
 import type { AppTheme, LayoutMode } from '@/lib/uiTheme';
+import { isOrderCompletedStatus } from '@/lib/orderStatus';
 
 const SETTINGS_ID = 'singleton';
+
+/**
+ * 標記完工時強制 `reportedQty = totalQty`（庫存欄位名），確保審計實做件數與工時核算有基数。
+ */
+async function mergeCompletionReportedQty(
+  orderId: string,
+  patch: Record<string, unknown>,
+  rawUpdate: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const ts = rawUpdate.taskStatus;
+  if (ts === undefined) return patch;
+  if (!isOrderCompletedStatus(String(ts))) return patch;
+  const row = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: { totalQty: true, qty: true },
+  });
+  const fromPatch =
+    patch.totalQty != null ? Math.max(1, Math.trunc(Number(patch.totalQty))) : null;
+  const fromDb = Math.max(1, Number(row?.totalQty) || Number(row?.qty) || 1);
+  const tq = fromPatch != null ? fromPatch : fromDb;
+  return { ...patch, reportedQty: tq };
+}
 
 type MesInteractiveTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
@@ -560,7 +583,8 @@ export async function updateOrderAction(
     const patch = buildOrderPatch(safeUpdate);
     if (Object.keys(patch).length === 0) return { ok: true };
 
-    await orderUpdateOrCreateFromPatch(id, patch);
+    const merged = await mergeCompletionReportedQty(id, patch, safeUpdate as Record<string, unknown>);
+    await orderUpdateOrCreateFromPatch(id, merged);
     return { ok: true };
   } catch (e) {
     console.error('[updateOrderAction]', e);
@@ -580,7 +604,8 @@ export async function batchUpdateOrdersAction(
       listRes.data.map(async ({ id, data }) => {
         const patch = buildOrderPatch(data);
         if (Object.keys(patch).length === 0) return;
-        await orderUpdateOrCreateFromPatch(id, patch);
+        const merged = await mergeCompletionReportedQty(id, patch, data as Record<string, unknown>);
+        await orderUpdateOrCreateFromPatch(id, merged);
       })
     );
     return { ok: true };
@@ -925,6 +950,10 @@ export type ProductionAuditOrderLine = {
   qty: number;
   totalQty: number;
   reportedQty: number;
+  /** 與 `totalQty` 同源，審計顯式別名 */
+  totalQuantity: number;
+  /** 與 `reportedQty` 同源（實做件數），審計顯式別名 */
+  actualQuantity: number;
   totalHours: number;
 };
 
@@ -1033,21 +1062,28 @@ function toAuditOrderLine(r: {
 }): ProductionAuditOrderLine {
   const dr = r.isDrawingReady;
   const mr = r.isMaterialReady;
+  const rawTq = r.totalQty;
+  const rawRq = r.reportedQty;
+  const q = Number(r.qty);
+  const totalQtyNum = Number.isFinite(Number(rawTq)) ? Math.trunc(Number(rawTq)) : Math.trunc(Number.isFinite(q) ? q : 0);
+  const reportedQtyNum = Number.isFinite(Number(rawRq)) ? Math.trunc(Number(rawRq)) : 0;
+  const totalHoursNum = Number.isFinite(Number(r.totalHours)) ? Number(r.totalHours) : 0;
   return {
     id: r.id,
     customerName: (r.client ?? '').trim(),
     plannedDate: r.plannedDate?.trim() ? r.plannedDate.trim() : null,
     deliveryDate: (r.deliveryDate ?? '').trim(),
-    /** 僅庫存顯式 `true` 為已就緒；`null`／`false` 一律視為未就緒 */
     isDrawingReady: dr === true,
     isMaterialReady: mr === true,
     exceptionRemark: String(r.exceptionRemark ?? '').trim(),
     assignedDay: (r.assignedDay ?? '').trim(),
     taskStatus: String(r.taskStatus ?? '').trim(),
-    qty: Number(r.qty) || 0,
-    totalQty: Number(r.totalQty) || 0,
-    reportedQty: Number(r.reportedQty) || 0,
-    totalHours: Number(r.totalHours) || 0,
+    qty: Math.trunc(Number.isFinite(q) ? q : 0),
+    totalQty: totalQtyNum,
+    reportedQty: reportedQtyNum,
+    totalQuantity: totalQtyNum,
+    actualQuantity: reportedQtyNum,
+    totalHours: totalHoursNum,
   };
 }
 
