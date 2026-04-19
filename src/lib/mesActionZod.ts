@@ -66,3 +66,9 @@ export const patchMesSettingsZ = z.object({
 });
 
 export const softDeleteModeZ = z.enum(['completed', 'all']);
+
+/** 按週覆蓋式批次導入：上海曆週一 00:00 的 UTC 毫秒錨點 + 訂單陣列 */
+export const importOrdersOverwriteWeekZ = z.object({
+  targetWeekStart: z.number().finite(),
+  orders: z.array(createOrderActionInputZ).min(1).max(2000),
+});

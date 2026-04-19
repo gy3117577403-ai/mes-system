@@ -21,6 +21,7 @@ import {
   orderIdZ,
   patchMesSettingsZ,
   softDeleteModeZ,
+  importOrdersOverwriteWeekZ,
   toggleOrderReadyInputZ,
   updateOrderDataZ,
 } from '@/lib/mesActionZod';
@@ -256,6 +257,88 @@ export async function createOrderAction(
     return { ok: true };
   } catch (e) {
     console.error('[createOrderAction]', e);
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/**
+ * 按週覆蓋式批次導入：`targetWeekStart` 為該週上海週一 00:00:00 的 UTC 毫秒戳。
+ * 先將該週內、未完工、未刪之訂單歸檔，再以 upsert 寫入（同 id 則更新並拉回看板）。
+ */
+export async function importOrdersOverwriteWeekAction(
+  orders: unknown[],
+  targetWeekStart: number
+): Promise<{ ok: boolean; error?: string; archivedCount?: number; upsertedCount?: number }> {
+  const parsed = importOrdersOverwriteWeekZ.safeParse({ orders, targetWeekStart });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues.map((i) => i.message).join('; ') };
+  }
+  const { orders: list, targetWeekStart: weekStartMs } = parsed.data;
+  const weekEndMs = weekStartMs + 7 * 86_400_000 - 1;
+
+  try {
+    let archivedCount = 0;
+    const upsertedCount = await prisma.$transaction(async (tx) => {
+      const candidates = await tx.order.findMany({
+        where: {
+          deletedAt: null,
+          isArchived: false,
+          taskStatus: { notIn: ['COMPLETED', 'completed'] },
+        },
+        select: { id: true, plannedDate: true },
+      });
+      const toArchiveIds = candidates
+        .filter((r) => {
+          const a = plannedDateAnchorEpochMs(r.plannedDate);
+          if (a == null) return false;
+          return a >= weekStartMs && a <= weekEndMs;
+        })
+        .map((r) => r.id);
+      if (toArchiveIds.length > 0) {
+        const CHUNK = 300;
+        for (let i = 0; i < toArchiveIds.length; i += CHUNK) {
+          const slice = toArchiveIds.slice(i, i + CHUNK);
+          const r = await tx.order.updateMany({
+            where: { id: { in: slice } },
+            data: { isArchived: true },
+          });
+          archivedCount += r.count;
+        }
+      }
+
+      const mondayYmd = formatMsToShanghaiLocale(weekStartMs).slice(0, 10);
+      let plannedMsStr: string;
+      try {
+        plannedMsStr = String(parseShanghaiWallClockToEpochMs(mondayYmd, '00:00:00'));
+      } catch {
+        throw new Error('targetWeekStart 無法對應為有效週一錨點');
+      }
+
+      let n = 0;
+      for (const raw of list) {
+        const o = normalizeOrder({
+          ...(raw as Partial<Order> & { id: string }),
+          plannedDate: plannedMsStr,
+        });
+        const data = frontendOrderToPrismaCreate(o);
+        const { id, ...rest } = data;
+        await tx.order.upsert({
+          where: { id },
+          create: data,
+          update: {
+            ...rest,
+            isArchived: false,
+            deletedAt: null,
+          },
+        });
+        n += 1;
+      }
+      return n;
+    });
+
+    return { ok: true, archivedCount, upsertedCount };
+  } catch (e) {
+    console.error('[importOrdersOverwriteWeekAction]', e);
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
@@ -905,7 +988,9 @@ function toAuditOrderLine(r: {
 }
 
 /**
- * 生產審計：`weekOffset` 選週；待辦／當週完工均以 `plannedDate` 錨點落在該週內（`null` 排除）；完工另需 `updatedAt` 落在該週。
+ * 生產審計：`weekOffset` 選週。
+ * - 待辦：仍以 `plannedDate`（或 `createdAt`）錨點落在該週。
+ * - 已完工：僅要求 `updatedAt` 落在該週，不再用 `plannedDate` 二次過濾（跨週完工可計入業績）。
  */
 export async function fetchProductionAuditSummaryAction(weekOffset = 0): Promise<ProductionAuditSummaryResult> {
   const empty: ProductionAuditSummaryResult = {
@@ -985,7 +1070,8 @@ export async function fetchProductionAuditSummaryAction(weekOffset = 0): Promise
     };
 
     const pendingRows = pendingCandidates.filter((r) => inSelectedWeekByAnchor(r));
-    const completedRows = completedCandidates.filter((r) => inSelectedWeekByAnchor(r));
+    /** 已完工：僅以庫存 `updatedAt`（完工時間）落在選定週為準，不依賴 plannedDate，避免跨週完工漏計 */
+    const completedRows = completedCandidates;
 
     const weekBurnByModel = new Map<string, number>();
     for (const r of completedRows) {

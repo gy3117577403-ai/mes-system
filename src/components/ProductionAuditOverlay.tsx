@@ -308,7 +308,9 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
                   <h2 className="text-sm font-black uppercase tracking-widest text-emerald-200/90 md:text-base">
                     已完工战报榜
                   </h2>
-                  <p className="mt-1 text-[11px] text-slate-500 md:text-xs">型号聚合 · 实做与产出明细</p>
+                  <p className="mt-1 text-[11px] text-slate-500 md:text-xs">
+                    型号聚合 · 以完工时间（updatedAt）落在统计周为准，不按 plannedDate 过滤
+                  </p>
                 </div>
                 <ul className="custom-scrollbar min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-y-contain px-3 py-3 pr-2 md:px-4 md:py-4 md:pr-3">
                   {filteredCompleted.length === 0 ? (

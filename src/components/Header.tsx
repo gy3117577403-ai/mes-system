@@ -77,9 +77,12 @@ interface HeaderProps {
   isSyncing: boolean;
   /** 打開本週生產執行審計全屏層 */
   onOpenProductionAudit: () => void;
-  /** 批次導入／新建：相對週位移（-1…2）→ 週一 yyyy-MM-dd */
+  /** 單筆新建／AI：相對週位移（-1…2）→ 週一 yyyy-MM-dd */
   weekOffset: number;
   setWeekOffset: (v: number) => void;
+  /** Excel 覆蓋導入必填：本周=0、下周=1、下下周=2；null 禁止上傳 */
+  importPlanWeek: number | null;
+  setImportPlanWeek: (v: number | null) => void;
 }
 
 export default function Header({
@@ -118,6 +121,8 @@ export default function Header({
   onOpenProductionAudit,
   weekOffset,
   setWeekOffset,
+  importPlanWeek,
+  setImportPlanWeek,
 }: HeaderProps) {
   const { user, logout } = useAuth();
   const [notifOpen, setNotifOpen] = useState(false);
@@ -626,6 +631,35 @@ export default function Header({
               )}
             </button>
 
+            <label className="flex shrink-0 flex-col justify-center gap-0.5">
+              <span className="sr-only">录入与 AI 排产周</span>
+              <select
+                value={weekOffset}
+                onChange={(e) => setWeekOffset(Number(e.target.value))}
+                className={cn(
+                  'h-8 max-w-[9.5rem] shrink-0 cursor-pointer truncate rounded-md border px-1 py-0.5 text-[10px] font-bold outline-none sm:max-w-[11rem] md:h-9 md:max-w-[12rem] md:px-1.5 md:text-[11px]',
+                  theme === 'dark'
+                    ? 'border-slate-700 bg-slate-800 text-slate-200'
+                    : 'border-gray-300 bg-white text-gray-900'
+                )}
+                title="单条录入 / AI 排产绑定至该周周一（上海时区）"
+                aria-label="录入与 AI 排产周"
+              >
+                <option value={0} className={theme === 'dark' ? 'bg-slate-900' : ''}>
+                  本周（录入／AI）
+                </option>
+                <option value={1} className={theme === 'dark' ? 'bg-slate-900' : ''}>
+                  下周（录入／AI）
+                </option>
+                <option value={2} className={theme === 'dark' ? 'bg-slate-900' : ''}>
+                  下下周（录入／AI）
+                </option>
+                <option value={-1} className={theme === 'dark' ? 'bg-slate-900' : ''}>
+                  上周补录
+                </option>
+              </select>
+            </label>
+
             <button
               type="button"
               onClick={() => setIsAddModalOpen(true)}
@@ -641,59 +675,86 @@ export default function Header({
               <Plus className="h-4 w-4 shrink-0 md:h-[18px] md:w-[18px]" strokeWidth={3} />
             </button>
 
-            <label className="flex shrink-0 flex-col justify-center">
-              <span className="sr-only">排产周</span>
-              <select
-                value={weekOffset}
-                onChange={(e) => setWeekOffset(Number(e.target.value))}
+            <div
+              className={cn(
+                'flex min-w-0 max-w-[7.5rem] shrink-0 flex-col gap-0.5 rounded-lg border px-1 py-0.5 sm:max-w-[9rem] md:max-w-[10rem] md:px-1.5 md:py-1',
+                theme === 'dark' ? 'border-amber-500/35 bg-slate-900/80' : 'border-amber-400/50 bg-amber-50/80'
+              )}
+            >
+              <span
                 className={cn(
-                  'h-9 max-w-[10.5rem] shrink-0 cursor-pointer truncate rounded-md border px-1.5 py-1 text-[11px] font-bold outline-none sm:max-w-[12rem] md:h-10 md:max-w-[13rem] md:px-2 md:text-xs',
+                  'text-[9px] font-black leading-tight sm:text-[10px]',
+                  theme === 'dark' ? 'text-amber-200/90' : 'text-amber-900'
+                )}
+              >
+                计划归属周
+              </span>
+              <select
+                value={importPlanWeek === null ? '' : String(importPlanWeek)}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setImportPlanWeek(v === '' ? null : Number(v));
+                }}
+                className={cn(
+                  'h-8 w-full min-w-0 cursor-pointer truncate rounded border px-0.5 text-[10px] font-bold outline-none md:h-9 md:text-[11px]',
                   theme === 'dark'
-                    ? 'border-slate-700 bg-slate-800 text-slate-200'
+                    ? 'border-slate-600 bg-slate-800 text-slate-100'
                     : 'border-gray-300 bg-white text-gray-900'
                 )}
-                title="导入/新建订单绑定至所选周的周一（上海时区）"
-                aria-label="智能相对周排产"
+                title="Excel 覆盖导入必须指定计划归属周"
+                aria-label="Excel 计划归属周"
               >
-                <option value={0} className={theme === 'dark' ? 'bg-slate-900' : ''}>
-                  本周排产计划
+                <option value="" className={theme === 'dark' ? 'bg-slate-900' : ''}>
+                  请选择计划归属周
                 </option>
-                <option value={1} className={theme === 'dark' ? 'bg-slate-900' : ''}>
-                  下周排产计划
+                <option value="0" className={theme === 'dark' ? 'bg-slate-900' : ''}>
+                  本周
                 </option>
-                <option value={2} className={theme === 'dark' ? 'bg-slate-900' : ''}>
-                  下下周计划
+                <option value="1" className={theme === 'dark' ? 'bg-slate-900' : ''}>
+                  下周
                 </option>
-                <option value={-1} className={theme === 'dark' ? 'bg-slate-900' : ''}>
-                  上周补录
+                <option value="2" className={theme === 'dark' ? 'bg-slate-900' : ''}>
+                  下下周
                 </option>
               </select>
-            </label>
-
-            <input
-              type="file"
-              accept=".xlsx, .xls, .csv"
-              ref={fileInputRef}
-              onChange={handleFileUpload}
-              className="hidden"
-            />
-
-            <button
-              type="button"
-              onClick={() => fileInputRef.current && fileInputRef.current.click()}
-              disabled={isProcessing}
-              className={cn(
-                'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-blue-500/50 text-xs font-bold text-blue-500 transition-all md:h-10 md:w-10 md:rounded-xl md:text-sm',
-                theme === 'dark'
-                  ? 'bg-slate-800 hover:bg-slate-700'
-                  : 'bg-gray-100 hover:bg-gray-200',
-                isProcessing && 'cursor-wait opacity-70'
-              )}
-              title="Excel 导入"
-              aria-label="Excel 导入"
-            >
-              <UploadCloud className="h-4 w-4 shrink-0 md:h-[18px] md:w-[18px]" strokeWidth={2.5} />
-            </button>
+              <p
+                className={cn(
+                  'min-h-[1rem] text-[8px] font-bold leading-tight sm:text-[9px]',
+                  importPlanWeek === null
+                    ? 'text-amber-500'
+                    : theme === 'dark'
+                      ? 'text-slate-600'
+                      : 'text-slate-400'
+                )}
+                aria-live="polite"
+              >
+                {importPlanWeek === null ? '请先选定计划归属周' : '\u00a0'}
+              </p>
+              <input
+                type="file"
+                accept=".xlsx, .xls, .csv"
+                ref={fileInputRef}
+                onChange={handleFileUpload}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isProcessing || importPlanWeek === null}
+                className={cn(
+                  'flex h-8 w-full shrink-0 items-center justify-center rounded-md border border-blue-500/50 text-[10px] font-black text-blue-400 transition-all md:h-9 md:text-xs',
+                  theme === 'dark'
+                    ? 'bg-slate-800 hover:bg-slate-700 enabled:hover:border-blue-400/60'
+                    : 'bg-white hover:bg-gray-100 enabled:hover:border-blue-400',
+                  (isProcessing || importPlanWeek === null) && 'cursor-not-allowed opacity-45'
+                )}
+                title={importPlanWeek === null ? '请先选定计划归属周' : 'Excel 导入'}
+                aria-label="Excel 导入"
+              >
+                <UploadCloud className="mr-0.5 h-3.5 w-3.5 shrink-0 md:h-4 md:w-4" strokeWidth={2.5} />
+                上传
+              </button>
+            </div>
 
             <button
               type="button"

@@ -42,6 +42,7 @@ import { pageShell, alertBanner, cn } from '@/lib/uiTheme';
 import {
   fetchInitialData,
   createOrderAction,
+  importOrdersOverwriteWeekAction,
   updateOrderAction,
   addWorkerAction,
   createActivityLogAction,
@@ -254,8 +255,10 @@ export default function KanbanApp() {
   const [qcReviewOpen, setQcReviewOpen] = useState(false);
   const [auditModalOpen, setAuditModalOpen] = useState(false);
   const [isAuditOpen, setIsAuditOpen] = useState(false);
-  /** 批次導入／新建訂單：相對週（-1 上週 · 0 本週 · 1 下週 · 2 下下週） */
+  /** 單筆／AI：相對週（-1 上週 · 0 本週 · 1 下週 · 2 下下週） */
   const [weekOffset, setWeekOffset] = useState(0);
+  /** Excel 覆蓋導入：必選本周=0／下周=1／下下周=2；未選禁止上傳 */
+  const [importPlanWeek, setImportPlanWeek] = useState<number | null>(null);
 
   const [newOrderForm, setNewOrderForm] = useState({
     client: '',
@@ -869,6 +872,11 @@ export default function KanbanApp() {
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (importPlanWeek === null) {
+      toast.error('请先选定计划归属周');
+      e.target.value = '';
+      return;
+    }
 
     setIsProcessing(true);
     
@@ -883,7 +891,7 @@ export default function KanbanApp() {
           const worksheet = workbook.Sheets[firstSheetName];
           const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '', raw: false });
           
-          await processExcelData(jsonData);
+          await processExcelData(jsonData, importPlanWeek);
         } catch (error: any) {
           console.error(error);
           toast.error("底层报错: " + (error.message || error));
@@ -901,7 +909,7 @@ export default function KanbanApp() {
     }
   };
 
-  const processExcelData = async (rows: any[]) => {
+  const processExcelData = async (rows: any[], planWeek: number) => {
     try {
       if (!rows || rows.length < 2) {
         showAlert("提示", "文件内容为空或格式不正确！");
@@ -1038,12 +1046,20 @@ export default function KanbanApp() {
       }
       
       if (newOrders.length > 0) {
-        setOrders((prev) => [...newOrders, ...prev]);
-        for (const o of newOrders) {
-          void createOrderAction(o, getShanghaiBatchImportMondayYmd(weekOffset));
+        const mondayYmd = getShanghaiBatchImportMondayYmd(planWeek);
+        const targetWeekStartMs = parseShanghaiWallClockToEpochMs(mondayYmd, '00:00:00');
+        const res = await importOrdersOverwriteWeekAction(newOrders, targetWeekStartMs);
+        if (!res.ok) {
+          toast.error(res.error ?? '导入保存失败');
+        } else {
+          toast.success(
+            `成功导入 ${newOrders.length} 条订单（按周覆盖）。同周未完成已归档 ${res.archivedCount ?? 0} 条。\n可点击【⚡ 全局 AI 智能排产】进行分配。`
+          );
+          await handleSyncRefresh();
         }
+      } else {
+        toast.success('未解析到有效订单行');
       }
-      toast.success(`成功导入 ${newOrders.length} 条订单！\n您现在可以点击顶部【⚡ 全局 AI 智能排产】进行分配。`);
     } catch (e: any) {
       console.error(e);
       showAlert("导入异常", "解析异常: " + (e.message || e));
@@ -1208,6 +1224,8 @@ export default function KanbanApp() {
         onOpenProductionAudit={() => setIsAuditOpen(true)}
         weekOffset={weekOffset}
         setWeekOffset={setWeekOffset}
+        importPlanWeek={importPlanWeek}
+        setImportPlanWeek={setImportPlanWeek}
       />
 
       <ProductionAuditOverlay isOpen={isAuditOpen} onClose={() => setIsAuditOpen(false)} />
