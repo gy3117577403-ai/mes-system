@@ -1,9 +1,13 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { X } from 'lucide-react';
+import { format, isValid, parseISO } from 'date-fns';
+import { Search, X } from 'lucide-react';
 import {
   fetchProductionAuditSummaryAction,
+  type ProductionAuditCompletedModelRow,
+  type ProductionAuditOrderLine,
+  type ProductionAuditPendingModelRow,
   type ProductionAuditSummaryResult,
 } from '@/actions/mesActions';
 import { formatMsToShanghaiLocale } from '@/lib/datetimeShanghai';
@@ -16,6 +20,62 @@ interface ProductionAuditOverlayProps {
 function pct(numerator: number, denominator: number): number {
   if (denominator <= 0) return 0;
   return Math.min(100, Math.round((numerator / denominator) * 1000) / 10);
+}
+
+function formatAuditDueDate(plannedDate: string | null, deliveryDate: string): string {
+  for (const raw of [plannedDate, deliveryDate]) {
+    if (!raw?.trim()) continue;
+    const s = raw.trim();
+    const isoPrefix = s.match(/^(\d{4}-\d{2}-\d{2})/);
+    if (isoPrefix) {
+      const d = parseISO(isoPrefix[1]);
+      if (isValid(d)) return format(d, 'yyyy-MM-dd');
+    }
+  }
+  if (plannedDate?.trim()) return plannedDate.trim();
+  if (deliveryDate?.trim()) return deliveryDate.trim();
+  return '—';
+}
+
+function hasAssignedDay(assignedDay: string): boolean {
+  const t = (assignedDay ?? '').trim();
+  if (!t) return false;
+  const lower = t.toLowerCase();
+  if (t === 'Unscheduled' || t === '未排程' || lower === 'unscheduled') return false;
+  return true;
+}
+
+function OrderStatusBadge({ order }: { order: ProductionAuditOrderLine }) {
+  if (!order.isDrawingReady) {
+    return (
+      <span className="inline-flex max-w-[11rem] items-center gap-0.5 rounded-md border border-red-500/50 bg-red-950/80 px-2 py-0.5 text-[10px] font-black text-red-200 md:max-w-none md:text-xs">
+        <span aria-hidden>🔴</span>
+        <span className="truncate">图纸未下发</span>
+      </span>
+    );
+  }
+  if (!order.isMaterialReady) {
+    return (
+      <span className="inline-flex max-w-[11rem] items-center gap-0.5 rounded-md border border-amber-500/50 bg-amber-950/70 px-2 py-0.5 text-[10px] font-black text-amber-200 md:max-w-none md:text-xs">
+        <span aria-hidden>🟡</span>
+        <span className="truncate">缺物料</span>
+      </span>
+    );
+  }
+  if (hasAssignedDay(order.assignedDay)) {
+    return (
+      <span className="inline-flex max-w-[11rem] items-center gap-0.5 rounded-md border border-emerald-500/45 bg-emerald-950/70 px-2 py-0.5 text-[10px] font-black text-emerald-200 md:max-w-none md:text-xs">
+        <span aria-hidden>🟢</span>
+        <span className="truncate">排产至：{order.assignedDay}</span>
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-0.5 rounded-md border border-slate-600/80 bg-slate-800/90 px-2 py-0.5 text-[10px] font-black text-slate-100 md:text-xs">
+      <span aria-hidden>⚪</span>
+      待排产
+    </span>
+  );
 }
 
 function ProgressBar({ valuePct }: { valuePct: number }) {
@@ -42,7 +102,8 @@ function AuditSkeleton() {
           <div key={i} className="h-24 rounded-xl border border-slate-800/80 bg-slate-900/50" />
         ))}
       </div>
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="h-11 w-full rounded-xl border border-slate-800/80 bg-slate-900/50" />
+      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-2">
         <div className="h-72 rounded-xl border border-slate-800/80 bg-slate-900/40" />
         <div className="h-72 rounded-xl border border-slate-800/80 bg-slate-900/40" />
       </div>
@@ -50,12 +111,29 @@ function AuditSkeleton() {
   );
 }
 
+function matchesSearch(
+  q: string,
+  partNumber: string,
+  orders: ProductionAuditOrderLine[]
+): boolean {
+  if (!q) return true;
+  const n = q.toLowerCase();
+  if (partNumber.toLowerCase().includes(n)) return true;
+  return orders.some(
+    (o) =>
+      o.id.toLowerCase().includes(n) ||
+      o.customerName.toLowerCase().includes(n) ||
+      o.taskStatus.toLowerCase().includes(n)
+  );
+}
+
 /**
- * 全屏生產效能審計疊層：型號級 `pendingModels` / `completedModels`，純 Tailwind 進度條。
+ * 全屏生產效能審計疊層：型號聚合 + 訂單明細、搜尋過濾、狀態徽章。
  */
 export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAuditOverlayProps) {
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<ProductionAuditSummaryResult | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -72,10 +150,26 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
     void load();
   }, [isOpen, load]);
 
+  useEffect(() => {
+    if (!isOpen) setSearchTerm('');
+  }, [isOpen]);
+
   const weekLabel = useMemo(() => {
     if (!data?.ok) return '';
     return `${formatMsToShanghaiLocale(data.weekStartMs)} ～ ${formatMsToShanghaiLocale(data.weekEndMs)}`;
   }, [data]);
+
+  const filteredPending = useMemo(() => {
+    if (!data?.ok) return [];
+    const q = searchTerm.trim();
+    return data.pendingModels.filter((m) => matchesSearch(q, m.partNumber, m.orders));
+  }, [data, searchTerm]);
+
+  const filteredCompleted = useMemo(() => {
+    if (!data?.ok) return [];
+    const q = searchTerm.trim();
+    return data.completedModels.filter((m) => matchesSearch(q, m.partNumber, m.orders));
+  }, [data, searchTerm]);
 
   if (!isOpen) return null;
 
@@ -124,11 +218,30 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
 
         {!loading && data?.ok && (
           <>
-            <div className="mb-4 grid shrink-0 grid-cols-2 gap-3 md:mb-6 md:grid-cols-4 md:gap-4">
+            <div className="mb-3 grid shrink-0 grid-cols-2 gap-3 md:mb-4 md:grid-cols-4 md:gap-4">
               <KpiCard label="本周总单量" value={String(data.totalOrderCount)} tone="sky" />
               <KpiCard label="型号总数" value={String(data.modelCount)} tone="cyan" />
               <KpiCard label="已燃烧工时" value={String(data.burnedHours)} tone="emerald" />
               <KpiCard label="总计划工时" value={String(data.plannedHours)} tone="teal" />
+            </div>
+
+            <div className="mb-4 shrink-0">
+              <label className="relative block">
+                <span className="sr-only">搜索产品型号、客户名称</span>
+                <Search
+                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500 md:h-5 md:w-5"
+                  strokeWidth={2}
+                  aria-hidden
+                />
+                <input
+                  type="search"
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="搜索产品型号、客户名称..."
+                  className="w-full rounded-xl border border-slate-700/90 bg-slate-900/50 py-2.5 pl-10 pr-3 text-sm text-slate-100 shadow-inner backdrop-blur-md placeholder:text-slate-500 focus:border-cyan-500/50 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 md:py-3 md:pl-11 md:text-base"
+                  autoComplete="off"
+                />
+              </label>
             </div>
 
             <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row lg:gap-6">
@@ -137,42 +250,17 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
                   <h2 className="text-sm font-black uppercase tracking-widest text-amber-200/90 md:text-base">
                     未完工点名墙
                   </h2>
-                  <p className="mt-1 text-[11px] text-slate-500 md:text-xs">按型号聚合 · 欠产与待燃烧工时</p>
+                  <p className="mt-1 text-[11px] text-slate-500 md:text-xs">型号聚合 · 订单交期与排产状态</p>
                 </div>
                 <ul className="custom-scrollbar min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-y-contain px-3 py-3 pr-2 md:px-4 md:py-4 md:pr-3">
-                  {data.pendingModels.length === 0 ? (
-                    <li className="py-12 text-center text-sm text-slate-500">本周暂无未完工型号</li>
+                  {filteredPending.length === 0 ? (
+                    <li className="py-12 text-center text-sm text-slate-500">
+                      {data.pendingModels.length === 0 ? '本周暂无未完工型号' : '无匹配结果'}
+                    </li>
                   ) : (
-                    data.pendingModels.map((m) => {
-                      const hourPct = pct(m.modelWeekBurnedHours, m.modelWeekPlannedHours);
-                      return (
-                        <li
-                          key={m.partNumber}
-                          className="rounded-xl border border-slate-800/90 bg-slate-950/50 px-3 py-3 md:px-4 md:py-4"
-                        >
-                          <div className="flex flex-wrap items-baseline justify-between gap-2">
-                            <span className="font-mono text-sm font-bold text-cyan-300 md:text-base">
-                              {m.partNumber}
-                            </span>
-                            <span className="text-[10px] text-slate-500">未结 {m.pendingOrderCount} 单</span>
-                          </div>
-                          <div className="mt-3 grid grid-cols-2 gap-2 text-xs md:text-sm">
-                            <div>
-                              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">欠产数量</p>
-                              <p className="mt-0.5 text-lg font-black text-amber-300 md:text-xl">{m.shortfallQty}</p>
-                            </div>
-                            <div>
-                              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">预估工时</p>
-                              <p className="mt-0.5 text-lg font-black text-sky-300 md:text-xl">{m.estimatedHours}</p>
-                            </div>
-                          </div>
-                          <p className="mt-2 text-[10px] text-slate-500 md:text-xs">
-                            型号周计划工时燃烧 {hourPct}%（已燃 {m.modelWeekBurnedHours} / 计 {m.modelWeekPlannedHours}）
-                          </p>
-                          <ProgressBar valuePct={hourPct} />
-                        </li>
-                      );
-                    })
+                    filteredPending.map((m) => (
+                      <PendingModelCard key={m.partNumber} model={m} />
+                    ))
                   )}
                 </ul>
               </section>
@@ -182,42 +270,17 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
                   <h2 className="text-sm font-black uppercase tracking-widest text-emerald-200/90 md:text-base">
                     已完工战报榜
                   </h2>
-                  <p className="mt-1 text-[11px] text-slate-500 md:text-xs">按型号聚合 · 实做件数与产出工时</p>
+                  <p className="mt-1 text-[11px] text-slate-500 md:text-xs">型号聚合 · 实做与产出明细</p>
                 </div>
                 <ul className="custom-scrollbar min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-y-contain px-3 py-3 pr-2 md:px-4 md:py-4 md:pr-3">
-                  {data.completedModels.length === 0 ? (
-                    <li className="py-12 text-center text-sm text-slate-500">本周暂无完工产出</li>
+                  {filteredCompleted.length === 0 ? (
+                    <li className="py-12 text-center text-sm text-slate-500">
+                      {data.completedModels.length === 0 ? '本周暂无完工产出' : '无匹配结果'}
+                    </li>
                   ) : (
-                    data.completedModels.map((m) => {
-                      const qtyPct = pct(m.actualQty, m.modelWeekPlannedQty);
-                      return (
-                        <li
-                          key={m.partNumber}
-                          className="rounded-xl border border-slate-800/90 bg-slate-950/50 px-3 py-3 md:px-4 md:py-4"
-                        >
-                          <div className="flex flex-wrap items-baseline justify-between gap-2">
-                            <span className="font-mono text-sm font-bold text-emerald-300 md:text-base">
-                              {m.partNumber}
-                            </span>
-                            <span className="text-[10px] text-slate-500">完工 {m.completedOrderCount} 单</span>
-                          </div>
-                          <div className="mt-3 grid grid-cols-2 gap-2 text-xs md:text-sm">
-                            <div>
-                              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">实做数量</p>
-                              <p className="mt-0.5 text-lg font-black text-emerald-300 md:text-xl">{m.actualQty}</p>
-                            </div>
-                            <div>
-                              <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">产出工时</p>
-                              <p className="mt-0.5 text-lg font-black text-sky-300 md:text-xl">{m.burnedHours}</p>
-                            </div>
-                          </div>
-                          <p className="mt-2 text-[10px] text-slate-500 md:text-xs">
-                            件数达成 {qtyPct}%（实做 {m.actualQty} / 周计划 {m.modelWeekPlannedQty}）
-                          </p>
-                          <ProgressBar valuePct={qtyPct} />
-                        </li>
-                      );
-                    })
+                    filteredCompleted.map((m) => (
+                      <CompletedModelCard key={m.partNumber} model={m} />
+                    ))
                   )}
                 </ul>
               </section>
@@ -226,6 +289,108 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
         )}
       </div>
     </div>
+  );
+}
+
+function PendingModelCard({ model }: { model: ProductionAuditPendingModelRow }) {
+  const hourPct = pct(model.modelWeekBurnedHours, model.modelWeekPlannedHours);
+  return (
+    <li className="rounded-xl border border-slate-800/90 bg-slate-950/50 px-3 py-3 md:px-4 md:py-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <span className="font-mono text-sm font-bold text-cyan-300 md:text-base">{model.partNumber}</span>
+        <span className="text-[10px] text-slate-500">未结 {model.pendingOrderCount} 单</span>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 text-xs md:text-sm">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">欠产数量</p>
+          <p className="mt-0.5 text-lg font-black text-amber-300 md:text-xl">{model.shortfallQty}</p>
+        </div>
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">预估工时</p>
+          <p className="mt-0.5 text-lg font-black text-sky-300 md:text-xl">{model.estimatedHours}</p>
+        </div>
+      </div>
+      <p className="mt-2 text-[10px] text-slate-500 md:text-xs">
+        型号周计划工时燃烧 {hourPct}%（已燃 {model.modelWeekBurnedHours} / 计 {model.modelWeekPlannedHours}）
+      </p>
+      <ProgressBar valuePct={hourPct} />
+
+      <div className="mt-4 space-y-2 border-t border-slate-800/80 pt-3">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">订单明细</p>
+        {model.orders.map((o) => (
+          <div
+            key={o.id}
+            className="relative rounded-lg border border-slate-800/80 bg-slate-900/60 px-2.5 py-2 pr-2 md:px-3 md:py-2.5"
+          >
+            <div className="absolute right-2 top-2 md:right-2.5 md:top-2.5">
+              <OrderStatusBadge order={o} />
+            </div>
+            <p className="truncate pr-24 font-mono text-[10px] text-slate-500 md:pr-32 md:text-xs">{o.id}</p>
+            <p className="mt-1 truncate pr-24 text-xs text-slate-200 md:pr-32 md:text-sm">
+              <span className="font-semibold text-slate-300">{o.customerName || '—'}</span>
+              <span className="mx-1.5 text-slate-600">|</span>
+              <span className="text-slate-400">
+                交期: {formatAuditDueDate(o.plannedDate, o.deliveryDate)}
+              </span>
+            </p>
+            <p className="mt-1 text-[10px] text-slate-500 md:text-xs">
+              计划 {o.totalQty ?? o.qty} 件 · 工时 {o.totalHours} · {o.taskStatus}
+            </p>
+          </div>
+        ))}
+      </div>
+    </li>
+  );
+}
+
+function CompletedModelCard({ model }: { model: ProductionAuditCompletedModelRow }) {
+  const qtyPct = pct(model.actualQty, model.modelWeekPlannedQty);
+  return (
+    <li className="rounded-xl border border-slate-800/90 bg-slate-950/50 px-3 py-3 md:px-4 md:py-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <span className="font-mono text-sm font-bold text-emerald-300 md:text-base">{model.partNumber}</span>
+        <span className="text-[10px] text-slate-500">完工 {model.completedOrderCount} 单</span>
+      </div>
+      <div className="mt-3 grid grid-cols-2 gap-2 text-xs md:text-sm">
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">实做数量</p>
+          <p className="mt-0.5 text-lg font-black text-emerald-300 md:text-xl">{model.actualQty}</p>
+        </div>
+        <div>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">产出工时</p>
+          <p className="mt-0.5 text-lg font-black text-sky-300 md:text-xl">{model.burnedHours}</p>
+        </div>
+      </div>
+      <p className="mt-2 text-[10px] text-slate-500 md:text-xs">
+        件数达成 {qtyPct}%（实做 {model.actualQty} / 周计划 {model.modelWeekPlannedQty}）
+      </p>
+      <ProgressBar valuePct={qtyPct} />
+
+      <div className="mt-4 space-y-2 border-t border-slate-800/80 pt-3">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">订单明细</p>
+        {model.orders.map((o) => (
+          <div
+            key={o.id}
+            className="relative rounded-lg border border-slate-800/80 bg-slate-900/60 px-2.5 py-2 pr-2 md:px-3 md:py-2.5"
+          >
+            <div className="absolute right-2 top-2 md:right-2.5 md:top-2.5">
+              <OrderStatusBadge order={o} />
+            </div>
+            <p className="truncate pr-24 font-mono text-[10px] text-slate-500 md:pr-32 md:text-xs">{o.id}</p>
+            <p className="mt-1 truncate pr-24 text-xs text-slate-200 md:pr-32 md:text-sm">
+              <span className="font-semibold text-slate-300">{o.customerName || '—'}</span>
+              <span className="mx-1.5 text-slate-600">|</span>
+              <span className="text-slate-400">
+                交期: {formatAuditDueDate(o.plannedDate, o.deliveryDate)}
+              </span>
+            </p>
+            <p className="mt-1 text-[10px] text-slate-500 md:text-xs">
+              实做 {o.reportedQty} 件 · 工时 {o.totalHours} · {o.taskStatus}
+            </p>
+          </div>
+        ))}
+      </div>
+    </li>
   );
 }
 

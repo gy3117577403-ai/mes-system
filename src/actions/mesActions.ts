@@ -748,6 +748,25 @@ function partKey(model: string | null): string {
   return (model ?? '').trim() || '(无型号)';
 }
 
+/** 審計疊層用訂單輕量實體（對齊 Prisma `Order`） */
+export type ProductionAuditOrderLine = {
+  id: string;
+  /** 對應庫欄位 `client` */
+  customerName: string;
+  /** 計劃交期／排產錨點（可為自然語言；前端再解析展示） */
+  plannedDate: string | null;
+  /** 銷售填寫交期字串 */
+  deliveryDate: string;
+  isDrawingReady: boolean;
+  isMaterialReady: boolean;
+  assignedDay: string;
+  taskStatus: string;
+  qty: number;
+  totalQty: number;
+  reportedQty: number;
+  totalHours: number;
+};
+
 /** 未完工型號行（`partNumber` 對應 `Order.model`） */
 export type ProductionAuditPendingModelRow = {
   partNumber: string;
@@ -760,6 +779,8 @@ export type ProductionAuditPendingModelRow = {
   modelWeekPlannedHours: number;
   /** 該型號本週已完工訂單工時合計，供進度條分子 */
   modelWeekBurnedHours: number;
+  /** 本型號下未完工訂單明細 */
+  orders: ProductionAuditOrderLine[];
 };
 
 /** 已完工型號行 */
@@ -772,6 +793,8 @@ export type ProductionAuditCompletedModelRow = {
   burnedHours: number;
   /** 該型號本週計劃件數合計，供進度條分母 */
   modelWeekPlannedQty: number;
+  /** 本型號下已完工訂單明細 */
+  orders: ProductionAuditOrderLine[];
 };
 
 export type ProductionAuditSummaryResult = {
@@ -817,11 +840,17 @@ export async function fetchProductionAuditSummaryAction(): Promise<ProductionAud
       select: {
         id: true,
         model: true,
+        client: true,
         qty: true,
         totalQty: true,
         reportedQty: true,
         totalHours: true,
         taskStatus: true,
+        plannedDate: true,
+        deliveryDate: true,
+        isDrawingReady: true,
+        isMaterialReady: true,
+        assignedDay: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -829,6 +858,23 @@ export async function fetchProductionAuditSummaryAction(): Promise<ProductionAud
     });
 
     const byModel = new Map<string, ModelWeekAcc>();
+    const pendingLinesByModel = new Map<string, ProductionAuditOrderLine[]>();
+    const completedLinesByModel = new Map<string, ProductionAuditOrderLine[]>();
+
+    const toLine = (r: (typeof rows)[number]): ProductionAuditOrderLine => ({
+      id: r.id,
+      customerName: (r.client ?? '').trim(),
+      plannedDate: r.plannedDate?.trim() ? r.plannedDate.trim() : null,
+      deliveryDate: (r.deliveryDate ?? '').trim(),
+      isDrawingReady: Boolean(r.isDrawingReady),
+      isMaterialReady: Boolean(r.isMaterialReady),
+      assignedDay: (r.assignedDay ?? '').trim(),
+      taskStatus: r.taskStatus,
+      qty: r.qty,
+      totalQty: r.totalQty,
+      reportedQty: r.reportedQty ?? 0,
+      totalHours: Number(r.totalHours) || 0,
+    });
 
     for (const r of rows) {
       const key = partKey(r.model);
@@ -854,10 +900,16 @@ export async function fetchProductionAuditSummaryAction(): Promise<ProductionAud
         acc.completedOrderCount += 1;
         acc.actualQty += r.reportedQty ?? 0;
         acc.burnedHours += th;
+        const arr = completedLinesByModel.get(key) ?? [];
+        arr.push(toLine(r));
+        completedLinesByModel.set(key, arr);
       } else {
         acc.pendingOrderCount += 1;
         acc.shortfallQty += plannedPiece;
         acc.pendingHours += th;
+        const arr = pendingLinesByModel.get(key) ?? [];
+        arr.push(toLine(r));
+        pendingLinesByModel.set(key, arr);
       }
 
       byModel.set(key, acc);
@@ -875,6 +927,7 @@ export async function fetchProductionAuditSummaryAction(): Promise<ProductionAud
           estimatedHours: Math.round(v.pendingHours * 1000) / 1000,
           modelWeekPlannedHours: Math.round(v.plannedHours * 1000) / 1000,
           modelWeekBurnedHours: Math.round(v.burnedHours * 1000) / 1000,
+          orders: pendingLinesByModel.get(partNumber) ?? [],
         });
       }
       if (v.completedOrderCount > 0) {
@@ -884,6 +937,7 @@ export async function fetchProductionAuditSummaryAction(): Promise<ProductionAud
           actualQty: v.actualQty,
           burnedHours: Math.round(v.burnedHours * 1000) / 1000,
           modelWeekPlannedQty: v.plannedQty,
+          orders: completedLinesByModel.get(partNumber) ?? [],
         });
       }
     }
