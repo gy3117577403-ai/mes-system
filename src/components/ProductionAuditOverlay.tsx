@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { ChevronDown, Search, X } from 'lucide-react';
+import { ChevronDown, Search, Trash2, X } from 'lucide-react';
 import {
   fetchProductionAuditSummaryAction,
   type ProductionAuditCompletedModelRow,
@@ -19,15 +19,66 @@ interface ProductionAuditOverlayProps {
   onClose: () => void;
 }
 
+/** 基準週產能（分鐘），與分子同為分鐘口徑，禁止對此值除以 60 */
 const STANDARD_CAPACITY_MINUTES = 11880;
-/** 與微調（分鐘）合併為「可用產能（工時）」時使用：基準週產能 = 11880 min → 工時 */
-const BASE_WEEK_CAPACITY_HOURS = STANDARD_CAPACITY_MINUTES / 60;
-const ADJUSTMENT_LS_KEY = 'mes-audit-capacity-adjustment';
+const LS_EXCEPTION_LEDGER = 'mes-audit-ledger-exception';
+const LS_ATTENDANCE_LEDGER = 'mes-audit-ledger-attendance';
 
-/** 庫存工時欄位原樣數值（與後端 totalHours 一致，不再做 *60 等換算） */
+type LedgerEntry = {
+  id: string;
+  date: string;
+  minutes: number;
+  reason: string;
+  createdAt: number;
+};
+
+function loadLedger(key: string): LedgerEntry[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return [];
+    const p = JSON.parse(raw) as unknown;
+    if (!Array.isArray(p)) return [];
+    return p
+      .filter(
+        (x): x is LedgerEntry =>
+          x != null &&
+          typeof x === 'object' &&
+          typeof (x as LedgerEntry).id === 'string' &&
+          typeof (x as LedgerEntry).minutes === 'number' &&
+          typeof (x as LedgerEntry).reason === 'string'
+      )
+      .map((x) => ({
+        ...x,
+        date:
+          typeof x.date === 'string' && x.date.trim()
+            ? x.date
+            : formatMsToShanghaiLocale(Date.now()).slice(0, 10),
+        createdAt: typeof x.createdAt === 'number' ? x.createdAt : Date.now(),
+      }));
+  } catch {
+    return [];
+  }
+}
+
+function saveLedger(key: string, rows: LedgerEntry[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(key, JSON.stringify(rows));
+  } catch {
+    /* ignore */
+  }
+}
+
+/** 庫存工時欄位原樣數值（後端 totalHours 為「小時」語義） */
 function workloadValue(v: number): number {
   const n = Number(v);
   return Number.isFinite(n) ? Math.round(n * 1000) / 1000 : 0;
+}
+
+/** 僅用於與 11880「分鐘」基準對齊：小時 → 分鐘 */
+function workloadHoursToMinutes(v: number): number {
+  return Math.round(workloadValue(v) * 60 * 1000) / 1000;
 }
 
 function safeRatePercent(actual: number, denominator: number): number {
@@ -225,23 +276,224 @@ function SvgAuditRing({
   );
 }
 
+function LedgerSummaryCard({
+  totalExceptionMinutes,
+  totalAttendanceMinutes,
+  onOpenTimesheet,
+}: {
+  totalExceptionMinutes: number;
+  totalAttendanceMinutes: number;
+  onOpenTimesheet: () => void;
+}) {
+  return (
+    <div className="flex flex-col justify-between gap-4 rounded-2xl border border-white/10 bg-slate-950/60 p-5">
+      <div className="space-y-2 text-sm leading-relaxed text-slate-300">
+        <p className="font-semibold text-slate-100">工时双账本</p>
+        <p className="tabular-nums text-emerald-200/95">
+          异常补偿: +{Math.round(totalExceptionMinutes)} min（算入产出）
+        </p>
+        <p className="tabular-nums text-sky-200/95">
+          出勤变动: {totalAttendanceMinutes > 0 ? '+' : ''}
+          {Math.round(totalAttendanceMinutes)} min（修饰基数）
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onOpenTimesheet}
+        className="w-full rounded-xl border border-cyan-500/40 bg-cyan-500/15 py-3 text-sm font-bold text-cyan-100 transition hover:bg-cyan-500/25"
+      >
+        📝 登记工时明细
+      </button>
+    </div>
+  );
+}
+
+function TimesheetModal({
+  onClose,
+  exceptionLogs,
+  setExceptionLogs,
+  attendanceLogs,
+  setAttendanceLogs,
+}: {
+  onClose: () => void;
+  exceptionLogs: LedgerEntry[];
+  setExceptionLogs: React.Dispatch<React.SetStateAction<LedgerEntry[]>>;
+  attendanceLogs: LedgerEntry[];
+  setAttendanceLogs: React.Dispatch<React.SetStateAction<LedgerEntry[]>>;
+}) {
+  const [tab, setTab] = useState<'exception' | 'attendance'>('exception');
+  const [minutesInput, setMinutesInput] = useState('');
+  const [reasonInput, setReasonInput] = useState('');
+
+  const list = tab === 'exception' ? exceptionLogs : attendanceLogs;
+  const setList = tab === 'exception' ? setExceptionLogs : setAttendanceLogs;
+
+  const sorted = useMemo(
+    () => [...list].sort((a, b) => b.createdAt - a.createdAt),
+    [list]
+  );
+
+  const submit = () => {
+    const m = Number(minutesInput);
+    if (!Number.isFinite(m) || minutesInput.trim() === '') return;
+    const reason = reasonInput.trim() || '—';
+    const dateStr = formatMsToShanghaiLocale(Date.now()).slice(0, 10);
+    const row: LedgerEntry = {
+      id: crypto.randomUUID(),
+      date: dateStr,
+      minutes: Math.trunc(m),
+      reason,
+      createdAt: Date.now(),
+    };
+    setList((prev) => [row, ...prev]);
+    setMinutesInput('');
+    setReasonInput('');
+  };
+
+  const remove = (id: string) => {
+    setList((prev) => prev.filter((r) => r.id !== id));
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="timesheet-title"
+      className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-md"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.98 }}
+        className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-white/10 bg-slate-900 shadow-2xl"
+      >
+        <div className="flex items-center justify-between border-b border-white/10 px-5 py-4">
+          <h2 id="timesheet-title" className="text-lg font-bold text-white">
+            工时申报
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-2 text-slate-400 hover:bg-white/10 hover:text-white"
+            aria-label="关闭"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="flex shrink-0 gap-2 border-b border-white/10 px-4 py-3">
+          <button
+            type="button"
+            onClick={() => setTab('exception')}
+            className={cn(
+              'flex-1 rounded-lg py-2 text-sm font-semibold transition',
+              tab === 'exception' ? 'bg-amber-500/20 text-amber-100' : 'text-slate-400 hover:bg-white/5'
+            )}
+          >
+            🚨 异常工时申报
+          </button>
+          <button
+            type="button"
+            onClick={() => setTab('attendance')}
+            className={cn(
+              'flex-1 rounded-lg py-2 text-sm font-semibold transition',
+              tab === 'attendance' ? 'bg-sky-500/20 text-sky-100' : 'text-slate-400 hover:bg-white/5'
+            )}
+          >
+            📅 出勤变动申报
+          </button>
+        </div>
+
+        <div className="shrink-0 space-y-3 border-b border-white/10 p-5">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block text-xs text-slate-500">
+              分钟数（可负）
+              <input
+                type="number"
+                value={minutesInput}
+                onChange={(e) => setMinutesInput(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm tabular-nums text-slate-100 outline-none focus:border-cyan-500/40"
+                placeholder="例如 120 或 -30"
+              />
+            </label>
+            <label className="block text-xs text-slate-500 sm:col-span-2">
+              原因备注
+              <input
+                type="text"
+                value={reasonInput}
+                onChange={(e) => setReasonInput(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm text-slate-100 outline-none focus:border-cyan-500/40"
+                placeholder="简要说明"
+              />
+            </label>
+          </div>
+          <button
+            type="button"
+            onClick={submit}
+            className="w-full rounded-xl bg-gradient-to-r from-cyan-600 to-teal-600 py-2.5 text-sm font-bold text-white hover:from-cyan-500 hover:to-teal-500"
+          >
+            提交入账
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-5">
+          <p className="mb-3 text-[11px] font-semibold uppercase tracking-wider text-slate-500">流水账</p>
+          {sorted.length === 0 ? (
+            <p className="text-center text-sm text-slate-500">暂无记录</p>
+          ) : (
+            <ul className="space-y-2">
+              {sorted.map((r) => (
+                <li
+                  key={r.id}
+                  className="flex items-start justify-between gap-3 rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="tabular-nums text-slate-200">
+                      {r.date} · {r.minutes > 0 ? '+' : ''}
+                      {r.minutes} min
+                    </p>
+                    <p className="mt-0.5 truncate text-xs text-slate-500">{r.reason}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => remove(r.id)}
+                    className="shrink-0 rounded-lg p-1.5 text-slate-500 hover:bg-red-500/20 hover:text-red-300"
+                    aria-label="删除"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 function MegaEfficiencyPanel({
-  adjustmentMinutes,
-  setAdjustmentMinutes,
-  availableCapacityHours,
-  weekActual,
-  weekPlanned,
+  totalExceptionMinutes,
+  totalAttendanceMinutes,
+  capacityNumeratorMin,
+  capacityDenominatorMin,
+  onOpenTimesheet,
+  weekActualMinutes,
+  weekPlannedMinutes,
   planRate,
   utilizationRate,
   rolling,
   rollingPlanRate,
   monthlyRate,
 }: {
-  adjustmentMinutes: number;
-  setAdjustmentMinutes: (n: number) => void;
-  availableCapacityHours: number;
-  weekActual: number;
-  weekPlanned: number;
+  totalExceptionMinutes: number;
+  totalAttendanceMinutes: number;
+  capacityNumeratorMin: number;
+  capacityDenominatorMin: number;
+  onOpenTimesheet: () => void;
+  weekActualMinutes: number;
+  weekPlannedMinutes: number;
   planRate: number;
   utilizationRate: number;
   rolling: ProductionAuditRolling4w;
@@ -250,50 +502,33 @@ function MegaEfficiencyPanel({
 }) {
   const rollFrom = formatMsToShanghaiLocale(rolling.windowStartMs).slice(0, 10);
   const rollTo = formatMsToShanghaiLocale(rolling.windowEndMs).slice(0, 10);
-  const ra = workloadValue(rolling.totalActualOutput);
-  const rp = workloadValue(rolling.totalPlannedLoad);
+  const raMin = workloadHoursToMinutes(rolling.totalActualOutput);
+  const rpMin = workloadHoursToMinutes(rolling.totalPlannedLoad);
 
   return (
     <div className="grid grid-cols-1 gap-6 border-b border-slate-800 bg-slate-900/50 p-6 md:grid-cols-2 lg:grid-cols-4">
-      <div className="flex flex-col justify-center gap-3">
-        <div>
-          <p className="text-sm font-semibold text-slate-300">产能微调</p>
-          <p className="mt-1 text-xs text-slate-500">基准周产能 {STANDARD_CAPACITY_MINUTES} 分钟（折合 {BASE_WEEK_CAPACITY_HOURS} 工时基数）</p>
-        </div>
-        <input
-          type="number"
-          inputMode="numeric"
-          value={Number.isFinite(adjustmentMinutes) ? adjustmentMinutes : 0}
-          onChange={(e) => {
-            const v = e.target.value;
-            if (v === '' || v === '-') {
-              setAdjustmentMinutes(0);
-              return;
-            }
-            const n = Number(v);
-            setAdjustmentMinutes(Number.isFinite(n) ? Math.trunc(n) : 0);
-          }}
-          className="w-full rounded-xl border border-white/15 bg-white/5 px-4 py-4 text-2xl font-semibold tabular-nums text-slate-100 outline-none focus:border-cyan-500/40 md:text-3xl"
-        />
-        <p className="text-xs text-slate-500">正负微调（分钟）与基数合并后，本周可用产能约 {availableCapacityHours.toFixed(1)} 工时</p>
-      </div>
+      <LedgerSummaryCard
+        totalExceptionMinutes={totalExceptionMinutes}
+        totalAttendanceMinutes={totalAttendanceMinutes}
+        onOpenTimesheet={onOpenTimesheet}
+      />
 
       <SvgAuditRing
         percent={planRate}
         title="周计划达成率"
-        subtitle={`实做工时 ${weekActual.toFixed(1)} / 计划 ${weekPlanned.toFixed(1)}`}
+        subtitle={`实做 ${Math.round(weekActualMinutes)} min / 计划 ${Math.round(weekPlannedMinutes)} min`}
       />
 
       <SvgAuditRing
         percent={utilizationRate}
         title="周产能利用率"
-        subtitle={`实做 ${weekActual.toFixed(1)} / 可用 ${availableCapacityHours.toFixed(1)} 工时`}
+        subtitle={`产出 ${Math.round(capacityNumeratorMin)} min / 基数 ${Math.round(capacityDenominatorMin)} min（基准 ${STANDARD_CAPACITY_MINUTES} min）`}
       />
 
       <SvgAuditRing
         percent={rollingPlanRate}
         title="滚动四周达成率"
-        subtitle={`${rollFrom}～${rollTo} 上海 · 实做 ${ra.toFixed(1)} / 排产 ${rp.toFixed(1)} · 30d 月度 ${formatPctOne(monthlyRate)}%`}
+        subtitle={`${rollFrom}～${rollTo} 上海 · 实做 ${Math.round(raMin)} min / 排产 ${Math.round(rpMin)} min · 30d 月度 ${formatPctOne(monthlyRate)}%`}
       />
     </div>
   );
@@ -305,29 +540,23 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
   const [searchTerm, setSearchTerm] = useState('');
   const [weekOffset, setWeekOffset] = useState(0);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
-  const [adjustmentMinutes, setAdjustmentMinutes] = useState(0);
+  const [exceptionLogs, setExceptionLogs] = useState<LedgerEntry[]>([]);
+  const [attendanceLogs, setAttendanceLogs] = useState<LedgerEntry[]>([]);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
+  const [timesheetOpen, setTimesheetOpen] = useState(false);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      const raw = window.localStorage.getItem(ADJUSTMENT_LS_KEY);
-      if (raw === null || raw === '') return;
-      const n = Number(raw);
-      if (Number.isFinite(n)) setAdjustmentMinutes(Math.trunc(n));
-    } catch {
-      /* ignore */
-    }
+    setExceptionLogs(loadLedger(LS_EXCEPTION_LEDGER));
+    setAttendanceLogs(loadLedger(LS_ATTENDANCE_LEDGER));
   }, []);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-    try {
-      window.localStorage.setItem(ADJUSTMENT_LS_KEY, String(adjustmentMinutes));
-    } catch {
-      /* ignore */
-    }
-  }, [adjustmentMinutes]);
+    saveLedger(LS_EXCEPTION_LEDGER, exceptionLogs);
+  }, [exceptionLogs]);
+
+  useEffect(() => {
+    saveLedger(LS_ATTENDANCE_LEDGER, attendanceLogs);
+  }, [attendanceLogs]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -370,23 +599,39 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
     return data.completedModels.filter((m) => matchesSearch(q, m.partNumber, m.orders));
   }, [data, searchTerm]);
 
-  const availableCapacityHours = BASE_WEEK_CAPACITY_HOURS + adjustmentMinutes / 60;
+  const totalExceptionMinutes = useMemo(
+    () => exceptionLogs.reduce((s, e) => s + e.minutes, 0),
+    [exceptionLogs]
+  );
+  const totalAttendanceMinutes = useMemo(
+    () => attendanceLogs.reduce((s, e) => s + e.minutes, 0),
+    [attendanceLogs]
+  );
 
   const metrics = useMemo(() => {
     if (!data?.ok) {
       return {
-        weekActual: 0,
+        weekActualHours: 0,
+        actualBaseMinutes: 0,
         weekPlanned: 0,
+        weekPlannedMinutes: 0,
         planRate: 0,
         utilizationRate: 0,
         rollingPlanRate: 0,
         monthlyRate: 0,
+        capacityNumeratorMin: 0,
+        capacityDenominatorMin: STANDARD_CAPACITY_MINUTES,
       };
     }
-    const weekActual = workloadValue(data.burnedHours);
+    const weekActualHours = workloadValue(data.burnedHours);
+    const actualBaseMinutes = workloadHoursToMinutes(data.burnedHours);
     const weekPlanned = workloadValue(data.weekScheduledLoadHours);
-    const planRate = safeRatePercent(weekActual, weekPlanned);
-    const utilizationRate = safeRatePercent(weekActual, availableCapacityHours);
+    const weekPlannedMinutes = workloadHoursToMinutes(data.weekScheduledLoadHours);
+    const planRate = safeRatePercent(weekActualHours, weekPlanned);
+
+    const capacityNumeratorMin = actualBaseMinutes + totalExceptionMinutes;
+    const capacityDenominatorMin = STANDARD_CAPACITY_MINUTES + totalAttendanceMinutes;
+    const utilizationRate = safeRatePercent(capacityNumeratorMin, capacityDenominatorMin);
 
     const r = data.rolling4Weeks;
     const rollActual = workloadValue(r.totalActualOutput);
@@ -397,14 +642,18 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
     const monthlyRate = safeRatePercent(workloadValue(m.burnedHours), workloadValue(m.plannedHours));
 
     return {
-      weekActual,
+      weekActualHours,
+      actualBaseMinutes,
       weekPlanned,
+      weekPlannedMinutes,
       planRate,
       utilizationRate,
       rollingPlanRate,
       monthlyRate,
+      capacityNumeratorMin,
+      capacityDenominatorMin,
     };
-  }, [data, availableCapacityHours]);
+  }, [data, totalExceptionMinutes, totalAttendanceMinutes]);
 
   if (!isOpen) return null;
 
@@ -480,11 +729,12 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
                 型号 <span className="font-medium text-cyan-300">{data.modelCount}</span>
               </span>
               <span className="shrink-0 tabular-nums text-slate-300">
-                当周完工 <span className="font-medium text-emerald-300">{metrics.weekActual.toFixed(1)}</span> 工时
+                当周完工 <span className="font-medium text-emerald-300">{Math.round(metrics.actualBaseMinutes)}</span> 分钟
               </span>
               <span className="shrink-0 tabular-nums text-slate-300">
-                待办计划 <span className="font-medium text-teal-300">{workloadValue(data.plannedHours).toFixed(1)}</span>{' '}
-                工时
+                待办计划{' '}
+                <span className="font-medium text-teal-300">{Math.round(workloadHoursToMinutes(data.plannedHours))}</span>{' '}
+                分钟
               </span>
 
               <button
@@ -512,11 +762,13 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
                   className="overflow-hidden"
                 >
                   <MegaEfficiencyPanel
-                    adjustmentMinutes={adjustmentMinutes}
-                    setAdjustmentMinutes={setAdjustmentMinutes}
-                    availableCapacityHours={availableCapacityHours}
-                    weekActual={metrics.weekActual}
-                    weekPlanned={metrics.weekPlanned}
+                    totalExceptionMinutes={totalExceptionMinutes}
+                    totalAttendanceMinutes={totalAttendanceMinutes}
+                    capacityNumeratorMin={metrics.capacityNumeratorMin}
+                    capacityDenominatorMin={metrics.capacityDenominatorMin}
+                    onOpenTimesheet={() => setTimesheetOpen(true)}
+                    weekActualMinutes={metrics.actualBaseMinutes}
+                    weekPlannedMinutes={metrics.weekPlannedMinutes}
                     planRate={metrics.planRate}
                     utilizationRate={metrics.utilizationRate}
                     rolling={data.rolling4Weeks}
@@ -614,6 +866,18 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
           </div>
         )}
       </div>
+
+      <AnimatePresence>
+        {timesheetOpen && (
+          <TimesheetModal
+            onClose={() => setTimesheetOpen(false)}
+            exceptionLogs={exceptionLogs}
+            setExceptionLogs={setExceptionLogs}
+            attendanceLogs={attendanceLogs}
+            setAttendanceLogs={setAttendanceLogs}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -629,7 +893,7 @@ function CollapsiblePendingRow({
 }) {
   const orderLines = useMemo(() => dedupeAuditOrderLinesForDisplay(model.orders), [model.orders]);
   const linePct = pct(model.modelWeekBurnedHours, model.modelWeekPlannedHours);
-  const estW = workloadValue(model.estimatedHours);
+  const estMin = workloadHoursToMinutes(model.estimatedHours);
 
   return (
     <li className="shrink-0 overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.04] backdrop-blur-sm">
@@ -645,7 +909,7 @@ function CollapsiblePendingRow({
         <span className="hidden min-w-0 flex-[1.2] text-center text-xs leading-relaxed text-slate-400 sm:block md:text-sm">
           欠产 <span className="tabular-nums text-slate-200">{model.shortfallQty}</span>
           <span className="mx-2 text-slate-600">·</span>
-          工时 <span className="tabular-nums text-slate-200">{estW.toFixed(1)}</span>
+          分钟 <span className="tabular-nums text-slate-200">{Math.round(estMin)}</span>
           <span className="mx-2 text-slate-600">·</span>
           <span className="tabular-nums text-slate-400">{linePct}%</span>
         </span>
@@ -702,7 +966,7 @@ function CollapsibleCompletedRow({
 }) {
   const orderLines = useMemo(() => dedupeAuditOrderLinesForDisplay(model.orders), [model.orders]);
   const qtyPct = pct(model.actualQty, model.modelWeekPlannedQty);
-  const burnedW = workloadValue(model.burnedHours);
+  const burnedMin = workloadHoursToMinutes(model.burnedHours);
 
   return (
     <li className="shrink-0 overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.04] backdrop-blur-sm">
@@ -718,7 +982,7 @@ function CollapsibleCompletedRow({
         <span className="hidden min-w-0 flex-[1.2] text-center text-xs leading-relaxed text-slate-400 sm:block md:text-sm">
           实做 <span className="tabular-nums text-slate-200">{model.actualQty}</span>
           <span className="mx-2 text-slate-600">·</span>
-          工时 <span className="tabular-nums text-slate-200">{burnedW.toFixed(1)}</span>
+          分钟 <span className="tabular-nums text-slate-200">{Math.round(burnedMin)}</span>
           <span className="mx-2 text-slate-600">·</span>
           <span className="tabular-nums text-slate-400">{qtyPct}%</span>
         </span>
