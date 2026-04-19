@@ -11,8 +11,9 @@ import {
   type ProductionAuditPendingModelRow,
   type ProductionAuditSummaryResult,
 } from '@/actions/mesActions';
+import { formatInTimeZone } from 'date-fns-tz';
 import { cn } from '@/lib/uiTheme';
-import { formatMsToShanghaiLocale } from '@/lib/datetimeShanghai';
+import { formatMsToShanghaiLocale, MES_TIMEZONE } from '@/lib/datetimeShanghai';
 
 interface ProductionAuditOverlayProps {
   isOpen: boolean;
@@ -80,6 +81,28 @@ function OrderDetailOneLine({ order }: { order: ProductionAuditOrderLine }) {
       </span>
       <span className="text-slate-500">状态</span>
       <DrawingMaterialDots order={order} />
+    </div>
+  );
+}
+
+/** 已完工明細：不顯示圖紙／物料點，原「狀態」區改為完工時間（上海 `MM-dd HH:mm`） */
+function OrderDetailCompletedLine({ order }: { order: ProductionAuditOrderLine }) {
+  const doneAt = formatInTimeZone(new Date(order.updatedAtMs), MES_TIMEZONE, 'MM-dd HH:mm');
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm leading-relaxed">
+      <span className="min-w-0 truncate font-medium text-slate-100">{order.customerName || '—'}</span>
+      <span className="text-slate-600" aria-hidden>
+        |
+      </span>
+      <span className="tabular-nums text-slate-300">
+        数量: {order.actualQuantity} / {order.totalQuantity}
+      </span>
+      <span className="text-slate-600" aria-hidden>
+        |
+      </span>
+      <span className="tabular-nums text-slate-400" title="完工时间（上海）">
+        完工 {doneAt}
+      </span>
     </div>
   );
 }
@@ -387,7 +410,7 @@ function CollapsiblePendingRow({
                   key={`${model.partNumber}-${idx}-${o.customerName}`}
                   className="border-b border-white/[0.05] py-3 last:border-0"
                 >
-                  <OrderDetailOneLine order={o} />
+                  <OrderDetailCompletedLine order={o} />
                 </div>
               ))}
             </motion.div>

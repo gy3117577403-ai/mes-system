@@ -22,6 +22,7 @@ import {
   patchMesSettingsZ,
   softDeleteModeZ,
   importOrdersOverwriteWeekZ,
+  carryOverOrdersInputZ,
   toggleOrderReadyInputZ,
   updateOrderDataZ,
 } from '@/lib/mesActionZod';
@@ -955,6 +956,8 @@ export type ProductionAuditOrderLine = {
   /** 與 `reportedQty` 同源（實做件數），審計顯式別名 */
   actualQuantity: number;
   totalHours: number;
+  /** 庫 `updatedAt` 轉 UTC 毫秒（已完工明細展示完工時間） */
+  updatedAtMs: number;
 };
 
 /** 審計明細去重鍵：同型號下客戶與計劃工時完全一致視為重複列 */
@@ -1059,9 +1062,11 @@ function toAuditOrderLine(r: {
   isMaterialReady: boolean | null;
   exceptionRemark: string | null;
   assignedDay: string;
+  updatedAt: Date;
 }): ProductionAuditOrderLine {
   const dr = r.isDrawingReady;
   const mr = r.isMaterialReady;
+  const uat = r.updatedAt instanceof Date ? r.updatedAt.getTime() : new Date(r.updatedAt).getTime();
   const rawTq = r.totalQty;
   const rawRq = r.reportedQty;
   const q = Number(r.qty);
@@ -1084,7 +1089,39 @@ function toAuditOrderLine(r: {
     totalQuantity: totalQtyNum,
     actualQuantity: reportedQtyNum,
     totalHours: totalHoursNum,
+    updatedAtMs: Number.isFinite(uat) ? uat : Date.now(),
   };
+}
+
+/**
+ * 週計劃結轉：將選中訂單 `plannedDate` 設為新錨點（毫秒字串）、`isArchived: false`；`updatedAt` 由 Prisma 自動刷新。
+ */
+export async function carryOverOrdersAction(
+  orderIds: string[],
+  newPlannedDateEpochMs: number
+): Promise<{ ok: boolean; error?: string; updated?: number }> {
+  const parsed = carryOverOrdersInputZ.safeParse({ orderIds, newPlannedDateEpochMs });
+  if (!parsed.success) {
+    return { ok: false, error: parsed.error.issues.map((i) => i.message).join('; ') };
+  }
+  const { orderIds: ids, newPlannedDateEpochMs: ms } = parsed.data;
+  const plannedDateStr = String(Math.trunc(ms));
+  try {
+    const r = await prisma.order.updateMany({
+      where: {
+        id: { in: ids },
+        deletedAt: null,
+      },
+      data: {
+        plannedDate: plannedDateStr,
+        isArchived: false,
+      },
+    });
+    return { ok: true, updated: r.count };
+  } catch (e) {
+    console.error('[carryOverOrdersAction]', e);
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 /**

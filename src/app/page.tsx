@@ -28,6 +28,7 @@ import {
 } from '@/types';
 import Header from '@/components/Header';
 import ProductionAuditOverlay from '@/components/ProductionAuditOverlay';
+import CarryOverModal from '@/components/CarryOverModal';
 import KanbanBoard from '@/components/KanbanBoard';
 import WorkshopView from '@/components/WorkshopView';
 import BossDashboard from '@/components/BossDashboard';
@@ -255,6 +256,7 @@ export default function KanbanApp() {
   const [qcReviewOpen, setQcReviewOpen] = useState(false);
   const [auditModalOpen, setAuditModalOpen] = useState(false);
   const [isAuditOpen, setIsAuditOpen] = useState(false);
+  const [carryOverOpen, setCarryOverOpen] = useState(false);
   /** 單筆／AI：相對週（-1 上週 · 0 本週 · 1 下週 · 2 下下週） */
   const [weekOffset, setWeekOffset] = useState(0);
   /** Excel 覆蓋導入：必選本周=0／下周=1／下下周=2；未選禁止上傳 */
@@ -659,12 +661,17 @@ export default function KanbanApp() {
       showAlert("提示", "当前看板已为空，无需清盘。");
       return;
     }
+    setCarryOverOpen(true);
+  };
+
+  const triggerHardClearBoardFromWizard = () => {
     showConfirm(
       "🚨 新周期清盘确认",
-      "此操作将彻底清空当前看板上的【所有数据】！\n是否确认清盘并开启全新的排产周期？",
+      "此操作将彻底清空当前看板上的【所有数据】并归档！\n是否确认清盘并开启全新的排产周期？",
       () => {
-        setDialog(prev => ({ ...prev, isOpen: false }));
+        setDialog((prev) => ({ ...prev, isOpen: false }));
         setOrders([]);
+        setCarryOverOpen(false);
         void softDeleteOrdersAction('all');
         showAlert("成功", "看板数据已彻底清空，您可以导入新一周期的排单了！");
       }
@@ -1229,6 +1236,14 @@ export default function KanbanApp() {
       />
 
       <ProductionAuditOverlay isOpen={isAuditOpen} onClose={() => setIsAuditOpen(false)} />
+
+      <CarryOverModal
+        isOpen={carryOverOpen}
+        onClose={() => setCarryOverOpen(false)}
+        orders={orders}
+        onSynced={handleSyncRefresh}
+        onRequestHardClearBoard={triggerHardClearBoardFromWizard}
+      />
 
       {/* 浮动警报拦截横幅 */}
       {redAlertTasks.length > 0 && viewMode === 'manager' && (

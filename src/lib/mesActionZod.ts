@@ -72,3 +72,9 @@ export const importOrdersOverwriteWeekZ = z.object({
   targetWeekStart: z.number().finite(),
   orders: z.array(createOrderActionInputZ).min(1).max(2000),
 });
+
+/** 週末結轉：批量將計劃錨點改為新毫秒戳並拉回看板 */
+export const carryOverOrdersInputZ = z.object({
+  orderIds: z.array(orderIdZ).min(1).max(2000),
+  newPlannedDateEpochMs: z.number().finite(),
+});
