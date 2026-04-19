@@ -51,7 +51,18 @@ export function AddOrderModal({
             <label className="block text-xs font-bold text-slate-400 mb-1">交货日期 (AI排序依据)</label>
             <input type="date" required value={newOrderForm.deliveryDate} onChange={e => setNewOrderForm({...newOrderForm, deliveryDate: e.target.value})} className="w-full border border-slate-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" />
           </div>
-          
+          <div className="mb-4">
+            <label className="block text-xs font-bold text-slate-400 mb-1">计划生产日期 (Planned Date)</label>
+            <input
+              type="date"
+              required
+              value={newOrderForm.plannedProductionDate ?? ''}
+              onChange={(e) => setNewOrderForm({ ...newOrderForm, plannedProductionDate: e.target.value })}
+              className="w-full border border-slate-700 rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+            />
+            <p className="mt-1 text-[10px] text-slate-500">按上海时区落库为时间戳，用于审计周锚过滤</p>
+          </div>
+
           <div className="flex flex-col gap-3 mt-4">
             <div className="flex items-center gap-2 bg-rose-50 p-3 rounded-lg border border-rose-200">
               <input

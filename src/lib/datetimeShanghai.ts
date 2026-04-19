@@ -109,3 +109,26 @@ export function getShanghaiAuditWeekRangeEpochMsForOffset(weekOffset = 0, now = 
   const anchor = n === 0 ? now : subWeeks(now, n);
   return getShanghaiAuditWeekRangeEpochMs(anchor);
 }
+
+/**
+ * 將庫存 `plannedDate` 解析為可比較的 UTC 毫秒錨點：純數字字串視為毫秒戳；
+ * 否則取前綴 `yyyy-MM-dd` 並按上海當日 00:00:00 解釋。
+ */
+export function plannedDateAnchorEpochMs(raw: string | null | undefined): number | null {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  if (/^\d{10,15}$/.test(s)) {
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+  }
+  const isoPrefix = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (isoPrefix) {
+    try {
+      return parseShanghaiWallClockToEpochMs(isoPrefix[1], '00:00:00');
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}

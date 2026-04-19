@@ -11,7 +11,7 @@ import {
   type ProductionAuditPendingModelRow,
   type ProductionAuditSummaryResult,
 } from '@/actions/mesActions';
-import { formatMsToShanghaiLocale } from '@/lib/datetimeShanghai';
+import { formatMsToShanghaiLocale, plannedDateAnchorEpochMs } from '@/lib/datetimeShanghai';
 
 interface ProductionAuditOverlayProps {
   isOpen: boolean;
@@ -24,6 +24,10 @@ function pct(numerator: number, denominator: number): number {
 }
 
 function formatAuditDueDate(plannedDate: string | null, deliveryDate: string): string {
+  const anchor = plannedDateAnchorEpochMs(plannedDate);
+  if (anchor != null) {
+    return formatMsToShanghaiLocale(anchor).slice(0, 10);
+  }
   for (const raw of [plannedDate, deliveryDate]) {
     if (!raw?.trim()) continue;
     const s = raw.trim();
@@ -100,15 +104,14 @@ function ProgressBar({ valuePct }: { valuePct: number }) {
 
 function AuditSkeleton() {
   return (
-    <div className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 animate-pulse flex-col space-y-6 px-4 pb-8 pt-2 md:px-8">
+    <div className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 animate-pulse flex-col space-y-3 px-4 pb-6 pt-2 md:px-8">
       <div className="flex justify-between gap-4">
         <div className="h-10 w-64 rounded-lg bg-slate-800/80" />
         <div className="h-14 w-14 shrink-0 rounded-2xl bg-slate-800/80" />
       </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div className="col-span-2 h-28 rounded-xl border border-slate-800/80 bg-slate-900/50" />
-        {[0, 1, 2, 3].map((i) => (
-          <div key={i} className="h-24 rounded-xl border border-slate-800/80 bg-slate-900/50" />
+      <div className="grid h-20 shrink-0 grid-cols-5 gap-3">
+        {[0, 1, 2, 3, 4].map((i) => (
+          <div key={i} className="rounded-lg border border-slate-800/80 bg-slate-900/50" />
         ))}
       </div>
       <div className="h-11 w-full rounded-xl border border-slate-800/80 bg-slate-900/50" />
@@ -199,16 +202,16 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
       className="fixed inset-0 z-[100] flex h-screen min-h-0 flex-col overflow-hidden bg-slate-950/85 backdrop-blur-xl"
     >
       <div className="mx-auto flex min-h-0 w-full max-w-[1600px] flex-1 flex-col px-4 pb-4 pt-5 md:px-8 md:pt-6">
-        <header className="mb-4 flex shrink-0 flex-wrap items-start justify-between gap-4 md:mb-6">
+        <header className="mb-2 flex shrink-0 flex-wrap items-start justify-between gap-3 md:mb-3">
           <div className="min-w-0">
             <p className="mb-1 font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-cyan-400/80 md:text-xs">
               MES · Phase 2
             </p>
-            <h1 id="production-audit-title" className="text-2xl font-black tracking-tight text-white md:text-4xl">
+            <h1 id="production-audit-title" className="text-xl font-black tracking-tight text-white md:text-3xl">
               生产效能审计
             </h1>
             {weekLabel ? (
-              <p className="mt-2 text-xs text-slate-400 md:text-sm">统计区间（上海）：{weekLabel}</p>
+              <p className="mt-1 text-[11px] text-slate-400 md:text-xs">统计区间（上海）：{weekLabel}</p>
             ) : null}
           </div>
           <button
@@ -226,7 +229,11 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
           </button>
         </header>
 
-        {loading && <AuditSkeleton />}
+        {loading && (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <AuditSkeleton />
+          </div>
+        )}
 
         {!loading && data && !data.ok && (
           <div className="shrink-0 rounded-xl border border-red-500/40 bg-red-950/30 p-4 text-sm text-red-200">
@@ -235,18 +242,16 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
         )}
 
         {!loading && data?.ok && (
-          <>
-            <div className="mb-3 grid shrink-0 grid-cols-2 gap-3 md:mb-4 md:gap-4">
-              <div className="col-span-2">
-                <MonthlyAttainmentCard m={data.monthly30d} />
-              </div>
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="mb-2 grid h-20 shrink-0 grid-cols-5 gap-3">
+              <MonthlyAttainmentCard m={data.monthly30d} />
               <KpiCard label="当周完工单" value={String(data.completedInWeekCount)} tone="sky" />
               <KpiCard label="型号总数" value={String(data.modelCount)} tone="cyan" />
               <KpiCard label="当周完工工时" value={String(data.burnedHours)} tone="emerald" />
               <KpiCard label="待办计划工时" value={String(data.plannedHours)} tone="teal" />
             </div>
 
-            <div className="mb-4 flex shrink-0 flex-col gap-2 sm:flex-row sm:items-stretch">
+            <div className="mb-2 flex shrink-0 flex-col gap-2 sm:flex-row sm:items-stretch">
               <label className="relative min-w-0 flex-1">
                 <span className="sr-only">搜索产品型号、客户名称</span>
                 <Search
@@ -318,7 +323,7 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
                 </ul>
               </section>
             </div>
-          </>
+          </div>
         )}
       </div>
     </div>
@@ -418,24 +423,22 @@ function CompletedModelCard({ model }: { model: ProductionAuditCompletedModelRow
 function MonthlyAttainmentCard({ m }: { m: ProductionAuditMonthly30d }) {
   const safe = Math.min(100, Math.max(0, m.attainmentPct));
   return (
-    <div className="flex items-center gap-4 rounded-xl border border-emerald-500/30 bg-slate-900/70 px-4 py-3 shadow-[0_0_24px_rgba(52,211,153,0.12)] md:gap-5 md:px-5 md:py-4">
-      <div className="relative h-[5.25rem] w-[5.25rem] shrink-0 md:h-[5.75rem] md:w-[5.75rem]">
+    <div className="flex h-full min-h-0 items-center gap-2 rounded-lg border border-emerald-500/30 bg-slate-900/80 p-2 shadow-[0_0_12px_rgba(52,211,153,0.1)]">
+      <div className="relative h-12 w-12 shrink-0">
         <div
           className="absolute inset-0 rounded-full"
           style={{
             background: `conic-gradient(rgb(52 211 153) ${safe * 3.6}deg, rgb(30 41 59) 0deg)`,
           }}
         />
-        <div className="absolute inset-2 rounded-full bg-slate-950/95 md:inset-[9px]" />
-        <div className="absolute inset-0 flex flex-col items-center justify-center leading-none">
-          <span className="text-xl font-black text-emerald-300 md:text-2xl">{safe}%</span>
-          <span className="mt-0.5 text-[9px] font-bold uppercase tracking-wider text-slate-500">达成</span>
+        <div className="absolute inset-[3px] rounded-full bg-slate-950/95" />
+        <div className="absolute inset-0 flex items-center justify-center">
+          <span className="text-[10px] font-black leading-none text-emerald-300">{safe}%</span>
         </div>
       </div>
-      <div className="min-w-0 flex-1">
-        <p className="text-[10px] font-black uppercase tracking-wider text-emerald-400/90 md:text-xs">月度达成率</p>
-        <p className="mt-1.5 text-sm text-slate-400">近 30 天 · 计划 {m.plannedHours} h</p>
-        <p className="mt-0.5 text-sm text-slate-400">完工实做 {m.burnedHours} h</p>
+      <div className="min-w-0 flex-1 leading-tight">
+        <p className="text-[8px] font-black uppercase tracking-wider text-emerald-400/90">月度达成</p>
+        <p className="truncate text-[9px] text-slate-500">30d {m.plannedHours}h/{m.burnedHours}h</p>
       </div>
     </div>
   );
@@ -467,9 +470,11 @@ function KpiCard({
           ? 'border-emerald-500/35 shadow-[0_0_24px_rgba(52,211,153,0.14)]'
           : 'border-teal-500/30 shadow-[0_0_24px_rgba(45,212,191,0.12)]';
   return (
-    <div className={`rounded-xl border bg-slate-900/70 px-3 py-3 md:px-5 md:py-4 ${border}`}>
-      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 md:text-xs">{label}</p>
-      <p className={`mt-1 font-mono text-2xl font-black tabular-nums md:text-3xl ${accent}`}>{value}</p>
+    <div className={`flex h-full min-h-0 flex-col justify-center rounded-lg border bg-slate-900/80 p-3 ${border}`}>
+      <p className="text-[8px] font-bold uppercase leading-tight tracking-wider text-slate-500">{label}</p>
+      <p className={`mt-0.5 truncate font-mono text-lg font-black tabular-nums leading-none md:text-xl ${accent}`}>
+        {value}
+      </p>
     </div>
   );
 }

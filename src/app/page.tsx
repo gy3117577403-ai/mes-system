@@ -51,6 +51,7 @@ import {
 } from '@/actions/mesActions';
 import { diffOrder } from '@/lib/orderDiff';
 import { isOrderCompletedStatus } from '@/lib/orderStatus';
+import { parseShanghaiWallClockToEpochMs, shanghaiDateTodayISO } from '@/lib/datetimeShanghai';
 
 const ALARM_MSG: Record<AlarmKind, string> = {
   Material: '物料准备',
@@ -256,6 +257,7 @@ export default function KanbanApp() {
     qty: 1,
     totalHours: 30,
     deliveryDate: '',
+    plannedProductionDate: shanghaiDateTodayISO(),
     sales: '跟单员',
     autoSchedule: true,
     isUrgent: false,
@@ -569,7 +571,20 @@ export default function KanbanApp() {
       toast.error("排产数量和所需工时必须大于 0！");
       return;
     }
-    
+    if (!newOrderForm.plannedProductionDate?.trim()) {
+      toast.error('请选择计划生产日期');
+      return;
+    }
+    let plannedMsStr: string;
+    try {
+      plannedMsStr = String(
+        parseShanghaiWallClockToEpochMs(newOrderForm.plannedProductionDate.trim(), '00:00:00')
+      );
+    } catch {
+      toast.error('计划生产日期无效');
+      return;
+    }
+
     try {
       const newId = uuidv4();
       let targetDay = 'Unscheduled';
@@ -585,6 +600,7 @@ export default function KanbanApp() {
         totalHours: newOrderForm.totalHours,
         sales: newOrderForm.sales,
         deliveryDate: newOrderForm.deliveryDate,
+        plannedDate: plannedMsStr,
         drawing: '未发图',
         materials: '未配料',
         assignedDay: targetDay,
@@ -608,6 +624,7 @@ export default function KanbanApp() {
         qty: 1,
         totalHours: 30,
         deliveryDate: '',
+        plannedProductionDate: shanghaiDateTodayISO(),
         sales: '跟单员',
         autoSchedule: true,
         isUrgent: false,
@@ -923,6 +940,13 @@ export default function KanbanApp() {
         draw: headers.findIndex((h: string) => h.includes('图纸')),
         mat: headers.findIndex((h: string) => h.includes('配料')),
         del: headers.findIndex((h: string) => h.includes('交货') || h.includes('交期')),
+        plan: headers.findIndex(
+          (h: string) =>
+            h.includes('计划生产') ||
+            h.includes('计划日期') ||
+            h.includes('计划交期') ||
+            h.includes('生产日期')
+        ),
       };
 
       const newOrders: Order[] = [];
@@ -961,6 +985,29 @@ export default function KanbanApp() {
           }
         }
 
+        const planRaw = idx.plan >= 0 ? getCol(idx.plan) : '';
+        let planMsStr = '';
+        if (planRaw) {
+          const pd = dayjs(planRaw);
+          if (pd.isValid()) {
+            try {
+              planMsStr = String(parseShanghaiWallClockToEpochMs(pd.format('YYYY-MM-DD'), '00:00:00'));
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+        if (!planMsStr && formattedDate) {
+          const pd2 = dayjs(formattedDate);
+          if (pd2.isValid()) {
+            try {
+              planMsStr = String(parseShanghaiWallClockToEpochMs(pd2.format('YYYY-MM-DD'), '00:00:00'));
+            } catch {
+              /* ignore */
+            }
+          }
+        }
+
         const newId = uuidv4();
 
         const qty = parseInt(getCol(idx.qty), 10) || 1;
@@ -975,6 +1022,7 @@ export default function KanbanApp() {
             drawing: isError ? '错误' : getCol(idx.draw) || '未发图',
             materials: isError ? '错误' : getCol(idx.mat) || '未配料',
             deliveryDate: formattedDate,
+            plannedDate: planMsStr || undefined,
             assignedDay: 'Unscheduled',
             taskStatus: 'normal',
             cutStatus: 'pending',

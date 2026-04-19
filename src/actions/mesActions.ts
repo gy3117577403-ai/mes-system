@@ -7,6 +7,7 @@ import {
   formatMsToShanghaiLocale,
   getShanghaiAuditWeekRangeEpochMsForOffset,
   nowEpochMsForMesStorage,
+  plannedDateAnchorEpochMs,
 } from '@/lib/datetimeShanghai';
 import {
   activityLogEntryZ,
@@ -882,7 +883,7 @@ function toAuditOrderLine(r: {
 }
 
 /**
- * 生產審計：`weekOffset` 選週；完工按 `updatedAt` 跨週歸因；待辦為全量未完工；附帶近 30 天月度口徑。
+ * 生產審計：`weekOffset` 選週；待辦／當週完工均以 `plannedDate` 錨點落在該週內（`null` 排除）；完工另需 `updatedAt` 落在該週。
  */
 export async function fetchProductionAuditSummaryAction(weekOffset = 0): Promise<ProductionAuditSummaryResult> {
   const empty: ProductionAuditSummaryResult = {
@@ -910,11 +911,12 @@ export async function fetchProductionAuditSummaryAction(weekOffset = 0): Promise
     const monthStart = new Date(monthStartMs);
     const now = new Date();
 
-    const [pendingRows, completedRows, monthPlannedAgg, monthBurnedAgg] = await Promise.all([
+    const [pendingCandidates, completedCandidates, monthPlannedAgg, monthBurnedAgg] = await Promise.all([
       prisma.order.findMany({
         where: {
           deletedAt: null,
           AND: [{ taskStatus: { not: 'COMPLETED' } }, { taskStatus: { not: 'completed' } }],
+          plannedDate: { not: null },
         },
         select: ORDER_AUDIT_SELECT,
         orderBy: { createdAt: 'desc' },
@@ -924,6 +926,7 @@ export async function fetchProductionAuditSummaryAction(weekOffset = 0): Promise
           deletedAt: null,
           OR: [{ taskStatus: 'COMPLETED' }, { taskStatus: 'completed' }],
           updatedAt: { gte: weekStart, lte: weekEnd },
+          plannedDate: { not: null },
         },
         select: ORDER_AUDIT_SELECT,
         orderBy: { updatedAt: 'desc' },
@@ -946,6 +949,15 @@ export async function fetchProductionAuditSummaryAction(weekOffset = 0): Promise
     const burned30 = Number(monthBurnedAgg._sum.totalHours) || 0;
     const attainmentPct =
       planned30 > 0 ? Math.min(100, Math.round((burned30 / planned30) * 1000) / 10) : 0;
+
+    const inWeekPlannedAnchor = (plannedDate: string | null) => {
+      const ms = plannedDateAnchorEpochMs(plannedDate);
+      if (ms == null) return false;
+      return ms >= weekStartMs && ms <= weekEndMs;
+    };
+
+    const pendingRows = pendingCandidates.filter((r) => inWeekPlannedAnchor(r.plannedDate));
+    const completedRows = completedCandidates.filter((r) => inWeekPlannedAnchor(r.plannedDate));
 
     const weekBurnByModel = new Map<string, number>();
     for (const r of completedRows) {
