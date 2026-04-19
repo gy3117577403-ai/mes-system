@@ -61,6 +61,7 @@ export async function runDeepSeekScheduleAction(): Promise<{
     const orders = await prisma.order.findMany({
       where: {
         deletedAt: null,
+        isArchived: false,
         taskStatus: { in: ['PENDING', 'PAUSED'] },
       },
       orderBy: { createdAt: 'asc' },
@@ -168,6 +169,7 @@ export async function runDeepSeekScheduleAction(): Promise<{
           where: {
             id: oid,
             deletedAt: null,
+            isArchived: false,
             taskStatus: { in: ['PENDING', 'PAUSED'] },
           },
           data: {

@@ -53,6 +53,8 @@ export interface Order {
   exceptionRemark?: string;
   /** AI 或計劃員給出的具體排產日／星期描述（Asia/Shanghai 語意） */
   plannedDate?: string;
+  /** 主看板熱數據：false 顯示於看板；true 已歸檔僅審計穿透 */
+  isArchived?: boolean;
 }
 
 export type ViewMode = 'manager' | 'workshop';

@@ -50,6 +50,7 @@ export function normalizeOrder(raw: Partial<Order> & { id: string }): Order {
     isMaterialReady: raw.isMaterialReady === true,
     exceptionRemark: raw.exceptionRemark ?? undefined,
     plannedDate: raw.plannedDate ?? undefined,
+    isArchived: raw.isArchived === true,
   };
 }
 

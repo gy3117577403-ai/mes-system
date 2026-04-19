@@ -106,6 +106,7 @@ function defaultOrderUncheckedCreate(id: string) {
     isMaterialReady: false,
     exceptionRemark: null,
     plannedDate: null,
+    isArchived: false,
     deletedAt: null,
   };
 }
@@ -147,7 +148,7 @@ export async function fetchInitialData(): Promise<FetchInitialDataResult> {
     console.log('>>> [DB DEBUG] 步驟：Promise.all 查詢（讀庫前）');
     const [rows, workerRows, logRows, settings] = await Promise.all([
       prisma.order.findMany({
-        where: { deletedAt: null },
+        where: { deletedAt: null, isArchived: false },
         orderBy: { createdAt: 'desc' },
       }),
       prisma.mesWorker.findMany({ orderBy: { sortOrder: 'asc' } }),
@@ -356,6 +357,7 @@ function buildOrderPatch(updateData: Record<string, unknown>): Record<string, un
     } else if (v === null) p.plannedDate = null;
     else p.plannedDate = String(v);
   }
+  if ('isArchived' in updateData) setBool('isArchived', updateData.isArchived);
   if ('deletedAt' in updateData) {
     const v = updateData.deletedAt;
     if (v === undefined) {
@@ -576,24 +578,27 @@ export async function patchMesSettingsAction(partial: {
   }
 }
 
-/** 軟刪除：completed = 僅已完成訂單；all = 全部未刪訂單 */
+/** 清屏歸檔：completed = 僅已完成；all = 全部未刪且未歸檔（不寫 deletedAt，主看板以 isArchived 隱藏） */
 export async function softDeleteOrdersAction(mode: 'completed' | 'all'): Promise<{ ok: boolean; error?: string }> {
   const modeRes = softDeleteModeZ.safeParse(mode);
   if (!modeRes.success) {
     return { ok: false, error: modeRes.error.issues.map((i) => i.message).join('; ') };
   }
   const m = modeRes.data;
-  const now = nowEpochMsForMesStorage();
   try {
     if (m === 'completed') {
       await prisma.order.updateMany({
-        where: { deletedAt: null, taskStatus: { in: ['completed', 'COMPLETED'] } },
-        data: { deletedAt: now },
+        where: {
+          deletedAt: null,
+          isArchived: false,
+          taskStatus: { in: ['completed', 'COMPLETED'] },
+        },
+        data: { isArchived: true },
       });
     } else {
       await prisma.order.updateMany({
-        where: { deletedAt: null },
-        data: { deletedAt: now },
+        where: { deletedAt: null, isArchived: false },
+        data: { isArchived: true },
       });
     }
     return { ok: true };

@@ -32,6 +32,7 @@ export function prismaOrderToFrontend(row: PrismaOrder): Order {
     isMaterialReady: row.isMaterialReady,
     exceptionRemark: row.exceptionRemark ?? undefined,
     plannedDate: row.plannedDate ?? undefined,
+    isArchived: row.isArchived,
   });
 }
 
@@ -65,6 +66,7 @@ export function frontendOrderToPrismaCreate(o: Order) {
     isMaterialReady: o.isMaterialReady,
     exceptionRemark: o.exceptionRemark ?? null,
     plannedDate: o.plannedDate ?? null,
+    isArchived: o.isArchived ?? false,
     deletedAt: null as number | null,
   };
 }
