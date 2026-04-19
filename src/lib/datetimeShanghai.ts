@@ -1,4 +1,4 @@
-import { endOfWeek, parse, startOfWeek } from 'date-fns';
+import { endOfWeek, parse, startOfWeek, subWeeks } from 'date-fns';
 import { formatInTimeZone, fromZonedTime, toZonedTime } from 'date-fns-tz';
 
 /**
@@ -96,4 +96,16 @@ export function getShanghaiAuditWeekRangeEpochMs(now = new Date()): {
     weekStartMs: fromZonedTime(startZoned, MES_TIMEZONE).getTime(),
     weekEndMs: fromZonedTime(endZoned, MES_TIMEZONE).getTime(),
   };
+}
+
+/**
+ * `weekOffset`：0＝含「現在」的上海自然週，1＝上一週，依此類推（最多建議 0～8）。
+ */
+export function getShanghaiAuditWeekRangeEpochMsForOffset(weekOffset = 0, now = new Date()): {
+  weekStartMs: number;
+  weekEndMs: number;
+} {
+  const n = Math.min(8, Math.max(0, Math.floor(Number(weekOffset)) || 0));
+  const anchor = n === 0 ? now : subWeeks(now, n);
+  return getShanghaiAuditWeekRangeEpochMs(anchor);
 }

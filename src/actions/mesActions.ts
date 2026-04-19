@@ -5,7 +5,7 @@ import { normalizeOrder } from '@/lib/mesOrder';
 import { prismaOrderToFrontend, frontendOrderToPrismaCreate } from '@/lib/mesDbMappers';
 import {
   formatMsToShanghaiLocale,
-  getShanghaiAuditWeekRangeEpochMs,
+  getShanghaiAuditWeekRangeEpochMsForOffset,
   nowEpochMsForMesStorage,
 } from '@/lib/datetimeShanghai';
 import { isOrderCompletedStatus } from '@/lib/orderStatus';
@@ -799,94 +799,171 @@ export type ProductionAuditCompletedModelRow = {
   orders: ProductionAuditOrderLine[];
 };
 
+/** 滾動近 30 天：計劃工時（新建單）與完工實做工時（`updatedAt` 落在窗內） */
+export type ProductionAuditMonthly30d = {
+  plannedHours: number;
+  burnedHours: number;
+  /** 0～100，burned/planned */
+  attainmentPct: number;
+};
+
 export type ProductionAuditSummaryResult = {
   ok: boolean;
   error?: string;
+  weekOffset: number;
   weekStartMs: number;
   weekEndMs: number;
-  /** 本週訂單總單量 */
+  /** 當週完工單數（`updatedAt` 落在選中週） */
+  completedInWeekCount: number;
+  /** 全庫未完工待辦單數 */
+  pendingBacklogCount: number;
+  /** 當週完工 + 待辦（監控口徑） */
   totalOrderCount: number;
-  /** 本週出現過的型號數 */
+  /** 待辦 ∪ 當週完工 涉及型號數 */
   modelCount: number;
-  /** 已完工訂單工時合計 */
+  /** 選中週內完工單 `totalHours` 合計 */
   burnedHours: number;
-  /** 本週全部訂單計劃工時合計 */
+  /** 全庫待辦 `totalHours` 合計（計劃負荷） */
   plannedHours: number;
+  monthly30d: ProductionAuditMonthly30d;
   pendingModels: ProductionAuditPendingModelRow[];
   completedModels: ProductionAuditCompletedModelRow[];
 };
 
+const ORDER_AUDIT_SELECT = {
+  id: true,
+  model: true,
+  client: true,
+  qty: true,
+  totalQty: true,
+  reportedQty: true,
+  totalHours: true,
+  taskStatus: true,
+  plannedDate: true,
+  deliveryDate: true,
+  isDrawingReady: true,
+  isMaterialReady: true,
+  exceptionRemark: true,
+  assignedDay: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
+function toAuditOrderLine(r: {
+  id: string;
+  model: string;
+  client: string;
+  qty: number;
+  totalQty: number;
+  reportedQty: number;
+  totalHours: number;
+  taskStatus: string;
+  plannedDate: string | null;
+  deliveryDate: string;
+  isDrawingReady: boolean;
+  isMaterialReady: boolean;
+  exceptionRemark: string | null;
+  assignedDay: string;
+}): ProductionAuditOrderLine {
+  return {
+    id: r.id,
+    customerName: (r.client ?? '').trim(),
+    plannedDate: r.plannedDate?.trim() ? r.plannedDate.trim() : null,
+    deliveryDate: (r.deliveryDate ?? '').trim(),
+    isDrawingReady: r.isDrawingReady === false ? false : true,
+    isMaterialReady: r.isMaterialReady === false ? false : true,
+    exceptionRemark: String(r.exceptionRemark ?? '').trim(),
+    assignedDay: (r.assignedDay ?? '').trim(),
+    taskStatus: String(r.taskStatus ?? '').trim(),
+    qty: Number(r.qty) || 0,
+    totalQty: Number(r.totalQty) || 0,
+    reportedQty: Number(r.reportedQty) || 0,
+    totalHours: Number(r.totalHours) || 0,
+  };
+}
+
 /**
- * 本週（`date-fns-tz` · Asia/Shanghai 週一至週日）未刪訂單之效能審計：型號級 `pendingModels` / `completedModels` 與四項 KPI。
+ * 生產審計：`weekOffset` 選週；完工按 `updatedAt` 跨週歸因；待辦為全量未完工；附帶近 30 天月度口徑。
  */
-export async function fetchProductionAuditSummaryAction(): Promise<ProductionAuditSummaryResult> {
+export async function fetchProductionAuditSummaryAction(weekOffset = 0): Promise<ProductionAuditSummaryResult> {
   const empty: ProductionAuditSummaryResult = {
     ok: false,
+    weekOffset: 0,
     weekStartMs: 0,
     weekEndMs: 0,
+    completedInWeekCount: 0,
+    pendingBacklogCount: 0,
     totalOrderCount: 0,
     modelCount: 0,
     burnedHours: 0,
     plannedHours: 0,
+    monthly30d: { plannedHours: 0, burnedHours: 0, attainmentPct: 0 },
     pendingModels: [],
     completedModels: [],
   };
 
   try {
-    const { weekStartMs, weekEndMs } = getShanghaiAuditWeekRangeEpochMs();
-    const rows = await prisma.order.findMany({
-      where: {
-        deletedAt: null,
-        createdAt: { gte: weekStartMs, lte: weekEndMs },
-      },
-      select: {
-        id: true,
-        model: true,
-        client: true,
-        qty: true,
-        totalQty: true,
-        reportedQty: true,
-        totalHours: true,
-        taskStatus: true,
-        plannedDate: true,
-        deliveryDate: true,
-        isDrawingReady: true,
-        isMaterialReady: true,
-        exceptionRemark: true,
-        assignedDay: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+    const off = Math.min(8, Math.max(0, Math.floor(Number(weekOffset)) || 0));
+    const { weekStartMs, weekEndMs } = getShanghaiAuditWeekRangeEpochMsForOffset(off);
+    const weekStart = new Date(weekStartMs);
+    const weekEnd = new Date(weekEndMs);
+    const monthStartMs = Date.now() - 30 * 86_400_000;
+    const monthStart = new Date(monthStartMs);
+    const now = new Date();
 
-    const byModel = new Map<string, ModelWeekAcc>();
+    const [pendingRows, completedRows, monthPlannedAgg, monthBurnedAgg] = await Promise.all([
+      prisma.order.findMany({
+        where: {
+          deletedAt: null,
+          AND: [{ taskStatus: { not: 'COMPLETED' } }, { taskStatus: { not: 'completed' } }],
+        },
+        select: ORDER_AUDIT_SELECT,
+        orderBy: { createdAt: 'desc' },
+      }),
+      prisma.order.findMany({
+        where: {
+          deletedAt: null,
+          OR: [{ taskStatus: 'COMPLETED' }, { taskStatus: 'completed' }],
+          updatedAt: { gte: weekStart, lte: weekEnd },
+        },
+        select: ORDER_AUDIT_SELECT,
+        orderBy: { updatedAt: 'desc' },
+      }),
+      prisma.order.aggregate({
+        where: { deletedAt: null, createdAt: { gte: monthStartMs } },
+        _sum: { totalHours: true },
+      }),
+      prisma.order.aggregate({
+        where: {
+          deletedAt: null,
+          OR: [{ taskStatus: 'COMPLETED' }, { taskStatus: 'completed' }],
+          updatedAt: { gte: monthStart, lte: now },
+        },
+        _sum: { totalHours: true },
+      }),
+    ]);
+
+    const planned30 = Number(monthPlannedAgg._sum.totalHours) || 0;
+    const burned30 = Number(monthBurnedAgg._sum.totalHours) || 0;
+    const attainmentPct =
+      planned30 > 0 ? Math.min(100, Math.round((burned30 / planned30) * 1000) / 10) : 0;
+
+    const weekBurnByModel = new Map<string, number>();
+    for (const r of completedRows) {
+      const k = partKey(r.model);
+      const th = Number(r.totalHours) || 0;
+      weekBurnByModel.set(k, (weekBurnByModel.get(k) ?? 0) + th);
+    }
+
+    const pendingAgg = new Map<string, ModelWeekAcc>();
     const pendingLinesByModel = new Map<string, ProductionAuditOrderLine[]>();
-    const completedLinesByModel = new Map<string, ProductionAuditOrderLine[]>();
 
-    const toLine = (r: (typeof rows)[number]): ProductionAuditOrderLine => ({
-      id: r.id,
-      customerName: (r.client ?? '').trim(),
-      plannedDate: r.plannedDate?.trim() ? r.plannedDate.trim() : null,
-      deliveryDate: (r.deliveryDate ?? '').trim(),
-      /** 僅在庫中明確為 `false` 時為 false，避免缺欄誤判為未發圖 */
-      isDrawingReady: r.isDrawingReady === false ? false : true,
-      isMaterialReady: r.isMaterialReady === false ? false : true,
-      exceptionRemark: String(r.exceptionRemark ?? '').trim(),
-      assignedDay: (r.assignedDay ?? '').trim(),
-      taskStatus: String(r.taskStatus ?? '').trim(),
-      qty: Number(r.qty) || 0,
-      totalQty: Number(r.totalQty) || 0,
-      reportedQty: Number(r.reportedQty) || 0,
-      totalHours: Number(r.totalHours) || 0,
-    });
-
-    for (const r of rows) {
+    for (const r of pendingRows) {
       const key = partKey(r.model);
       const plannedPiece = r.totalQty ?? r.qty;
       const th = Number(r.totalHours) || 0;
       const acc =
-        byModel.get(key) ??
+        pendingAgg.get(key) ??
         ({
           plannedQty: 0,
           plannedHours: 0,
@@ -897,77 +974,98 @@ export async function fetchProductionAuditSummaryAction(): Promise<ProductionAud
           actualQty: 0,
           burnedHours: 0,
         } satisfies ModelWeekAcc);
-
+      acc.pendingOrderCount += 1;
+      acc.shortfallQty += plannedPiece;
+      acc.pendingHours += th;
       acc.plannedQty += plannedPiece;
       acc.plannedHours += th;
+      const arr = pendingLinesByModel.get(key) ?? [];
+      arr.push(toAuditOrderLine(r));
+      pendingLinesByModel.set(key, arr);
+      pendingAgg.set(key, acc);
+    }
 
-      if (isOrderCompletedStatus(r.taskStatus)) {
-        acc.completedOrderCount += 1;
-        acc.actualQty += r.reportedQty ?? 0;
-        acc.burnedHours += th;
-        const arr = completedLinesByModel.get(key) ?? [];
-        arr.push(toLine(r));
-        completedLinesByModel.set(key, arr);
-      } else {
-        acc.pendingOrderCount += 1;
-        acc.shortfallQty += plannedPiece;
-        acc.pendingHours += th;
-        const arr = pendingLinesByModel.get(key) ?? [];
-        arr.push(toLine(r));
-        pendingLinesByModel.set(key, arr);
-      }
+    const completedAgg = new Map<string, ModelWeekAcc>();
+    const completedLinesByModel = new Map<string, ProductionAuditOrderLine[]>();
 
-      byModel.set(key, acc);
+    for (const r of completedRows) {
+      const key = partKey(r.model);
+      const plannedPiece = r.totalQty ?? r.qty;
+      const th = Number(r.totalHours) || 0;
+      const acc =
+        completedAgg.get(key) ??
+        ({
+          plannedQty: 0,
+          plannedHours: 0,
+          pendingOrderCount: 0,
+          shortfallQty: 0,
+          pendingHours: 0,
+          completedOrderCount: 0,
+          actualQty: 0,
+          burnedHours: 0,
+        } satisfies ModelWeekAcc);
+      acc.completedOrderCount += 1;
+      acc.actualQty += r.reportedQty ?? 0;
+      acc.burnedHours += th;
+      acc.plannedQty += plannedPiece;
+      acc.plannedHours += th;
+      const arr = completedLinesByModel.get(key) ?? [];
+      arr.push(toAuditOrderLine(r));
+      completedLinesByModel.set(key, arr);
+      completedAgg.set(key, acc);
     }
 
     const pendingModels: ProductionAuditPendingModelRow[] = [];
-    const completedModels: ProductionAuditCompletedModelRow[] = [];
+    for (const [partNumber, v] of pendingAgg) {
+      const weekBurn = Math.round((weekBurnByModel.get(partNumber) ?? 0) * 1000) / 1000;
+      pendingModels.push({
+        partNumber,
+        pendingOrderCount: v.pendingOrderCount,
+        shortfallQty: v.shortfallQty,
+        estimatedHours: Math.round(v.pendingHours * 1000) / 1000,
+        modelWeekPlannedHours: Math.round(v.pendingHours * 1000) / 1000,
+        modelWeekBurnedHours: weekBurn,
+        orders: pendingLinesByModel.get(partNumber) ?? [],
+      });
+    }
 
-    for (const [partNumber, v] of byModel) {
-      if (v.pendingOrderCount > 0) {
-        pendingModels.push({
-          partNumber,
-          pendingOrderCount: v.pendingOrderCount,
-          shortfallQty: v.shortfallQty,
-          estimatedHours: Math.round(v.pendingHours * 1000) / 1000,
-          modelWeekPlannedHours: Math.round(v.plannedHours * 1000) / 1000,
-          modelWeekBurnedHours: Math.round(v.burnedHours * 1000) / 1000,
-          orders: pendingLinesByModel.get(partNumber) ?? [],
-        });
-      }
-      if (v.completedOrderCount > 0) {
-        completedModels.push({
-          partNumber,
-          completedOrderCount: v.completedOrderCount,
-          actualQty: v.actualQty,
-          burnedHours: Math.round(v.burnedHours * 1000) / 1000,
-          modelWeekPlannedQty: v.plannedQty,
-          orders: completedLinesByModel.get(partNumber) ?? [],
-        });
-      }
+    const completedModels: ProductionAuditCompletedModelRow[] = [];
+    for (const [partNumber, v] of completedAgg) {
+      completedModels.push({
+        partNumber,
+        completedOrderCount: v.completedOrderCount,
+        actualQty: v.actualQty,
+        burnedHours: Math.round(v.burnedHours * 1000) / 1000,
+        modelWeekPlannedQty: v.plannedQty,
+        orders: completedLinesByModel.get(partNumber) ?? [],
+      });
     }
 
     pendingModels.sort((a, b) => b.estimatedHours - a.estimatedHours);
     completedModels.sort((a, b) => b.actualQty - a.actualQty);
 
-    const totalOrderCount = rows.length;
-    const modelCount = byModel.size;
-    const plannedHours = Math.round(rows.reduce((s, r) => s + (Number(r.totalHours) || 0), 0) * 1000) / 1000;
-    const burnedHours =
-      Math.round(
-        rows
-          .filter((r) => isOrderCompletedStatus(r.taskStatus))
-          .reduce((s, r) => s + (Number(r.totalHours) || 0), 0) * 1000
-      ) / 1000;
+    const modelKeys = new Set<string>([...pendingAgg.keys(), ...completedAgg.keys()]);
+    const completedInWeekCount = completedRows.length;
+    const pendingBacklogCount = pendingRows.length;
+    const burnedHours = Math.round(completedRows.reduce((s, r) => s + (Number(r.totalHours) || 0), 0) * 1000) / 1000;
+    const plannedHours = Math.round(pendingRows.reduce((s, r) => s + (Number(r.totalHours) || 0), 0) * 1000) / 1000;
 
     return {
       ok: true,
+      weekOffset: off,
       weekStartMs,
       weekEndMs,
-      totalOrderCount,
-      modelCount,
+      completedInWeekCount,
+      pendingBacklogCount,
+      totalOrderCount: completedInWeekCount + pendingBacklogCount,
+      modelCount: modelKeys.size,
       burnedHours,
       plannedHours,
+      monthly30d: {
+        plannedHours: Math.round(planned30 * 1000) / 1000,
+        burnedHours: Math.round(burned30 * 1000) / 1000,
+        attainmentPct: attainmentPct,
+      },
       pendingModels,
       completedModels,
     };

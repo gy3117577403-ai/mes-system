@@ -6,6 +6,7 @@ import { Search, X } from 'lucide-react';
 import {
   fetchProductionAuditSummaryAction,
   type ProductionAuditCompletedModelRow,
+  type ProductionAuditMonthly30d,
   type ProductionAuditOrderLine,
   type ProductionAuditPendingModelRow,
   type ProductionAuditSummaryResult,
@@ -104,7 +105,8 @@ function AuditSkeleton() {
         <div className="h-10 w-64 rounded-lg bg-slate-800/80" />
         <div className="h-14 w-14 shrink-0 rounded-2xl bg-slate-800/80" />
       </div>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3">
+        <div className="col-span-2 h-28 rounded-xl border border-slate-800/80 bg-slate-900/50" />
         {[0, 1, 2, 3].map((i) => (
           <div key={i} className="h-24 rounded-xl border border-slate-800/80 bg-slate-900/50" />
         ))}
@@ -137,20 +139,26 @@ function matchesSearch(
 /**
  * 全屏生產效能審計疊層：型號聚合 + 訂單明細、搜尋過濾、狀態徽章。
  */
+const WEEK_SELECT_OPTIONS = [0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => ({
+  value: i,
+  label: i === 0 ? '本周' : i === 1 ? '上周' : `${i}周前`,
+}));
+
 export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAuditOverlayProps) {
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<ProductionAuditSummaryResult | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [weekOffset, setWeekOffset] = useState(0);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetchProductionAuditSummaryAction();
+      const res = await fetchProductionAuditSummaryAction(weekOffset);
       setData(res);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [weekOffset]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -158,7 +166,10 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
   }, [isOpen, load]);
 
   useEffect(() => {
-    if (!isOpen) setSearchTerm('');
+    if (!isOpen) {
+      setSearchTerm('');
+      setWeekOffset(0);
+    }
   }, [isOpen]);
 
   const weekLabel = useMemo(() => {
@@ -194,7 +205,7 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
               MES · Phase 2
             </p>
             <h1 id="production-audit-title" className="text-2xl font-black tracking-tight text-white md:text-4xl">
-              本周生产效能审计
+              生产效能审计
             </h1>
             {weekLabel ? (
               <p className="mt-2 text-xs text-slate-400 md:text-sm">统计区间（上海）：{weekLabel}</p>
@@ -225,15 +236,18 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
 
         {!loading && data?.ok && (
           <>
-            <div className="mb-3 grid shrink-0 grid-cols-2 gap-3 md:mb-4 md:grid-cols-4 md:gap-4">
-              <KpiCard label="本周总单量" value={String(data.totalOrderCount)} tone="sky" />
+            <div className="mb-3 grid shrink-0 grid-cols-2 gap-3 md:mb-4 md:gap-4">
+              <div className="col-span-2">
+                <MonthlyAttainmentCard m={data.monthly30d} />
+              </div>
+              <KpiCard label="当周完工单" value={String(data.completedInWeekCount)} tone="sky" />
               <KpiCard label="型号总数" value={String(data.modelCount)} tone="cyan" />
-              <KpiCard label="已燃烧工时" value={String(data.burnedHours)} tone="emerald" />
-              <KpiCard label="总计划工时" value={String(data.plannedHours)} tone="teal" />
+              <KpiCard label="当周完工工时" value={String(data.burnedHours)} tone="emerald" />
+              <KpiCard label="待办计划工时" value={String(data.plannedHours)} tone="teal" />
             </div>
 
-            <div className="mb-4 shrink-0">
-              <label className="relative block">
+            <div className="mb-4 flex shrink-0 flex-col gap-2 sm:flex-row sm:items-stretch">
+              <label className="relative min-w-0 flex-1">
                 <span className="sr-only">搜索产品型号、客户名称</span>
                 <Search
                   className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500 md:h-5 md:w-5"
@@ -249,6 +263,18 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
                   autoComplete="off"
                 />
               </label>
+              <select
+                value={weekOffset}
+                onChange={(e) => setWeekOffset(Number(e.target.value))}
+                aria-label="选择统计周"
+                className="shrink-0 rounded-xl border border-slate-700/90 bg-slate-900/50 px-3 py-2.5 text-sm font-bold text-slate-200 shadow-inner backdrop-blur-md focus:border-cyan-500/50 focus:outline-none focus:ring-2 focus:ring-cyan-500/20 sm:min-w-[8.5rem] md:py-3"
+              >
+                {WEEK_SELECT_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value} className="bg-slate-900">
+                    {o.label}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row lg:gap-6">
@@ -386,6 +412,32 @@ function CompletedModelCard({ model }: { model: ProductionAuditCompletedModelRow
         </div>
       </div>
     </li>
+  );
+}
+
+function MonthlyAttainmentCard({ m }: { m: ProductionAuditMonthly30d }) {
+  const safe = Math.min(100, Math.max(0, m.attainmentPct));
+  return (
+    <div className="flex items-center gap-4 rounded-xl border border-emerald-500/30 bg-slate-900/70 px-4 py-3 shadow-[0_0_24px_rgba(52,211,153,0.12)] md:gap-5 md:px-5 md:py-4">
+      <div className="relative h-[5.25rem] w-[5.25rem] shrink-0 md:h-[5.75rem] md:w-[5.75rem]">
+        <div
+          className="absolute inset-0 rounded-full"
+          style={{
+            background: `conic-gradient(rgb(52 211 153) ${safe * 3.6}deg, rgb(30 41 59) 0deg)`,
+          }}
+        />
+        <div className="absolute inset-2 rounded-full bg-slate-950/95 md:inset-[9px]" />
+        <div className="absolute inset-0 flex flex-col items-center justify-center leading-none">
+          <span className="text-xl font-black text-emerald-300 md:text-2xl">{safe}%</span>
+          <span className="mt-0.5 text-[9px] font-bold uppercase tracking-wider text-slate-500">达成</span>
+        </div>
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-[10px] font-black uppercase tracking-wider text-emerald-400/90 md:text-xs">月度达成率</p>
+        <p className="mt-1.5 text-sm text-slate-400">近 30 天 · 计划 {m.plannedHours} h</p>
+        <p className="mt-0.5 text-sm text-slate-400">完工实做 {m.burnedHours} h</p>
+      </div>
+    </div>
   );
 }
 
