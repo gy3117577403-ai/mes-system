@@ -27,6 +27,7 @@ import {
   AndonNotification,
 } from '@/types';
 import Header from '@/components/Header';
+import ProductionAuditOverlay from '@/components/ProductionAuditOverlay';
 import KanbanBoard from '@/components/KanbanBoard';
 import WorkshopView from '@/components/WorkshopView';
 import BossDashboard from '@/components/BossDashboard';
@@ -248,6 +249,7 @@ export default function KanbanApp() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [qcReviewOpen, setQcReviewOpen] = useState(false);
   const [auditModalOpen, setAuditModalOpen] = useState(false);
+  const [isAuditOpen, setIsAuditOpen] = useState(false);
   const [newOrderForm, setNewOrderForm] = useState({
     client: '',
     model: '',
@@ -1156,7 +1158,10 @@ export default function KanbanApp() {
         offlineMode={offlineMode}
         onSyncRefresh={handleSyncRefresh}
         isSyncing={isSyncing}
+        onOpenProductionAudit={() => setIsAuditOpen(true)}
       />
+
+      <ProductionAuditOverlay isOpen={isAuditOpen} onClose={() => setIsAuditOpen(false)} />
 
       {/* 浮动警报拦截横幅 */}
       {redAlertTasks.length > 0 && viewMode === 'manager' && (

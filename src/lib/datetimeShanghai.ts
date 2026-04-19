@@ -1,5 +1,5 @@
-import { formatInTimeZone, fromZonedTime } from 'date-fns-tz';
-import { parse } from 'date-fns';
+import { endOfWeek, parse, startOfWeek } from 'date-fns';
+import { formatInTimeZone, fromZonedTime, toZonedTime } from 'date-fns-tz';
 
 /**
  * MES 全站業務時區（IANA），與 UTC+8 北京時間一致。
@@ -45,4 +45,55 @@ export function parseShanghaiWallClockToEpochMs(datePart: string, timePart = '00
     throw new TypeError(`無效的上海本地時間: ${datePart} ${timePart}`);
   }
   return fromZonedTime(d, MES_TIMEZONE).getTime();
+}
+
+/** 上海日曆下週一至週日的 short weekday（en-US）→ ISO 週內序 1=Mon … 7=Sun */
+const SHANGHAI_DOW_MAP: Record<string, number> = {
+  Mon: 1,
+  Tue: 2,
+  Wed: 3,
+  Thu: 4,
+  Fri: 5,
+  Sat: 6,
+  Sun: 7,
+};
+
+function shanghaiIsoDow1To7(ms: number): number {
+  const w = new Intl.DateTimeFormat('en-US', { timeZone: MES_TIMEZONE, weekday: 'short' }).format(
+    new Date(ms)
+  );
+  return SHANGHAI_DOW_MAP[w] ?? 1;
+}
+
+/**
+ * 以 **Asia/Shanghai** 週一 00:00 至週日 23:59:59.999 的 UTC 毫秒區間（與 `Order.createdAt` Float 對齊）。
+ * 用於本週訂單審計等聚合查詢。
+ */
+export function getShanghaiCurrentWeekRangeEpochMs(now = new Date()): {
+  weekStartMs: number;
+  weekEndMs: number;
+} {
+  const ymd = formatInTimeZone(now, MES_TIMEZONE, 'yyyy-MM-dd');
+  const todayStartMs = parseShanghaiWallClockToEpochMs(ymd, '00:00:00');
+  const dow = shanghaiIsoDow1To7(todayStartMs);
+  const weekStartMs = todayStartMs - (dow - 1) * 86_400_000;
+  const weekEndMs = weekStartMs + 7 * 86_400_000 - 1;
+  return { weekStartMs, weekEndMs };
+}
+
+/**
+ * 審計強制路徑：以 `date-fns` + `date-fns-tz` 計算 **Asia/Shanghai** 本週一 00:00:00.000
+ * 至週日 23:59:59.999 對應的 UTC 毫秒區間（與 `Order.createdAt` Float 對齊）。
+ */
+export function getShanghaiAuditWeekRangeEpochMs(now = new Date()): {
+  weekStartMs: number;
+  weekEndMs: number;
+} {
+  const zonedNow = toZonedTime(now, MES_TIMEZONE);
+  const startZoned = startOfWeek(zonedNow, { weekStartsOn: 1 });
+  const endZoned = endOfWeek(zonedNow, { weekStartsOn: 1 });
+  return {
+    weekStartMs: fromZonedTime(startZoned, MES_TIMEZONE).getTime(),
+    weekEndMs: fromZonedTime(endZoned, MES_TIMEZONE).getTime(),
+  };
 }

@@ -23,6 +23,7 @@ import {
   Moon,
   RefreshCw,
   Monitor,
+  BarChart3,
 } from 'lucide-react';
 import { Order, ViewMode, MainAppView, ActivityLogEntry, AndonNotification } from '@/types';
 import { useAuth } from '@/context/AuthContext';
@@ -74,6 +75,8 @@ interface HeaderProps {
   onSyncRefresh: () => void | Promise<void>;
   /** 手動同步進行中（按鈕 loading） */
   isSyncing: boolean;
+  /** 打開本週生產執行審計全屏層 */
+  onOpenProductionAudit: () => void;
 }
 
 export default function Header({
@@ -109,6 +112,7 @@ export default function Header({
   offlineMode,
   onSyncRefresh,
   isSyncing,
+  onOpenProductionAudit,
 }: HeaderProps) {
   const { user, logout } = useAuth();
   const [notifOpen, setNotifOpen] = useState(false);
@@ -190,6 +194,21 @@ export default function Header({
                   🔄
                 </span>
               )}
+            </button>
+            <button
+              type="button"
+              onClick={() => onOpenProductionAudit()}
+              className={cn(
+                'flex h-9 max-w-full shrink-0 items-center justify-center gap-1 rounded-lg border border-amber-500/40 px-2 text-amber-300 md:h-10 md:rounded-xl md:px-2.5',
+                theme === 'dark' ? 'bg-slate-800 hover:bg-slate-700' : 'bg-gray-100 hover:bg-gray-200'
+              )}
+              title="📊 全局效能审计"
+              aria-label="📊 全局效能审计"
+            >
+              <BarChart3 className="h-4 w-4 shrink-0 md:h-[18px] md:w-[18px]" strokeWidth={2.25} aria-hidden />
+              <span className="hidden max-w-[9rem] truncate text-[10px] font-black sm:inline md:max-w-[11rem] md:text-xs">
+                📊 全局效能审计
+              </span>
             </button>
             <button
               type="button"
@@ -490,6 +509,24 @@ export default function Header({
               title="审计日志"
             >
               <UserCheck className="h-4 w-4 shrink-0 md:h-5 md:w-5" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => onOpenProductionAudit()}
+              className={cn(
+                'flex h-9 max-w-full shrink-0 items-center justify-center gap-1 rounded-lg border px-1.5 transition-all duration-300 md:h-10 md:rounded-xl md:px-2',
+                theme === 'dark'
+                  ? 'border-slate-600 bg-slate-800/80 text-slate-400 hover:text-amber-300 hover:border-amber-500/40'
+                  : 'border-gray-300 bg-white text-gray-600 hover:text-amber-700 hover:border-amber-400'
+              )}
+              title="📊 全局效能审计"
+              aria-label="📊 全局效能审计"
+            >
+              <BarChart3 className="h-4 w-4 shrink-0 md:h-5 md:w-5" strokeWidth={2.25} aria-hidden />
+              <span className="hidden max-w-[9rem] truncate text-[10px] font-black sm:inline md:max-w-[11rem] md:text-xs">
+                📊 全局效能审计
+              </span>
             </button>
 
             <button
