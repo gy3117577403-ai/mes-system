@@ -251,13 +251,14 @@ export default function KanbanApp() {
   const [qcReviewOpen, setQcReviewOpen] = useState(false);
   const [auditModalOpen, setAuditModalOpen] = useState(false);
   const [isAuditOpen, setIsAuditOpen] = useState(false);
+  const [importDate, setImportDate] = useState(() => shanghaiDateTodayISO());
+
   const [newOrderForm, setNewOrderForm] = useState({
     client: '',
     model: '',
     qty: 1,
     totalHours: 30,
     deliveryDate: '',
-    plannedProductionDate: shanghaiDateTodayISO(),
     sales: '跟单员',
     autoSchedule: true,
     isUrgent: false,
@@ -571,17 +572,15 @@ export default function KanbanApp() {
       toast.error("排产数量和所需工时必须大于 0！");
       return;
     }
-    if (!newOrderForm.plannedProductionDate?.trim()) {
-      toast.error('请选择计划生产日期');
+    if (!importDate?.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(importDate.trim())) {
+      toast.error('请在顶部工具栏选择有效的排产日期');
       return;
     }
     let plannedMsStr: string;
     try {
-      plannedMsStr = String(
-        parseShanghaiWallClockToEpochMs(newOrderForm.plannedProductionDate.trim(), '00:00:00')
-      );
+      plannedMsStr = String(parseShanghaiWallClockToEpochMs(importDate.trim(), '00:00:00'));
     } catch {
-      toast.error('计划生产日期无效');
+      toast.error('排产日期无效');
       return;
     }
 
@@ -616,7 +615,7 @@ export default function KanbanApp() {
       });
 
       setOrders((prev) => [newOrder, ...prev]);
-      void createOrderAction(newOrder);
+      void createOrderAction(newOrder, importDate.trim());
       setIsAddModalOpen(false);
       setNewOrderForm({
         client: '',
@@ -624,7 +623,6 @@ export default function KanbanApp() {
         qty: 1,
         totalHours: 30,
         deliveryDate: '',
-        plannedProductionDate: shanghaiDateTodayISO(),
         sales: '跟单员',
         autoSchedule: true,
         isUrgent: false,
@@ -852,7 +850,7 @@ export default function KanbanApp() {
           for (const o of updatedOrders) {
             const prev = prevById.get(o.id);
             if (!prev) {
-              void createOrderAction(o);
+              void createOrderAction(o, importDate.trim());
             } else {
               const d = diffOrder(prev, o);
               if (Object.keys(d).length > 0) void updateOrderAction(o.id, d);
@@ -904,6 +902,11 @@ export default function KanbanApp() {
 
   const processExcelData = async (rows: any[]) => {
     try {
+      if (!importDate?.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(importDate.trim())) {
+        showAlert('提示', '请先在顶部工具栏选择排产日期，再导入 Excel。');
+        setIsProcessing(false);
+        return;
+      }
       if (!rows || rows.length < 2) {
         showAlert("提示", "文件内容为空或格式不正确！");
         setIsProcessing(false);
@@ -1041,7 +1044,7 @@ export default function KanbanApp() {
       if (newOrders.length > 0) {
         setOrders((prev) => [...newOrders, ...prev]);
         for (const o of newOrders) {
-          void createOrderAction(o);
+          void createOrderAction(o, importDate.trim());
         }
       }
       toast.success(`成功导入 ${newOrders.length} 条订单！\n您现在可以点击顶部【⚡ 全局 AI 智能排产】进行分配。`);
@@ -1207,6 +1210,8 @@ export default function KanbanApp() {
         onSyncRefresh={handleSyncRefresh}
         isSyncing={isSyncing}
         onOpenProductionAudit={() => setIsAuditOpen(true)}
+        importDate={importDate}
+        setImportDate={setImportDate}
       />
 
       <ProductionAuditOverlay isOpen={isAuditOpen} onClose={() => setIsAuditOpen(false)} />

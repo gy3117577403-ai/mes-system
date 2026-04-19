@@ -77,6 +77,9 @@ interface HeaderProps {
   isSyncing: boolean;
   /** 打開本週生產執行審計全屏層 */
   onOpenProductionAudit: () => void;
+  /** 導入／新建訂單綁定的排產日（yyyy-MM-dd，上海 00:00 → plannedDate） */
+  importDate: string;
+  setImportDate: (v: string) => void;
 }
 
 export default function Header({
@@ -113,6 +116,8 @@ export default function Header({
   onSyncRefresh,
   isSyncing,
   onOpenProductionAudit,
+  importDate,
+  setImportDate,
 }: HeaderProps) {
   const { user, logout } = useAuth();
   const [notifOpen, setNotifOpen] = useState(false);
@@ -635,6 +640,23 @@ export default function Header({
             >
               <Plus className="h-4 w-4 shrink-0 md:h-[18px] md:w-[18px]" strokeWidth={3} />
             </button>
+
+            <label className="flex shrink-0 flex-col justify-center">
+              <span className="sr-only">排产日期</span>
+              <input
+                type="date"
+                value={importDate}
+                onChange={(e) => setImportDate(e.target.value)}
+                className={cn(
+                  'h-9 max-w-[9.5rem] shrink-0 rounded-md border px-2 py-1 text-sm outline-none md:h-10 md:max-w-[10rem]',
+                  theme === 'dark'
+                    ? 'border-slate-700 bg-slate-800 text-slate-200'
+                    : 'border-gray-300 bg-white text-gray-900'
+                )}
+                title="导入/新建订单绑定 plannedDate（上海当日 00:00）"
+                aria-label="排产日期"
+              />
+            </label>
 
             <input
               type="file"

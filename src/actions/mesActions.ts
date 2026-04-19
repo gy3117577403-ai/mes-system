@@ -7,6 +7,7 @@ import {
   formatMsToShanghaiLocale,
   getShanghaiAuditWeekRangeEpochMsForOffset,
   nowEpochMsForMesStorage,
+  parseShanghaiWallClockToEpochMs,
   plannedDateAnchorEpochMs,
 } from '@/lib/datetimeShanghai';
 import {
@@ -225,13 +226,29 @@ export async function fetchInitialData(): Promise<FetchInitialDataResult> {
   }
 }
 
-export async function createOrderAction(data: Partial<Order> & { id: string }): Promise<{ ok: boolean; error?: string }> {
+export async function createOrderAction(
+  data: Partial<Order> & { id: string },
+  targetDate: string
+): Promise<{ ok: boolean; error?: string }> {
   const parsed = createOrderActionInputZ.safeParse(data);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues.map((i) => i.message).join('; ') };
   }
+  const d = String(targetDate ?? '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) {
+    return { ok: false, error: '缺少或无效的排产日期 targetDate（需 yyyy-MM-dd）' };
+  }
+  let plannedMsStr: string;
   try {
-    const o = normalizeOrder(parsed.data as Partial<Order> & { id: string });
+    plannedMsStr = String(parseShanghaiWallClockToEpochMs(d, '00:00:00'));
+  } catch {
+    return { ok: false, error: '排产日期无法解析为上海时区时间戳' };
+  }
+  try {
+    const o = normalizeOrder({
+      ...(parsed.data as Partial<Order> & { id: string }),
+      plannedDate: plannedMsStr,
+    });
     await prisma.order.create({
       data: frontendOrderToPrismaCreate(o),
     });
@@ -916,7 +933,6 @@ export async function fetchProductionAuditSummaryAction(weekOffset = 0): Promise
         where: {
           deletedAt: null,
           AND: [{ taskStatus: { not: 'COMPLETED' } }, { taskStatus: { not: 'completed' } }],
-          plannedDate: { not: null },
         },
         select: ORDER_AUDIT_SELECT,
         orderBy: { createdAt: 'desc' },
@@ -926,7 +942,6 @@ export async function fetchProductionAuditSummaryAction(weekOffset = 0): Promise
           deletedAt: null,
           OR: [{ taskStatus: 'COMPLETED' }, { taskStatus: 'completed' }],
           updatedAt: { gte: weekStart, lte: weekEnd },
-          plannedDate: { not: null },
         },
         select: ORDER_AUDIT_SELECT,
         orderBy: { updatedAt: 'desc' },
@@ -950,14 +965,22 @@ export async function fetchProductionAuditSummaryAction(weekOffset = 0): Promise
     const attainmentPct =
       planned30 > 0 ? Math.min(100, Math.round((burned30 / planned30) * 1000) / 10) : 0;
 
-    const inWeekPlannedAnchor = (plannedDate: string | null) => {
-      const ms = plannedDateAnchorEpochMs(plannedDate);
+    /** `plannedDate` 可解析则用錨點；否則用 `createdAt`，避免無計劃日訂單在審計週視圖中消失 */
+    const rowWeekAnchorMs = (r: { plannedDate: string | null; createdAt: number }) => {
+      const p = plannedDateAnchorEpochMs(r.plannedDate);
+      if (p != null) return p;
+      const c = Number(r.createdAt);
+      return Number.isFinite(c) ? c : null;
+    };
+
+    const inSelectedWeekByAnchor = (r: { plannedDate: string | null; createdAt: number }) => {
+      const ms = rowWeekAnchorMs(r);
       if (ms == null) return false;
       return ms >= weekStartMs && ms <= weekEndMs;
     };
 
-    const pendingRows = pendingCandidates.filter((r) => inWeekPlannedAnchor(r.plannedDate));
-    const completedRows = completedCandidates.filter((r) => inWeekPlannedAnchor(r.plannedDate));
+    const pendingRows = pendingCandidates.filter((r) => inSelectedWeekByAnchor(r));
+    const completedRows = completedCandidates.filter((r) => inSelectedWeekByAnchor(r));
 
     const weekBurnByModel = new Map<string, number>();
     for (const r of completedRows) {
