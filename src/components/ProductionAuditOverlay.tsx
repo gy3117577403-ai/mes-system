@@ -45,33 +45,40 @@ function hasAssignedDay(assignedDay: string): boolean {
   return true;
 }
 
+function schedulingStatusText(order: ProductionAuditOrderLine): string {
+  if (order.isDrawingReady === false) return '图纸未下发';
+  if (order.isMaterialReady === false) return '缺料';
+  if (hasAssignedDay(order.assignedDay)) return `排产至 ${order.assignedDay}`;
+  return '待排产';
+}
+
 function OrderStatusBadge({ order }: { order: ProductionAuditOrderLine }) {
-  if (!order.isDrawingReady) {
+  if (order.isDrawingReady === false) {
     return (
-      <span className="inline-flex max-w-[11rem] items-center gap-0.5 rounded-md border border-red-500/50 bg-red-950/80 px-2 py-0.5 text-[10px] font-black text-red-200 md:max-w-none md:text-xs">
+      <span className="inline-flex shrink-0 items-center gap-0.5 rounded-md border border-red-500/45 bg-red-950/75 px-2 py-0.5 text-xs font-bold text-red-200">
         <span aria-hidden>🔴</span>
-        <span className="truncate">图纸未下发</span>
+        <span className="max-w-[7.5rem] truncate sm:max-w-[10rem]">图纸未下发</span>
       </span>
     );
   }
-  if (!order.isMaterialReady) {
+  if (order.isMaterialReady === false) {
     return (
-      <span className="inline-flex max-w-[11rem] items-center gap-0.5 rounded-md border border-amber-500/50 bg-amber-950/70 px-2 py-0.5 text-[10px] font-black text-amber-200 md:max-w-none md:text-xs">
+      <span className="inline-flex shrink-0 items-center gap-0.5 rounded-md border border-amber-500/45 bg-amber-950/70 px-2 py-0.5 text-xs font-bold text-amber-200">
         <span aria-hidden>🟡</span>
-        <span className="truncate">缺物料</span>
+        缺料
       </span>
     );
   }
   if (hasAssignedDay(order.assignedDay)) {
     return (
-      <span className="inline-flex max-w-[11rem] items-center gap-0.5 rounded-md border border-emerald-500/45 bg-emerald-950/70 px-2 py-0.5 text-[10px] font-black text-emerald-200 md:max-w-none md:text-xs">
+      <span className="inline-flex max-w-[9rem] shrink-0 items-center gap-0.5 rounded-md border border-emerald-500/40 bg-emerald-950/65 px-2 py-0.5 text-xs font-bold text-emerald-200">
         <span aria-hidden>🟢</span>
         <span className="truncate">排产至：{order.assignedDay}</span>
       </span>
     );
   }
   return (
-    <span className="inline-flex items-center gap-0.5 rounded-md border border-slate-600/80 bg-slate-800/90 px-2 py-0.5 text-[10px] font-black text-slate-100 md:text-xs">
+    <span className="inline-flex shrink-0 items-center gap-0.5 rounded-md border border-slate-600/70 bg-slate-800/90 px-2 py-0.5 text-xs font-bold text-slate-200">
       <span aria-hidden>⚪</span>
       待排产
     </span>
@@ -295,7 +302,7 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
 function PendingModelCard({ model }: { model: ProductionAuditPendingModelRow }) {
   const hourPct = pct(model.modelWeekBurnedHours, model.modelWeekPlannedHours);
   return (
-    <li className="rounded-xl border border-slate-800/90 bg-slate-950/50 px-3 py-3 md:px-4 md:py-4">
+    <li className="rounded-xl border border-slate-800/90 bg-slate-950/50 px-3 py-3 pb-4 md:px-4 md:py-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <span className="font-mono text-sm font-bold text-cyan-300 md:text-base">{model.partNumber}</span>
         <span className="text-[10px] text-slate-500">未结 {model.pendingOrderCount} 单</span>
@@ -315,29 +322,23 @@ function PendingModelCard({ model }: { model: ProductionAuditPendingModelRow }) 
       </p>
       <ProgressBar valuePct={hourPct} />
 
-      <div className="mt-4 space-y-2 border-t border-slate-800/80 pt-3">
+      <div className="mt-3 space-y-2 rounded-lg border border-slate-800/50 bg-slate-900/40 p-3">
         <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">订单明细</p>
-        {model.orders.map((o) => (
-          <div
-            key={o.id}
-            className="relative rounded-lg border border-slate-800/80 bg-slate-900/60 px-2.5 py-2 pr-2 md:px-3 md:py-2.5"
-          >
-            <div className="absolute right-2 top-2 md:right-2.5 md:top-2.5">
+        <div className="space-y-2">
+          {model.orders.map((o) => (
+            <div
+              key={o.id}
+              className="flex items-start justify-between gap-3 rounded-md bg-slate-950/35 px-2.5 py-2 md:gap-4 md:px-3"
+            >
+              <div className="min-w-0 flex-1 space-y-0.5 text-sm leading-snug text-slate-400">
+                <p className="truncate">客户：{o.customerName || '—'}</p>
+                <p className="truncate">交期：{formatAuditDueDate(o.plannedDate, o.deliveryDate)}</p>
+                <p className="truncate text-slate-500">排产：{schedulingStatusText(o)}</p>
+              </div>
               <OrderStatusBadge order={o} />
             </div>
-            <p className="truncate pr-24 font-mono text-[10px] text-slate-500 md:pr-32 md:text-xs">{o.id}</p>
-            <p className="mt-1 truncate pr-24 text-xs text-slate-200 md:pr-32 md:text-sm">
-              <span className="font-semibold text-slate-300">{o.customerName || '—'}</span>
-              <span className="mx-1.5 text-slate-600">|</span>
-              <span className="text-slate-400">
-                交期: {formatAuditDueDate(o.plannedDate, o.deliveryDate)}
-              </span>
-            </p>
-            <p className="mt-1 text-[10px] text-slate-500 md:text-xs">
-              计划 {o.totalQty ?? o.qty} 件 · 工时 {o.totalHours} · {o.taskStatus}
-            </p>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
     </li>
   );
@@ -346,7 +347,7 @@ function PendingModelCard({ model }: { model: ProductionAuditPendingModelRow }) 
 function CompletedModelCard({ model }: { model: ProductionAuditCompletedModelRow }) {
   const qtyPct = pct(model.actualQty, model.modelWeekPlannedQty);
   return (
-    <li className="rounded-xl border border-slate-800/90 bg-slate-950/50 px-3 py-3 md:px-4 md:py-4">
+    <li className="rounded-xl border border-slate-800/90 bg-slate-950/50 px-3 py-3 pb-4 md:px-4 md:py-4">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <span className="font-mono text-sm font-bold text-emerald-300 md:text-base">{model.partNumber}</span>
         <span className="text-[10px] text-slate-500">完工 {model.completedOrderCount} 单</span>
@@ -366,29 +367,23 @@ function CompletedModelCard({ model }: { model: ProductionAuditCompletedModelRow
       </p>
       <ProgressBar valuePct={qtyPct} />
 
-      <div className="mt-4 space-y-2 border-t border-slate-800/80 pt-3">
+      <div className="mt-3 space-y-2 rounded-lg border border-slate-800/50 bg-slate-900/40 p-3">
         <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">订单明细</p>
-        {model.orders.map((o) => (
-          <div
-            key={o.id}
-            className="relative rounded-lg border border-slate-800/80 bg-slate-900/60 px-2.5 py-2 pr-2 md:px-3 md:py-2.5"
-          >
-            <div className="absolute right-2 top-2 md:right-2.5 md:top-2.5">
+        <div className="space-y-2">
+          {model.orders.map((o) => (
+            <div
+              key={o.id}
+              className="flex items-start justify-between gap-3 rounded-md bg-slate-950/35 px-2.5 py-2 md:gap-4 md:px-3"
+            >
+              <div className="min-w-0 flex-1 space-y-0.5 text-sm leading-snug text-slate-400">
+                <p className="truncate">客户：{o.customerName || '—'}</p>
+                <p className="truncate">交期：{formatAuditDueDate(o.plannedDate, o.deliveryDate)}</p>
+                <p className="truncate text-slate-500">排产：{schedulingStatusText(o)}</p>
+              </div>
               <OrderStatusBadge order={o} />
             </div>
-            <p className="truncate pr-24 font-mono text-[10px] text-slate-500 md:pr-32 md:text-xs">{o.id}</p>
-            <p className="mt-1 truncate pr-24 text-xs text-slate-200 md:pr-32 md:text-sm">
-              <span className="font-semibold text-slate-300">{o.customerName || '—'}</span>
-              <span className="mx-1.5 text-slate-600">|</span>
-              <span className="text-slate-400">
-                交期: {formatAuditDueDate(o.plannedDate, o.deliveryDate)}
-              </span>
-            </p>
-            <p className="mt-1 text-[10px] text-slate-500 md:text-xs">
-              实做 {o.reportedQty} 件 · 工时 {o.totalHours} · {o.taskStatus}
-            </p>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
     </li>
   );

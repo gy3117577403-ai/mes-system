@@ -759,6 +759,8 @@ export type ProductionAuditOrderLine = {
   deliveryDate: string;
   isDrawingReady: boolean;
   isMaterialReady: boolean;
+  /** 紅燈阻斷說明；空字串表示無 */
+  exceptionRemark: string;
   assignedDay: string;
   taskStatus: string;
   qty: number;
@@ -850,6 +852,7 @@ export async function fetchProductionAuditSummaryAction(): Promise<ProductionAud
         deliveryDate: true,
         isDrawingReady: true,
         isMaterialReady: true,
+        exceptionRemark: true,
         assignedDay: true,
         createdAt: true,
         updatedAt: true,
@@ -866,13 +869,15 @@ export async function fetchProductionAuditSummaryAction(): Promise<ProductionAud
       customerName: (r.client ?? '').trim(),
       plannedDate: r.plannedDate?.trim() ? r.plannedDate.trim() : null,
       deliveryDate: (r.deliveryDate ?? '').trim(),
-      isDrawingReady: Boolean(r.isDrawingReady),
-      isMaterialReady: Boolean(r.isMaterialReady),
+      /** 僅在庫中明確為 `false` 時為 false，避免缺欄誤判為未發圖 */
+      isDrawingReady: r.isDrawingReady === false ? false : true,
+      isMaterialReady: r.isMaterialReady === false ? false : true,
+      exceptionRemark: String(r.exceptionRemark ?? '').trim(),
       assignedDay: (r.assignedDay ?? '').trim(),
-      taskStatus: r.taskStatus,
-      qty: r.qty,
-      totalQty: r.totalQty,
-      reportedQty: r.reportedQty ?? 0,
+      taskStatus: String(r.taskStatus ?? '').trim(),
+      qty: Number(r.qty) || 0,
+      totalQty: Number(r.totalQty) || 0,
+      reportedQty: Number(r.reportedQty) || 0,
       totalHours: Number(r.totalHours) || 0,
     });
 
