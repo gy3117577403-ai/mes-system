@@ -1006,8 +1006,18 @@ export type ProductionAuditCompletedModelRow = {
 export type ProductionAuditMonthly30d = {
   plannedHours: number;
   burnedHours: number;
-  /** 0～100，burned/planned */
+  /** burned/planned，可超過 100 */
   attainmentPct: number;
+};
+
+/** 含選中週在內往過去共 4 個自然週（上海）之滾動視窗 */
+export type ProductionAuditRolling4w = {
+  windowStartMs: number;
+  windowEndMs: number;
+  /** 四週內：已完工且 `updatedAt` 落窗內之 `totalHours` 合計（小時） */
+  totalActualOutput: number;
+  /** 四週內：`plannedDate`（或 `createdAt`）錨點落窗內之排產負荷（小時，未軟刪、未歸檔） */
+  totalPlannedLoad: number;
 };
 
 export type ProductionAuditSummaryResult = {
@@ -1028,6 +1038,10 @@ export type ProductionAuditSummaryResult = {
   burnedHours: number;
   /** 全庫待辦 `totalHours` 合計（計劃負荷） */
   plannedHours: number;
+  /** 選中週：計劃錨點落在該週之訂單 `totalHours` 合計（含已完工／未完工，未軟刪、未歸檔）— 週計劃達成率分母 */
+  weekScheduledLoadHours: number;
+  /** 選中週與往前 3 週（共四週）滾動聚合 */
+  rolling4Weeks: ProductionAuditRolling4w;
   monthly30d: ProductionAuditMonthly30d;
   pendingModels: ProductionAuditPendingModelRow[];
   completedModels: ProductionAuditCompletedModelRow[];
@@ -1146,6 +1160,13 @@ export async function fetchProductionAuditSummaryAction(weekOffset = 0): Promise
     modelCount: 0,
     burnedHours: 0,
     plannedHours: 0,
+    weekScheduledLoadHours: 0,
+    rolling4Weeks: {
+      windowStartMs: 0,
+      windowEndMs: 0,
+      totalActualOutput: 0,
+      totalPlannedLoad: 0,
+    },
     monthly30d: { plannedHours: 0, burnedHours: 0, attainmentPct: 0 },
     pendingModels: [],
     completedModels: [],
@@ -1154,13 +1175,19 @@ export async function fetchProductionAuditSummaryAction(weekOffset = 0): Promise
   try {
     const off = Math.min(8, Math.max(0, Math.floor(Number(weekOffset)) || 0));
     const { weekStartMs, weekEndMs } = getShanghaiAuditWeekRangeEpochMsForOffset(off);
+    /** 滾動四週：最舊週一（off+3，上限 8）～選中週週日 */
+    const oldestWeek = getShanghaiAuditWeekRangeEpochMsForOffset(Math.min(off + 3, 8));
+    const rollStartMs = oldestWeek.weekStartMs;
+    const rollEndMs = weekEndMs;
     const weekStart = new Date(weekStartMs);
     const weekEnd = new Date(weekEndMs);
     const monthStartMs = Date.now() - 30 * 86_400_000;
     const monthStart = new Date(monthStartMs);
     const now = new Date();
+    const rollStart = new Date(rollStartMs);
+    const rollEnd = new Date(rollEndMs);
 
-    const [pendingCandidates, completedCandidates, monthPlannedAgg, monthBurnedAgg] = await Promise.all([
+    const [pendingCandidates, completedCandidates, monthPlannedAgg, monthBurnedAgg, planCandidates, rollingActualAgg] = await Promise.all([
       prisma.order.findMany({
         where: {
           deletedAt: null,
@@ -1196,12 +1223,24 @@ export async function fetchProductionAuditSummaryAction(weekOffset = 0): Promise
         },
         _sum: { totalHours: true },
       }),
+      prisma.order.findMany({
+        where: { deletedAt: null, isArchived: false },
+        select: { plannedDate: true, createdAt: true, totalHours: true },
+      }),
+      prisma.order.aggregate({
+        where: {
+          deletedAt: null,
+          OR: [{ taskStatus: 'COMPLETED' }, { taskStatus: 'completed' }],
+          updatedAt: { gte: rollStart, lte: rollEnd },
+        },
+        _sum: { totalHours: true },
+      }),
     ]);
 
     const planned30 = Number(monthPlannedAgg._sum.totalHours) || 0;
     const burned30 = Number(monthBurnedAgg._sum.totalHours) || 0;
     const attainmentPct =
-      planned30 > 0 ? Math.min(100, Math.round((burned30 / planned30) * 1000) / 10) : 0;
+      planned30 > 0 ? Math.round((burned30 / planned30) * 1000) / 10 : 0;
 
     /** `plannedDate` 可解析则用錨點；否則用 `createdAt`，避免無計劃日訂單在審計週視圖中消失 */
     const rowWeekAnchorMs = (r: { plannedDate: string | null; createdAt: number }) => {
@@ -1216,6 +1255,21 @@ export async function fetchProductionAuditSummaryAction(weekOffset = 0): Promise
       if (ms == null) return false;
       return ms >= weekStartMs && ms <= weekEndMs;
     };
+
+    const sumPlannedLoadHours = (rows: typeof planCandidates, startMs: number, endMs: number) => {
+      let s = 0;
+      for (const r of rows) {
+        const ms = rowWeekAnchorMs(r);
+        if (ms == null || ms < startMs || ms > endMs) continue;
+        s += Number(r.totalHours) || 0;
+      }
+      return Math.round(s * 1000) / 1000;
+    };
+
+    const weekScheduledLoadHours = sumPlannedLoadHours(planCandidates, weekStartMs, weekEndMs);
+    const totalPlannedLoad = sumPlannedLoadHours(planCandidates, rollStartMs, rollEndMs);
+    const totalActualOutput =
+      Math.round((Number(rollingActualAgg._sum.totalHours) || 0) * 1000) / 1000;
 
     const pendingRows = pendingCandidates.filter((r) => inSelectedWeekByAnchor(r));
     /** 已完工：僅以庫存 `updatedAt`（完工時間）落在選定週為準，不依賴 plannedDate，避免跨週完工漏計 */
@@ -1359,6 +1413,13 @@ export async function fetchProductionAuditSummaryAction(weekOffset = 0): Promise
       modelCount: modelKeys.size,
       burnedHours,
       plannedHours,
+      weekScheduledLoadHours,
+      rolling4Weeks: {
+        windowStartMs: rollStartMs,
+        windowEndMs: rollEndMs,
+        totalActualOutput,
+        totalPlannedLoad,
+      },
       monthly30d: {
         plannedHours: Math.round(planned30 * 1000) / 1000,
         burnedHours: Math.round(burned30 * 1000) / 1000,
