@@ -1026,19 +1026,21 @@ function toAuditOrderLine(r: {
   taskStatus: string;
   plannedDate: string | null;
   deliveryDate: string;
-  isDrawingReady: boolean;
-  isMaterialReady: boolean;
+  isDrawingReady: boolean | null;
+  isMaterialReady: boolean | null;
   exceptionRemark: string | null;
   assignedDay: string;
 }): ProductionAuditOrderLine {
+  const dr = r.isDrawingReady;
+  const mr = r.isMaterialReady;
   return {
     id: r.id,
     customerName: (r.client ?? '').trim(),
     plannedDate: r.plannedDate?.trim() ? r.plannedDate.trim() : null,
     deliveryDate: (r.deliveryDate ?? '').trim(),
-    /** 與庫存布林嚴格對齊：僅 `true` 視為已就緒，避免把 null/undefined 誤當已齊 */
-    isDrawingReady: r.isDrawingReady === true,
-    isMaterialReady: r.isMaterialReady === true,
+    /** 僅庫存顯式 `true` 為已就緒；`null`／`false` 一律視為未就緒 */
+    isDrawingReady: dr === true,
+    isMaterialReady: mr === true,
     exceptionRemark: String(r.exceptionRemark ?? '').trim(),
     assignedDay: (r.assignedDay ?? '').trim(),
     taskStatus: String(r.taskStatus ?? '').trim(),
