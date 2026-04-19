@@ -25,6 +25,8 @@ import {
   Monitor,
   BarChart3,
 } from 'lucide-react';
+import { toast } from 'react-hot-toast';
+import { nukeDatabaseAction } from '@/actions/mesActions';
 import { Order, ViewMode, MainAppView, ActivityLogEntry, AndonNotification } from '@/types';
 import { useAuth } from '@/context/AuthContext';
 import { ROLE_LABELS, ROLE_SHORT } from '@/types/auth';
@@ -135,6 +137,17 @@ export default function Header({
       if (!isNaN(num) && num > 0) {
         setDailyCapacity(num);
       }
+    }
+  };
+
+  const handleNukeDatabase = async () => {
+    if (!window.confirm('警告：这将彻底清空数据库，确定执行吗？')) return;
+    const res = await nukeDatabaseAction();
+    if (res.ok) {
+      toast.success('数据库已清空');
+      void onSyncRefresh();
+    } else {
+      toast.error(res.error ?? '清空失败');
     }
   };
 
@@ -755,6 +768,16 @@ export default function Header({
                 上传
               </button>
             </div>
+
+            <button
+              type="button"
+              onClick={() => void handleNukeDatabase()}
+              className="flex shrink-0 items-center justify-center rounded-lg border border-red-700 bg-red-900/80 px-2 py-1.5 text-[10px] font-black text-red-100 shadow-sm transition-colors hover:bg-red-600 md:rounded-xl md:px-2.5 md:py-2 md:text-xs"
+              title="删档重来（清空 Order 表）"
+              aria-label="删档重来"
+            >
+              ☢️ 删档重来
+            </button>
 
             <button
               type="button"

@@ -1,5 +1,6 @@
 'use server';
 
+import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/prisma';
 import { normalizeOrder } from '@/lib/mesOrder';
 import { prismaOrderToFrontend, frontendOrderToPrismaCreate } from '@/lib/mesDbMappers';
@@ -759,6 +760,18 @@ export async function softDeleteOrdersAction(mode: 'completed' | 'all'): Promise
     return { ok: true };
   } catch (e) {
     console.error('[softDeleteOrdersAction]', e);
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+/** 上線前刪檔測試：無條件清空 `Order` 表（臨時核按鈕） */
+export async function nukeDatabaseAction(): Promise<{ ok: boolean; error?: string }> {
+  try {
+    await prisma.order.deleteMany({});
+    revalidatePath('/');
+    return { ok: true };
+  } catch (e) {
+    console.error('[nukeDatabaseAction]', e);
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 }
