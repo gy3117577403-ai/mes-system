@@ -24,8 +24,8 @@ import {
   RefreshCw,
   Monitor,
   BarChart3,
+  Skull,
 } from 'lucide-react';
-import { toast } from 'react-hot-toast';
 import { nukeDatabaseAction } from '@/actions/mesActions';
 import { Order, ViewMode, MainAppView, ActivityLogEntry, AndonNotification } from '@/types';
 import { useAuth } from '@/context/AuthContext';
@@ -141,13 +141,20 @@ export default function Header({
   };
 
   const handleNukeDatabase = async () => {
-    if (!window.confirm('警告：这将彻底清空数据库，确定执行吗？')) return;
-    const res = await nukeDatabaseAction();
-    if (res.ok) {
-      toast.success('数据库已清空');
-      void onSyncRefresh();
+    const password = window.prompt(
+      '⚠️ 警告：这是物理毁灭级操作！\n请输入最高权限密码以清空所有数据：'
+    );
+    if (password === null) return;
+    if (password === '123') {
+      const res = await nukeDatabaseAction();
+      if (res.ok) {
+        alert('💥 轰！数据库已彻底清空。');
+        void onSyncRefresh();
+      } else {
+        alert(res.error ?? '清空失败');
+      }
     } else {
-      toast.error(res.error ?? '清空失败');
+      alert('❌ 密码错误，清空操作已中止。');
     }
   };
 
@@ -772,11 +779,11 @@ export default function Header({
             <button
               type="button"
               onClick={() => void handleNukeDatabase()}
-              className="flex shrink-0 items-center justify-center rounded-lg border border-red-700 bg-red-900/80 px-2 py-1.5 text-[10px] font-black text-red-100 shadow-sm transition-colors hover:bg-red-600 md:rounded-xl md:px-2.5 md:py-2 md:text-xs"
-              title="删档重来（清空 Order 表）"
-              aria-label="删档重来"
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-red-700 bg-red-900/80 text-red-100 transition-colors hover:bg-red-600 md:h-10 md:w-10"
+              title="一键清空数据库"
+              aria-label="一键清空数据库"
             >
-              ☢️ 删档重来
+              <Skull className="h-4 w-4 shrink-0 md:h-[18px] md:w-[18px]" strokeWidth={2.25} aria-hidden />
             </button>
 
             <button
