@@ -77,9 +77,9 @@ interface HeaderProps {
   isSyncing: boolean;
   /** 打開本週生產執行審計全屏層 */
   onOpenProductionAudit: () => void;
-  /** 導入／新建訂單綁定的排產日（yyyy-MM-dd，上海 00:00 → plannedDate） */
-  importDate: string;
-  setImportDate: (v: string) => void;
+  /** 批次導入／新建：相對週位移（-1…2）→ 週一 yyyy-MM-dd */
+  weekOffset: number;
+  setWeekOffset: (v: number) => void;
 }
 
 export default function Header({
@@ -116,8 +116,8 @@ export default function Header({
   onSyncRefresh,
   isSyncing,
   onOpenProductionAudit,
-  importDate,
-  setImportDate,
+  weekOffset,
+  setWeekOffset,
 }: HeaderProps) {
   const { user, logout } = useAuth();
   const [notifOpen, setNotifOpen] = useState(false);
@@ -642,20 +642,32 @@ export default function Header({
             </button>
 
             <label className="flex shrink-0 flex-col justify-center">
-              <span className="sr-only">排产日期</span>
-              <input
-                type="date"
-                value={importDate}
-                onChange={(e) => setImportDate(e.target.value)}
+              <span className="sr-only">排产周</span>
+              <select
+                value={weekOffset}
+                onChange={(e) => setWeekOffset(Number(e.target.value))}
                 className={cn(
-                  'h-9 max-w-[9.5rem] shrink-0 rounded-md border px-2 py-1 text-sm outline-none md:h-10 md:max-w-[10rem]',
+                  'h-9 max-w-[10.5rem] shrink-0 cursor-pointer truncate rounded-md border px-1.5 py-1 text-[11px] font-bold outline-none sm:max-w-[12rem] md:h-10 md:max-w-[13rem] md:px-2 md:text-xs',
                   theme === 'dark'
                     ? 'border-slate-700 bg-slate-800 text-slate-200'
                     : 'border-gray-300 bg-white text-gray-900'
                 )}
-                title="导入/新建订单绑定 plannedDate（上海当日 00:00）"
-                aria-label="排产日期"
-              />
+                title="导入/新建订单绑定至所选周的周一（上海时区）"
+                aria-label="智能相对周排产"
+              >
+                <option value={0} className={theme === 'dark' ? 'bg-slate-900' : ''}>
+                  本周排产计划
+                </option>
+                <option value={1} className={theme === 'dark' ? 'bg-slate-900' : ''}>
+                  下周排产计划
+                </option>
+                <option value={2} className={theme === 'dark' ? 'bg-slate-900' : ''}>
+                  下下周计划
+                </option>
+                <option value={-1} className={theme === 'dark' ? 'bg-slate-900' : ''}>
+                  上周补录
+                </option>
+              </select>
             </label>
 
             <input

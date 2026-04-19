@@ -1,4 +1,4 @@
-import { endOfWeek, parse, startOfWeek, subWeeks } from 'date-fns';
+import { addWeeks, endOfWeek, parse, startOfWeek, subWeeks } from 'date-fns';
 import { formatInTimeZone, fromZonedTime, toZonedTime } from 'date-fns-tz';
 
 /**
@@ -108,6 +108,18 @@ export function getShanghaiAuditWeekRangeEpochMsForOffset(weekOffset = 0, now = 
   const n = Math.min(8, Math.max(0, Math.floor(Number(weekOffset)) || 0));
   const anchor = n === 0 ? now : subWeeks(now, n);
   return getShanghaiAuditWeekRangeEpochMs(anchor);
+}
+
+/**
+ * 批次導入／新建：相對上海曆的週位移（-1 上週 · 0 本週 · 1 下週 · 2 下下週）→ 該週週一 `yyyy-MM-dd`（供 `createOrderAction` 第二參數）。
+ */
+export function getShanghaiBatchImportMondayYmd(weekOffset: number, now = new Date()): string {
+  const n = [-1, 0, 1, 2].includes(Number(weekOffset)) ? Number(weekOffset) : 0;
+  const z = toZonedTime(now, MES_TIMEZONE);
+  const shifted = addWeeks(z, n);
+  const mondayZoned = startOfWeek(shifted, { weekStartsOn: 1 });
+  const mondayUtc = fromZonedTime(mondayZoned, MES_TIMEZONE);
+  return formatInTimeZone(mondayUtc, MES_TIMEZONE, 'yyyy-MM-dd');
 }
 
 /**
