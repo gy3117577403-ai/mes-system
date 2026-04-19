@@ -1,12 +1,11 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ChevronDown, Search, X } from 'lucide-react';
 import {
   fetchProductionAuditSummaryAction,
   type ProductionAuditCompletedModelRow,
-  type ProductionAuditMonthly30d,
   type ProductionAuditOrderLine,
   type ProductionAuditPendingModelRow,
   type ProductionAuditRolling4w,
@@ -21,12 +20,14 @@ interface ProductionAuditOverlayProps {
 }
 
 const STANDARD_CAPACITY_MINUTES = 11880;
+/** 與微調（分鐘）合併為「可用產能（工時）」時使用：基準週產能 = 11880 min → 工時 */
+const BASE_WEEK_CAPACITY_HOURS = STANDARD_CAPACITY_MINUTES / 60;
 const ADJUSTMENT_LS_KEY = 'mes-audit-capacity-adjustment';
 
-/** 庫存工時欄位（小時語義）→ 分鐘（展示與比率用） */
-function workloadToMinutes(v: number): number {
-  const n = Number(v) || 0;
-  return Math.round(n * 60 * 1000) / 1000;
+/** 庫存工時欄位原樣數值（與後端 totalHours 一致，不再做 *60 等換算） */
+function workloadValue(v: number): number {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.round(n * 1000) / 1000 : 0;
 }
 
 function safeRatePercent(actual: number, denominator: number): number {
@@ -176,48 +177,89 @@ const WEEK_SELECT_OPTIONS = [0, 1, 2, 3, 4, 5, 6, 7, 8].map((i) => ({
   label: i === 0 ? '本周' : i === 1 ? '上周' : `${i}周前`,
 }));
 
-function EfficiencyConsolePanel({
-  data,
+/** SVG 环形进度：<100% 蓝色，≥100% 翠绿色 */
+function SvgAuditRing({
+  percent,
+  title,
+  subtitle,
+}: {
+  percent: number;
+  title: string;
+  subtitle?: string;
+}) {
+  const r = 52;
+  const c = 2 * Math.PI * r;
+  const p = Number.isFinite(percent) ? percent : 0;
+  const arcPct = Math.min(Math.max(p, 0), 100);
+  const offset = c - (arcPct / 100) * c;
+  const strokeProgress = p >= 100 ? 'stroke-emerald-400' : 'stroke-sky-500';
+
+  return (
+    <div className="flex flex-col items-center justify-center gap-2 text-center">
+      <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">{title}</p>
+      <div className="relative aspect-square w-full max-w-[10rem]">
+        <svg viewBox="0 0 120 120" className="size-full" aria-hidden>
+          <circle cx="60" cy="60" r={r} fill="none" strokeWidth="10" className="stroke-slate-800" />
+          <g transform="rotate(-90 60 60)">
+            <circle
+              cx="60"
+              cy="60"
+              r={r}
+              fill="none"
+              strokeWidth="10"
+              strokeLinecap="round"
+              className={strokeProgress}
+              strokeDasharray={c}
+              strokeDashoffset={offset}
+            />
+          </g>
+        </svg>
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <span className="text-2xl font-bold tabular-nums tracking-tight text-slate-50 md:text-3xl">
+            {formatPctOne(p)}%
+          </span>
+        </div>
+      </div>
+      {subtitle ? <p className="max-w-[14rem] text-[11px] leading-snug text-slate-500">{subtitle}</p> : null}
+    </div>
+  );
+}
+
+function MegaEfficiencyPanel({
   adjustmentMinutes,
   setAdjustmentMinutes,
-  availableCapacityMinutes,
-  weekActualMin,
-  weekPlannedMin,
+  availableCapacityHours,
+  weekActual,
+  weekPlanned,
   planRate,
   utilizationRate,
   rolling,
   rollingPlanRate,
-  rollingUtilRate,
-  monthly,
   monthlyRate,
 }: {
-  data: ProductionAuditSummaryResult;
   adjustmentMinutes: number;
   setAdjustmentMinutes: (n: number) => void;
-  availableCapacityMinutes: number;
-  weekActualMin: number;
-  weekPlannedMin: number;
+  availableCapacityHours: number;
+  weekActual: number;
+  weekPlanned: number;
   planRate: number;
   utilizationRate: number;
   rolling: ProductionAuditRolling4w;
   rollingPlanRate: number;
-  rollingUtilRate: number;
-  monthly: ProductionAuditMonthly30d;
   monthlyRate: number;
 }) {
   const rollFrom = formatMsToShanghaiLocale(rolling.windowStartMs).slice(0, 10);
   const rollTo = formatMsToShanghaiLocale(rolling.windowEndMs).slice(0, 10);
-  const plannedMin30 = workloadToMinutes(monthly.plannedHours);
-  const burnedMin30 = workloadToMinutes(monthly.burnedHours);
-  const rollActualMin = workloadToMinutes(rolling.totalActualOutput);
-  const rollPlannedMin = workloadToMinutes(rolling.totalPlannedLoad);
-  const pendingPlanMin = workloadToMinutes(data.plannedHours);
+  const ra = workloadValue(rolling.totalActualOutput);
+  const rp = workloadValue(rolling.totalPlannedLoad);
 
   return (
-    <div className="w-[min(100vw-2rem,22rem)] space-y-4 rounded-xl border border-white/15 bg-slate-900/98 p-4 text-sm text-slate-200 shadow-2xl backdrop-blur-xl">
-      <div>
-        <p className="text-[11px] font-semibold text-slate-400">产能微调（分钟）</p>
-        <p className="mt-0.5 text-[10px] text-slate-500">基准 {STANDARD_CAPACITY_MINUTES} min / 周</p>
+    <div className="grid grid-cols-1 gap-6 border-b border-slate-800 bg-slate-900/50 p-6 md:grid-cols-2 lg:grid-cols-4">
+      <div className="flex flex-col justify-center gap-3">
+        <div>
+          <p className="text-sm font-semibold text-slate-300">产能微调</p>
+          <p className="mt-1 text-xs text-slate-500">基准周产能 {STANDARD_CAPACITY_MINUTES} 分钟（折合 {BASE_WEEK_CAPACITY_HOURS} 工时基数）</p>
+        </div>
         <input
           type="number"
           inputMode="numeric"
@@ -231,46 +273,28 @@ function EfficiencyConsolePanel({
             const n = Number(v);
             setAdjustmentMinutes(Number.isFinite(n) ? Math.trunc(n) : 0);
           }}
-          className="mt-2 w-full rounded-lg border border-white/15 bg-white/5 px-2 py-1.5 text-sm tabular-nums outline-none focus:border-cyan-500/40"
+          className="w-full rounded-xl border border-white/15 bg-white/5 px-4 py-4 text-2xl font-semibold tabular-nums text-slate-100 outline-none focus:border-cyan-500/40 md:text-3xl"
         />
+        <p className="text-xs text-slate-500">正负微调（分钟）与基数合并后，本周可用产能约 {availableCapacityHours.toFixed(1)} 工时</p>
       </div>
 
-      <div className="border-t border-white/10 pt-3">
-        <p className="text-[11px] font-semibold text-slate-400">产能利用率（本周）</p>
-        <p className="mt-1 text-xs tabular-nums text-slate-300">
-          实做 {Math.round(weekActualMin)} min / 可用 {Math.round(availableCapacityMinutes)} min →{' '}
-          <span className="font-medium text-sky-300">{formatPctOne(utilizationRate)}%</span>
-        </p>
-      </div>
+      <SvgAuditRing
+        percent={planRate}
+        title="周计划达成率"
+        subtitle={`实做工时 ${weekActual.toFixed(1)} / 计划 ${weekPlanned.toFixed(1)}`}
+      />
 
-      <div className="border-t border-white/10 pt-3">
-        <p className="text-[11px] font-semibold text-slate-400">周计划达成率（验算）</p>
-        <p className="mt-1 text-xs tabular-nums text-slate-300">
-          实做 {Math.round(weekActualMin)} min / 计划 {Math.round(weekPlannedMin)} min →{' '}
-          <span className="font-medium text-emerald-300">{formatPctOne(planRate)}%</span>
-        </p>
-      </div>
+      <SvgAuditRing
+        percent={utilizationRate}
+        title="周产能利用率"
+        subtitle={`实做 ${weekActual.toFixed(1)} / 可用 ${availableCapacityHours.toFixed(1)} 工时`}
+      />
 
-      <div className="border-t border-white/10 pt-3">
-        <p className="text-[11px] font-semibold text-amber-200/90">四周滚动汇总</p>
-        <p className="mt-1 text-[10px] text-slate-500">
-          {rollFrom} ～ {rollTo}（上海）
-        </p>
-        <p className="mt-2 text-xs tabular-nums">
-          达成率 {formatPctOne(rollingPlanRate)}%（{Math.round(rollActualMin)} / {Math.round(rollPlannedMin)} min）
-        </p>
-        <p className="mt-1 text-xs tabular-nums">
-          产能利用率 {formatPctOne(rollingUtilRate)}%（四周可用 {Math.round(availableCapacityMinutes * 4)} min）
-        </p>
-      </div>
-
-      <div className="border-t border-white/10 pt-3">
-        <p className="text-[11px] font-semibold text-slate-400">近 30 天月度达成率</p>
-        <p className="mt-1 text-xs tabular-nums text-slate-300">
-          {formatPctOne(monthlyRate)}%（计划 {Math.round(plannedMin30)} min / 完工 {Math.round(burnedMin30)} min）
-        </p>
-        <p className="mt-1 text-[10px] text-slate-500">待办口径（全库）约 {Math.round(pendingPlanMin)} min</p>
-      </div>
+      <SvgAuditRing
+        percent={rollingPlanRate}
+        title="滚动四周达成率"
+        subtitle={`${rollFrom}～${rollTo} 上海 · 实做 ${ra.toFixed(1)} / 排产 ${rp.toFixed(1)} · 30d 月度 ${formatPctOne(monthlyRate)}%`}
+      />
     </div>
   );
 }
@@ -282,8 +306,7 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
   const [weekOffset, setWeekOffset] = useState(0);
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [adjustmentMinutes, setAdjustmentMinutes] = useState(0);
-  const [consoleOpen, setConsoleOpen] = useState(false);
-  const consoleWrapRef = useRef<HTMLDivElement>(null);
+  const [isConsoleOpen, setIsConsoleOpen] = useState(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -306,17 +329,6 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
     }
   }, [adjustmentMinutes]);
 
-  useEffect(() => {
-    if (!consoleOpen) return;
-    const fn = (e: MouseEvent) => {
-      if (consoleWrapRef.current && !consoleWrapRef.current.contains(e.target as Node)) {
-        setConsoleOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', fn);
-    return () => document.removeEventListener('mousedown', fn);
-  }, [consoleOpen]);
-
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -337,7 +349,7 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
       setSearchTerm('');
       setWeekOffset(0);
       setExpandedKey(null);
-      setConsoleOpen(false);
+      setIsConsoleOpen(false);
     }
   }, [isOpen]);
 
@@ -358,46 +370,41 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
     return data.completedModels.filter((m) => matchesSearch(q, m.partNumber, m.orders));
   }, [data, searchTerm]);
 
-  const availableCapacityMinutes = STANDARD_CAPACITY_MINUTES + adjustmentMinutes;
+  const availableCapacityHours = BASE_WEEK_CAPACITY_HOURS + adjustmentMinutes / 60;
 
   const metrics = useMemo(() => {
     if (!data?.ok) {
       return {
-        weekActualMin: 0,
-        weekPlannedMin: 0,
+        weekActual: 0,
+        weekPlanned: 0,
         planRate: 0,
         utilizationRate: 0,
         rollingPlanRate: 0,
-        rollingUtilRate: 0,
         monthlyRate: 0,
       };
     }
-    const weekActualMin = workloadToMinutes(data.burnedHours);
-    const weekPlannedMin = workloadToMinutes(data.weekScheduledLoadHours);
-    const planRate = safeRatePercent(weekActualMin, weekPlannedMin);
-    const utilizationRate = safeRatePercent(weekActualMin, availableCapacityMinutes);
+    const weekActual = workloadValue(data.burnedHours);
+    const weekPlanned = workloadValue(data.weekScheduledLoadHours);
+    const planRate = safeRatePercent(weekActual, weekPlanned);
+    const utilizationRate = safeRatePercent(weekActual, availableCapacityHours);
 
     const r = data.rolling4Weeks;
-    const rollActualMin = workloadToMinutes(r.totalActualOutput);
-    const rollPlannedMin = workloadToMinutes(r.totalPlannedLoad);
-    const rollingPlanRate = safeRatePercent(rollActualMin, rollPlannedMin);
-    const rollingUtilRate = safeRatePercent(rollActualMin, availableCapacityMinutes * 4);
+    const rollActual = workloadValue(r.totalActualOutput);
+    const rollPlanned = workloadValue(r.totalPlannedLoad);
+    const rollingPlanRate = safeRatePercent(rollActual, rollPlanned);
 
     const m = data.monthly30d;
-    const plannedMin30 = workloadToMinutes(m.plannedHours);
-    const burnedMin30 = workloadToMinutes(m.burnedHours);
-    const monthlyRate = safeRatePercent(burnedMin30, plannedMin30);
+    const monthlyRate = safeRatePercent(workloadValue(m.burnedHours), workloadValue(m.plannedHours));
 
     return {
-      weekActualMin,
-      weekPlannedMin,
+      weekActual,
+      weekPlanned,
       planRate,
       utilizationRate,
       rollingPlanRate,
-      rollingUtilRate,
       monthlyRate,
     };
-  }, [data, availableCapacityMinutes]);
+  }, [data, availableCapacityHours]);
 
   if (!isOpen) return null;
 
@@ -473,48 +480,52 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
                 型号 <span className="font-medium text-cyan-300">{data.modelCount}</span>
               </span>
               <span className="shrink-0 tabular-nums text-slate-300">
-                当周完工 <span className="font-medium text-emerald-300">{Math.round(metrics.weekActualMin)}</span> min
+                当周完工 <span className="font-medium text-emerald-300">{metrics.weekActual.toFixed(1)}</span> 工时
               </span>
               <span className="shrink-0 tabular-nums text-slate-300">
-                待办计划 <span className="font-medium text-teal-300">{Math.round(workloadToMinutes(data.plannedHours))}</span>{' '}
-                min
+                待办计划 <span className="font-medium text-teal-300">{workloadValue(data.plannedHours).toFixed(1)}</span>{' '}
+                工时
               </span>
 
-              <div className="relative ml-auto shrink-0" ref={consoleWrapRef}>
-                <button
-                  type="button"
-                  onClick={() => setConsoleOpen((o) => !o)}
-                  className={cn(
-                    'flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-bold transition-colors sm:text-xs',
-                    consoleOpen
-                      ? 'border-cyan-400/50 bg-cyan-500/20 text-cyan-100'
-                      : 'border-white/15 bg-white/5 text-slate-200 hover:bg-white/10'
-                  )}
-                  aria-expanded={consoleOpen}
-                >
-                  ⚙️ 效能控制台
-                </button>
-                {consoleOpen && (
-                  <div className="absolute right-0 top-full z-50 mt-1 max-h-[min(70vh,32rem)] overflow-y-auto">
-                    <EfficiencyConsolePanel
-                      data={data}
-                      adjustmentMinutes={adjustmentMinutes}
-                      setAdjustmentMinutes={setAdjustmentMinutes}
-                      availableCapacityMinutes={availableCapacityMinutes}
-                      weekActualMin={metrics.weekActualMin}
-                      weekPlannedMin={metrics.weekPlannedMin}
-                      planRate={metrics.planRate}
-                      utilizationRate={metrics.utilizationRate}
-                      rolling={data.rolling4Weeks}
-                      rollingPlanRate={metrics.rollingPlanRate}
-                      rollingUtilRate={metrics.rollingUtilRate}
-                      monthly={data.monthly30d}
-                      monthlyRate={metrics.monthlyRate}
-                    />
-                  </div>
+              <button
+                type="button"
+                onClick={() => setIsConsoleOpen((o) => !o)}
+                className={cn(
+                  'ml-auto flex shrink-0 items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-bold transition-colors sm:text-xs',
+                  isConsoleOpen
+                    ? 'border-cyan-400/50 bg-cyan-500/20 text-cyan-100'
+                    : 'border-white/15 bg-white/5 text-slate-200 hover:bg-white/10'
                 )}
-              </div>
+                aria-expanded={isConsoleOpen}
+              >
+                ⚙️ 效能控制台
+              </button>
             </div>
+
+            <AnimatePresence initial={false}>
+              {isConsoleOpen && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.28, ease: [0.4, 0, 0.2, 1] }}
+                  className="overflow-hidden"
+                >
+                  <MegaEfficiencyPanel
+                    adjustmentMinutes={adjustmentMinutes}
+                    setAdjustmentMinutes={setAdjustmentMinutes}
+                    availableCapacityHours={availableCapacityHours}
+                    weekActual={metrics.weekActual}
+                    weekPlanned={metrics.weekPlanned}
+                    planRate={metrics.planRate}
+                    utilizationRate={metrics.utilizationRate}
+                    rolling={data.rolling4Weeks}
+                    rollingPlanRate={metrics.rollingPlanRate}
+                    monthlyRate={metrics.monthlyRate}
+                  />
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             <div className="flex shrink-0 flex-col gap-3 sm:flex-row sm:items-stretch sm:gap-4">
               <label className="relative min-w-0 flex-1">
@@ -618,7 +629,7 @@ function CollapsiblePendingRow({
 }) {
   const orderLines = useMemo(() => dedupeAuditOrderLinesForDisplay(model.orders), [model.orders]);
   const linePct = pct(model.modelWeekBurnedHours, model.modelWeekPlannedHours);
-  const estMin = Math.round(workloadToMinutes(model.estimatedHours));
+  const estW = workloadValue(model.estimatedHours);
 
   return (
     <li className="shrink-0 overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.04] backdrop-blur-sm">
@@ -634,7 +645,7 @@ function CollapsiblePendingRow({
         <span className="hidden min-w-0 flex-[1.2] text-center text-xs leading-relaxed text-slate-400 sm:block md:text-sm">
           欠产 <span className="tabular-nums text-slate-200">{model.shortfallQty}</span>
           <span className="mx-2 text-slate-600">·</span>
-          分钟 <span className="tabular-nums text-slate-200">{estMin}</span>
+          工时 <span className="tabular-nums text-slate-200">{estW.toFixed(1)}</span>
           <span className="mx-2 text-slate-600">·</span>
           <span className="tabular-nums text-slate-400">{linePct}%</span>
         </span>
@@ -691,7 +702,7 @@ function CollapsibleCompletedRow({
 }) {
   const orderLines = useMemo(() => dedupeAuditOrderLinesForDisplay(model.orders), [model.orders]);
   const qtyPct = pct(model.actualQty, model.modelWeekPlannedQty);
-  const burnedMin = Math.round(workloadToMinutes(model.burnedHours));
+  const burnedW = workloadValue(model.burnedHours);
 
   return (
     <li className="shrink-0 overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.04] backdrop-blur-sm">
@@ -707,7 +718,7 @@ function CollapsibleCompletedRow({
         <span className="hidden min-w-0 flex-[1.2] text-center text-xs leading-relaxed text-slate-400 sm:block md:text-sm">
           实做 <span className="tabular-nums text-slate-200">{model.actualQty}</span>
           <span className="mx-2 text-slate-600">·</span>
-          分钟 <span className="tabular-nums text-slate-200">{burnedMin}</span>
+          工时 <span className="tabular-nums text-slate-200">{burnedW.toFixed(1)}</span>
           <span className="mx-2 text-slate-600">·</span>
           <span className="tabular-nums text-slate-400">{qtyPct}%</span>
         </span>
