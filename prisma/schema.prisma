@@ -52,7 +52,7 @@ model Order {
   /// AI 或計劃員排定後的具體星期／日期描述（建議 Asia/Shanghai 語意）
   plannedDate     String?
   /// 清屏／週期歸檔：true 表示已從主看板隱藏，審計仍可查（與 deletedAt 軟刪並存）
-  isArchived    Boolean  @default(false)
+  isArchived  Boolean  @default(false)
   /// 軟刪除時間戳（毫秒）；Float → DOUBLE PRECISION
   deletedAt     Float?
   updatedAt     DateTime @updatedAt
