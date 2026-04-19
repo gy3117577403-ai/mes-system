@@ -55,41 +55,16 @@ async function mergeCompletionReportedQty(
   return { ...patch, reportedQty: tq };
 }
 
-type MesInteractiveTx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
+/** 與審計一致：`plannedDate` 錨點優先，否則 `createdAt` */
+function importOrderWeekAnchorMs(r: { plannedDate: string | null; createdAt: number }): number | null {
+  const p = plannedDateAnchorEpochMs(r.plannedDate);
+  if (p != null) return p;
+  const c = Number(r.createdAt);
+  return Number.isFinite(c) ? c : null;
+}
 
-/**
- * 批次導入前：刪除庫內同【客戶+型號+計劃週錨點】且未軟刪之舊單，避免三胞胎累積（硬刪）。
- */
-async function deleteOrdersMatchingImportPairsForWeek(
-  tx: MesInteractiveTx,
-  pairs: { client: string; model: string }[],
-  weekStartMs: number,
-  weekEndMs: number
-): Promise<number> {
-  if (pairs.length === 0) return 0;
-  const CHUNK = 40;
-  let deleted = 0;
-  for (let i = 0; i < pairs.length; i += CHUNK) {
-    const chunk = pairs.slice(i, i + CHUNK);
-    const hits = await tx.order.findMany({
-      where: {
-        deletedAt: null,
-        OR: chunk.map((p) => ({ client: p.client, model: p.model })),
-      },
-      select: { id: true, plannedDate: true },
-    });
-    const ids = hits
-      .filter((h) => {
-        const a = plannedDateAnchorEpochMs(h.plannedDate);
-        return a != null && a >= weekStartMs && a <= weekEndMs;
-      })
-      .map((h) => h.id);
-    if (ids.length > 0) {
-      const r = await tx.order.deleteMany({ where: { id: { in: ids } } });
-      deleted += r.count;
-    }
-  }
-  return deleted;
+function importPairKey(client: string, model: string): string {
+  return `${client.trim()}\0${model.trim()}`;
 }
 
 async function ensureAppSettings() {
@@ -324,7 +299,8 @@ export async function createOrderAction(
 
 /**
  * 按週覆蓋式批次導入：`targetWeekStart` 為該週上海週一 00:00:00 的 UTC 毫秒戳。
- * 先將該週內、未完工、未刪之訂單歸檔，再以 upsert 寫入（同 id 則更新並拉回看板）。
+ *
+ * **不變量**：同週已完工（型號+客戶）永不被覆寫；該週未完成舊計劃一律 `deletedAt` 軟刪（不用 `isArchived` 冒充刪除，避免 KPI 膨脹）。
  */
 export async function importOrdersOverwriteWeekAction(
   orders: unknown[],
@@ -338,35 +314,8 @@ export async function importOrdersOverwriteWeekAction(
   const weekEndMs = weekStartMs + 7 * 86_400_000 - 1;
 
   try {
-    let archivedCount = 0;
+    let softDeletedObsoleteCount = 0;
     const upsertedCount = await prisma.$transaction(async (tx) => {
-      const candidates = await tx.order.findMany({
-        where: {
-          deletedAt: null,
-          isArchived: false,
-          taskStatus: { notIn: ['COMPLETED', 'completed'] },
-        },
-        select: { id: true, plannedDate: true },
-      });
-      const toArchiveIds = candidates
-        .filter((r) => {
-          const a = plannedDateAnchorEpochMs(r.plannedDate);
-          if (a == null) return false;
-          return a >= weekStartMs && a <= weekEndMs;
-        })
-        .map((r) => r.id);
-      if (toArchiveIds.length > 0) {
-        const CHUNK = 300;
-        for (let i = 0; i < toArchiveIds.length; i += CHUNK) {
-          const slice = toArchiveIds.slice(i, i + CHUNK);
-          const r = await tx.order.updateMany({
-            where: { id: { in: slice } },
-            data: { isArchived: true },
-          });
-          archivedCount += r.count;
-        }
-      }
-
       const mondayYmd = formatMsToShanghaiLocale(weekStartMs).slice(0, 10);
       let plannedMsStr: string;
       try {
@@ -375,6 +324,50 @@ export async function importOrdersOverwriteWeekAction(
         throw new Error('targetWeekStart 無法對應為有效週一錨點');
       }
 
+      /** 步驟 A：該計劃週內已完工保護白名單（客戶+型號），絕不允許新導入行覆寫 */
+      const completedRows = await tx.order.findMany({
+        where: {
+          deletedAt: null,
+          OR: [{ taskStatus: 'COMPLETED' }, { taskStatus: 'completed' }],
+        },
+        select: { client: true, model: true, plannedDate: true, createdAt: true },
+      });
+      const completedPairWhitelist = new Set<string>();
+      for (const r of completedRows) {
+        const ms = importOrderWeekAnchorMs(r);
+        if (ms == null || ms < weekStartMs || ms > weekEndMs) continue;
+        completedPairWhitelist.add(importPairKey(r.client ?? '', r.model ?? ''));
+      }
+
+      /** 步驟 B：該週錨點下所有未完工且未刪單 → 真實軟刪（廢棄計劃不再進 KPI） */
+      const incompleteRows = await tx.order.findMany({
+        where: {
+          deletedAt: null,
+          AND: [{ taskStatus: { not: 'COMPLETED' } }, { taskStatus: { not: 'completed' } }],
+        },
+        select: { id: true, plannedDate: true, createdAt: true },
+      });
+      const toSoftDeleteIds = incompleteRows
+        .filter((r) => {
+          const ms = importOrderWeekAnchorMs(r);
+          return ms != null && ms >= weekStartMs && ms <= weekEndMs;
+        })
+        .map((r) => r.id);
+
+      const nowMs = nowEpochMsForMesStorage();
+      if (toSoftDeleteIds.length > 0) {
+        const CHUNK = 300;
+        for (let i = 0; i < toSoftDeleteIds.length; i += CHUNK) {
+          const slice = toSoftDeleteIds.slice(i, i + CHUNK);
+          const r = await tx.order.updateMany({
+            where: { id: { in: slice } },
+            data: { deletedAt: nowMs },
+          });
+          softDeletedObsoleteCount += r.count;
+        }
+      }
+
+      /** 步驟 C：跳過白名單鍵後再 upsert，完工行永不插入 */
       const pairMap = new Map<string, { client: string; model: string }>();
       const lastRawByPair = new Map<string, (typeof list)[number]>();
       for (const raw of list) {
@@ -382,12 +375,11 @@ export async function importOrdersOverwriteWeekAction(
           ...(raw as Partial<Order> & { id: string }),
           plannedDate: plannedMsStr,
         });
-        const ck = `${o.client.trim()}\0${o.model.trim()}`;
+        const ck = importPairKey(o.client, o.model);
+        if (completedPairWhitelist.has(ck)) continue;
         pairMap.set(ck, { client: o.client.trim(), model: o.model.trim() });
         lastRawByPair.set(ck, raw);
       }
-      const uniquePairs = [...pairMap.values()];
-      await deleteOrdersMatchingImportPairsForWeek(tx, uniquePairs, weekStartMs, weekEndMs);
 
       const dedupedRaws = [...lastRawByPair.values()];
       let n = 0;
@@ -414,7 +406,7 @@ export async function importOrdersOverwriteWeekAction(
       return n;
     });
 
-    return { ok: true, archivedCount, upsertedCount };
+    return { ok: true, archivedCount: softDeletedObsoleteCount, upsertedCount };
   } catch (e) {
     console.error('[importOrdersOverwriteWeekAction]', e);
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
@@ -997,7 +989,7 @@ export type ProductionAuditCompletedModelRow = {
   orders: ProductionAuditOrderLine[];
 };
 
-/** 滾動近 30 天：計劃工時（新建單）與完工實做工時（`updatedAt` 落在窗內） */
+/** 滾動近 30 天：計劃工時（近 30 天新建且仍未完工、未軟刪、未歸檔）與完工實做工時（已完工且 `updatedAt` 落在窗內、未軟刪） */
 export type ProductionAuditMonthly30d = {
   plannedHours: number;
   burnedHours: number;
@@ -1175,7 +1167,12 @@ export async function fetchProductionAuditSummaryAction(weekOffset = 0): Promise
         orderBy: { updatedAt: 'desc' },
       }),
       prisma.order.aggregate({
-        where: { deletedAt: null, createdAt: { gte: monthStartMs } },
+        where: {
+          deletedAt: null,
+          isArchived: false,
+          createdAt: { gte: monthStartMs },
+          AND: [{ taskStatus: { not: 'COMPLETED' } }, { taskStatus: { not: 'completed' } }],
+        },
         _sum: { totalHours: true },
       }),
       prisma.order.aggregate({

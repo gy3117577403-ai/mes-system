@@ -1060,7 +1060,7 @@ export default function KanbanApp() {
           toast.error(res.error ?? '导入保存失败');
         } else {
           toast.success(
-            `成功导入 ${newOrders.length} 条订单（按周覆盖）。同周未完成已归档 ${res.archivedCount ?? 0} 条。\n可点击【⚡ 全局 AI 智能排产】进行分配。`
+            `成功导入 ${newOrders.length} 条订单（按周覆盖）。同周废弃未完成计划已软删除 ${res.archivedCount ?? 0} 条。\n可点击【⚡ 全局 AI 智能排产】进行分配。`
           );
           await handleSyncRefresh();
         }
