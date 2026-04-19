@@ -84,6 +84,13 @@ function OrderStatusInline({ order }: { order: ProductionAuditOrderLine }) {
         图纸未下发
       </span>
     );
+  } else {
+    pieces.push(
+      <span key="dr-unknown" className="inline-flex items-center gap-1.5 text-red-400/90">
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500" aria-hidden />
+        图纸未下发
+      </span>
+    );
   }
 
   if (order.isMaterialReady === true) {
@@ -241,7 +248,7 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
       aria-labelledby="production-audit-title"
       className="fixed inset-0 z-[100] flex h-screen min-h-0 flex-col overflow-hidden bg-slate-950/70 backdrop-blur-2xl"
     >
-      <div className="mx-auto flex min-h-0 w-full max-w-[1600px] flex-1 flex-col px-5 pb-8 pt-8 md:px-12 md:pt-10">
+      <div className="mx-auto flex h-full min-h-0 w-full max-w-[1600px] flex-1 flex-col px-5 pb-8 pt-8 md:px-12 md:pt-10">
         <header className="mb-6 flex shrink-0 flex-wrap items-start justify-between gap-4 md:mb-8">
           <div className="min-w-0 space-y-2">
             <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-cyan-400/70">生产审计</p>
@@ -280,7 +287,7 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
         )}
 
         {!loading && data?.ok && (
-          <div className="flex min-h-0 flex-1 flex-col gap-6">
+          <div className="flex min-h-0 flex-1 flex-col gap-6 overflow-hidden">
             <div className="grid shrink-0 grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
               <MonthlyAttainmentCard m={data.monthly30d} />
               <KpiCard label="当周完工单" value={String(data.completedInWeekCount)} tone="sky" />
@@ -320,17 +327,20 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
               </select>
             </div>
 
-            <div className="flex min-h-0 flex-1 flex-col gap-8 lg:flex-row lg:gap-10">
-              <section className="flex min-h-0 flex-1 flex-col lg:min-w-0 lg:flex-1">
-                <h2 className="mb-4 text-sm font-semibold tracking-wide text-amber-200/90">未完工</h2>
-                <ul className="custom-scrollbar flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain pr-1">
+            <div className="flex min-h-0 flex-1 flex-col gap-8 overflow-hidden lg:flex-row lg:gap-10">
+              <section className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden lg:max-w-[50%]">
+                <h2 className="mb-3 shrink-0 text-sm font-semibold tracking-wide text-amber-200/90">未完工</h2>
+                <ul
+                  className="custom-scrollbar flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain pr-1"
+                  style={{ minHeight: 'min(55vh, 560px)' }}
+                >
                   {filteredPending.length === 0 ? (
                     <li className="py-16 text-center text-sm leading-relaxed text-slate-500">
                       {data.pendingModels.length === 0 ? '本周暂无未完工型号' : '无匹配结果'}
                     </li>
                   ) : (
-                    filteredPending.map((m) => {
-                      const rowKey = `p:${m.partNumber}`;
+                    filteredPending.map((m, i) => {
+                      const rowKey = `p:${m.partNumber}:${i}`;
                       return (
                         <CollapsiblePendingRow
                           key={rowKey}
@@ -344,16 +354,19 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
                 </ul>
               </section>
 
-              <section className="flex min-h-0 flex-1 flex-col lg:min-w-0 lg:flex-1">
-                <h2 className="mb-4 text-sm font-semibold tracking-wide text-emerald-200/90">已完工</h2>
-                <ul className="custom-scrollbar flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain pr-1">
+              <section className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden lg:max-w-[50%]">
+                <h2 className="mb-3 shrink-0 text-sm font-semibold tracking-wide text-emerald-200/90">已完工</h2>
+                <ul
+                  className="custom-scrollbar flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-y-contain pr-1"
+                  style={{ minHeight: 'min(55vh, 560px)' }}
+                >
                   {filteredCompleted.length === 0 ? (
                     <li className="py-16 text-center text-sm leading-relaxed text-slate-500">
                       {data.completedModels.length === 0 ? '本周暂无完工产出' : '无匹配结果'}
                     </li>
                   ) : (
-                    filteredCompleted.map((m) => {
-                      const rowKey = `c:${m.partNumber}`;
+                    filteredCompleted.map((m, i) => {
+                      const rowKey = `c:${m.partNumber}:${i}`;
                       return (
                         <CollapsibleCompletedRow
                           key={rowKey}
@@ -387,11 +400,11 @@ function CollapsiblePendingRow({
   const hourPct = pct(model.modelWeekBurnedHours, model.modelWeekPlannedHours);
 
   return (
-    <li className="overflow-hidden rounded-xl bg-white/[0.04] backdrop-blur-sm">
+    <li className="shrink-0 overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.04] backdrop-blur-sm">
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-white/[0.06] md:gap-5 md:px-5 md:py-4"
+        className="flex w-full cursor-pointer items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-cyan-500/10 active:bg-cyan-500/15 md:gap-5 md:px-5 md:py-4"
         aria-expanded={isExpanded}
       >
         <span className="min-w-0 flex-1 truncate font-mono text-sm font-semibold tracking-tight text-cyan-200/95 md:text-base">
@@ -465,11 +478,11 @@ function CollapsibleCompletedRow({
   const qtyPct = pct(model.actualQty, model.modelWeekPlannedQty);
 
   return (
-    <li className="overflow-hidden rounded-xl bg-white/[0.04] backdrop-blur-sm">
+    <li className="shrink-0 overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.04] backdrop-blur-sm">
       <button
         type="button"
         onClick={onToggle}
-        className="flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-white/[0.06] md:gap-5 md:px-5 md:py-4"
+        className="flex w-full cursor-pointer items-center gap-3 px-4 py-3.5 text-left transition-colors hover:bg-emerald-500/10 active:bg-emerald-500/15 md:gap-5 md:px-5 md:py-4"
         aria-expanded={isExpanded}
       >
         <span className="min-w-0 flex-1 truncate font-mono text-sm font-semibold tracking-tight text-emerald-200/95 md:text-base">
