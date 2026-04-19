@@ -70,15 +70,15 @@ function saveLedger(key: string, rows: LedgerEntry[]) {
   }
 }
 
-/** 庫存工時欄位原樣數值（後端 totalHours 為「小時」語義） */
+/** 庫存工時欄位原樣數值（`totalHours` 等欄位在庫中存的是分鐘，禁止再做 ×60） */
 function workloadValue(v: number): number {
   const n = Number(v);
   return Number.isFinite(n) ? Math.round(n * 1000) / 1000 : 0;
 }
 
-/** 僅用於與 11880「分鐘」基準對齊：小時 → 分鐘 */
-function workloadHoursToMinutes(v: number): number {
-  return Math.round(workloadValue(v) * 60 * 1000) / 1000;
+/** 與產能基準同口徑：直接採用庫存分鐘值（不換算） */
+function workloadMinutesValue(v: number): number {
+  return Math.round(workloadValue(v) * 1000) / 1000;
 }
 
 function safeRatePercent(actual: number, denominator: number): number {
@@ -290,11 +290,11 @@ function LedgerSummaryCard({
       <div className="space-y-2 text-sm leading-relaxed text-slate-300">
         <p className="font-semibold text-slate-100">工时双账本</p>
         <p className="tabular-nums text-emerald-200/95">
-          异常补偿: +{Math.round(totalExceptionMinutes)} min（算入产出）
+          异常补偿: +{Math.round(totalExceptionMinutes)} 工时（算入产出）
         </p>
         <p className="tabular-nums text-sky-200/95">
           出勤变动: {totalAttendanceMinutes > 0 ? '+' : ''}
-          {Math.round(totalAttendanceMinutes)} min（修饰基数）
+          {Math.round(totalAttendanceMinutes)} 工时（修饰基数）
         </p>
       </div>
       <button
@@ -408,7 +408,7 @@ function TimesheetModal({
         <div className="shrink-0 space-y-3 border-b border-white/10 p-5">
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="block text-xs text-slate-500">
-              分钟数（可负）
+              工时（可负，与库存口径一致）
               <input
                 type="number"
                 value={minutesInput}
@@ -451,7 +451,7 @@ function TimesheetModal({
                   <div className="min-w-0 flex-1">
                     <p className="tabular-nums text-slate-200">
                       {r.date} · {r.minutes > 0 ? '+' : ''}
-                      {r.minutes} min
+                      {r.minutes} 工时
                     </p>
                     <p className="mt-0.5 truncate text-xs text-slate-500">{r.reason}</p>
                   </div>
@@ -502,8 +502,8 @@ function MegaEfficiencyPanel({
 }) {
   const rollFrom = formatMsToShanghaiLocale(rolling.windowStartMs).slice(0, 10);
   const rollTo = formatMsToShanghaiLocale(rolling.windowEndMs).slice(0, 10);
-  const raMin = workloadHoursToMinutes(rolling.totalActualOutput);
-  const rpMin = workloadHoursToMinutes(rolling.totalPlannedLoad);
+  const raMin = workloadMinutesValue(rolling.totalActualOutput);
+  const rpMin = workloadMinutesValue(rolling.totalPlannedLoad);
 
   return (
     <div className="grid grid-cols-1 gap-6 border-b border-slate-800 bg-slate-900/50 p-6 md:grid-cols-2 lg:grid-cols-4">
@@ -516,19 +516,19 @@ function MegaEfficiencyPanel({
       <SvgAuditRing
         percent={planRate}
         title="周计划达成率"
-        subtitle={`实做 ${Math.round(weekActualMinutes)} min / 计划 ${Math.round(weekPlannedMinutes)} min`}
+        subtitle={`实做 ${Math.round(weekActualMinutes)} 工时 / 计划 ${Math.round(weekPlannedMinutes)} 工时`}
       />
 
       <SvgAuditRing
         percent={utilizationRate}
         title="周产能利用率"
-        subtitle={`产出 ${Math.round(capacityNumeratorMin)} min / 基数 ${Math.round(capacityDenominatorMin)} min（基准 ${STANDARD_CAPACITY_MINUTES} min）`}
+        subtitle={`产出 ${Math.round(capacityNumeratorMin)} 工时 / 基数 ${Math.round(capacityDenominatorMin)} 工时（基准 ${STANDARD_CAPACITY_MINUTES}）`}
       />
 
       <SvgAuditRing
         percent={rollingPlanRate}
         title="滚动四周达成率"
-        subtitle={`${rollFrom}～${rollTo} 上海 · 实做 ${Math.round(raMin)} min / 排产 ${Math.round(rpMin)} min · 30d 月度 ${formatPctOne(monthlyRate)}%`}
+        subtitle={`${rollFrom}～${rollTo} 上海 · 实做 ${Math.round(raMin)} 工时 / 排产 ${Math.round(rpMin)} 工时 · 30d 月度 ${formatPctOne(monthlyRate)}%`}
       />
     </div>
   );
@@ -624,9 +624,9 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
       };
     }
     const weekActualHours = workloadValue(data.burnedHours);
-    const actualBaseMinutes = workloadHoursToMinutes(data.burnedHours);
+    const actualBaseMinutes = workloadMinutesValue(data.burnedHours);
     const weekPlanned = workloadValue(data.weekScheduledLoadHours);
-    const weekPlannedMinutes = workloadHoursToMinutes(data.weekScheduledLoadHours);
+    const weekPlannedMinutes = workloadMinutesValue(data.weekScheduledLoadHours);
     const planRate = safeRatePercent(weekActualHours, weekPlanned);
 
     const capacityNumeratorMin = actualBaseMinutes + totalExceptionMinutes;
@@ -729,12 +729,11 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
                 型号 <span className="font-medium text-cyan-300">{data.modelCount}</span>
               </span>
               <span className="shrink-0 tabular-nums text-slate-300">
-                当周完工 <span className="font-medium text-emerald-300">{Math.round(metrics.actualBaseMinutes)}</span> 分钟
+                当周完工 <span className="font-medium text-emerald-300">{Math.round(metrics.actualBaseMinutes)}</span> 工时
               </span>
               <span className="shrink-0 tabular-nums text-slate-300">
                 待办计划{' '}
-                <span className="font-medium text-teal-300">{Math.round(workloadHoursToMinutes(data.plannedHours))}</span>{' '}
-                分钟
+                <span className="font-medium text-teal-300">{Math.round(workloadMinutesValue(data.plannedHours))}</span> 工时
               </span>
 
               <button
@@ -893,7 +892,7 @@ function CollapsiblePendingRow({
 }) {
   const orderLines = useMemo(() => dedupeAuditOrderLinesForDisplay(model.orders), [model.orders]);
   const linePct = pct(model.modelWeekBurnedHours, model.modelWeekPlannedHours);
-  const estMin = workloadHoursToMinutes(model.estimatedHours);
+  const estWorkload = workloadMinutesValue(model.estimatedHours);
 
   return (
     <li className="shrink-0 overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.04] backdrop-blur-sm">
@@ -909,7 +908,7 @@ function CollapsiblePendingRow({
         <span className="hidden min-w-0 flex-[1.2] text-center text-xs leading-relaxed text-slate-400 sm:block md:text-sm">
           欠产 <span className="tabular-nums text-slate-200">{model.shortfallQty}</span>
           <span className="mx-2 text-slate-600">·</span>
-          分钟 <span className="tabular-nums text-slate-200">{Math.round(estMin)}</span>
+          工时 <span className="tabular-nums text-slate-200">{Math.round(estWorkload)}</span>
           <span className="mx-2 text-slate-600">·</span>
           <span className="tabular-nums text-slate-400">{linePct}%</span>
         </span>
@@ -966,7 +965,7 @@ function CollapsibleCompletedRow({
 }) {
   const orderLines = useMemo(() => dedupeAuditOrderLinesForDisplay(model.orders), [model.orders]);
   const qtyPct = pct(model.actualQty, model.modelWeekPlannedQty);
-  const burnedMin = workloadHoursToMinutes(model.burnedHours);
+  const burnedWorkload = workloadMinutesValue(model.burnedHours);
 
   return (
     <li className="shrink-0 overflow-hidden rounded-xl border border-white/[0.06] bg-white/[0.04] backdrop-blur-sm">
@@ -982,7 +981,7 @@ function CollapsibleCompletedRow({
         <span className="hidden min-w-0 flex-[1.2] text-center text-xs leading-relaxed text-slate-400 sm:block md:text-sm">
           实做 <span className="tabular-nums text-slate-200">{model.actualQty}</span>
           <span className="mx-2 text-slate-600">·</span>
-          分钟 <span className="tabular-nums text-slate-200">{Math.round(burnedMin)}</span>
+          工时 <span className="tabular-nums text-slate-200">{Math.round(burnedWorkload)}</span>
           <span className="mx-2 text-slate-600">·</span>
           <span className="tabular-nums text-slate-400">{qtyPct}%</span>
         </span>

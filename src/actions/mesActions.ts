@@ -302,6 +302,8 @@ export async function createOrderAction(
  * 按週覆蓋式批次導入：`targetWeekStart` 為該週上海週一 00:00:00 的 UTC 毫秒戳。
  *
  * **不變量**：同週已完工（型號+客戶）永不被覆寫；該週未完成舊計劃一律 `deletedAt` 軟刪（不用 `isArchived` 冒充刪除，避免 KPI 膨脹）。
+ *
+ * **工時口徑**：Excel／前端傳入的 `totalHours` 應直接寫入庫存分鐘值，**禁止**在導入路徑對 `unitTime`／`totalHours` 乘 60。
  */
 export async function importOrdersOverwriteWeekAction(
   orders: unknown[],
@@ -1147,6 +1149,9 @@ export async function carryOverOrdersAction(
  * 生產審計：`weekOffset` 選週。
  * - 待辦：仍以 `plannedDate`（或 `createdAt`）錨點落在該週。
  * - 已完工：僅要求 `updatedAt` 落在該週，不再用 `plannedDate` 二次過濾（跨週完工可計入業績）。
+ *
+ * **工時口徑**：Prisma `Order.totalHours` 與本函數回傳的 `*Hours` 欄位語義均為「分鐘」
+ *（與產能基準 11880 同單位）；聚合時僅做 `reduce` 加總，**禁止**對 `totalHours` 再乘 60。
  */
 export async function fetchProductionAuditSummaryAction(weekOffset = 0): Promise<ProductionAuditSummaryResult> {
   const empty: ProductionAuditSummaryResult = {
