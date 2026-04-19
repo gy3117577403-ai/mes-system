@@ -32,7 +32,7 @@ function ProgressBar({ valuePct }: { valuePct: number }) {
 
 function AuditSkeleton() {
   return (
-    <div className="mx-auto w-full max-w-7xl animate-pulse space-y-6 px-4 pb-12 pt-4 md:px-8">
+    <div className="mx-auto flex min-h-0 w-full max-w-7xl flex-1 animate-pulse flex-col space-y-6 px-4 pb-8 pt-2 md:px-8">
       <div className="flex justify-between gap-4">
         <div className="h-10 w-64 rounded-lg bg-slate-800/80" />
         <div className="h-14 w-14 shrink-0 rounded-2xl bg-slate-800/80" />
@@ -84,10 +84,10 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
       role="dialog"
       aria-modal="true"
       aria-labelledby="production-audit-title"
-      className="fixed inset-0 z-[100] overflow-y-auto bg-slate-950/85 backdrop-blur-xl"
+      className="fixed inset-0 z-[100] flex h-screen min-h-0 flex-col overflow-hidden bg-slate-950/85 backdrop-blur-xl"
     >
-      <div className="mx-auto flex min-h-full max-w-[1600px] flex-col px-4 pb-10 pt-5 md:px-8 md:pt-6">
-        <header className="mb-6 flex shrink-0 flex-wrap items-start justify-between gap-4">
+      <div className="mx-auto flex min-h-0 w-full max-w-[1600px] flex-1 flex-col px-4 pb-4 pt-5 md:px-8 md:pt-6">
+        <header className="mb-4 flex shrink-0 flex-wrap items-start justify-between gap-4 md:mb-6">
           <div className="min-w-0">
             <p className="mb-1 font-mono text-[10px] font-bold uppercase tracking-[0.25em] text-cyan-400/80 md:text-xs">
               MES · Phase 2
@@ -117,29 +117,29 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
         {loading && <AuditSkeleton />}
 
         {!loading && data && !data.ok && (
-          <div className="rounded-xl border border-red-500/40 bg-red-950/30 p-4 text-sm text-red-200">
+          <div className="shrink-0 rounded-xl border border-red-500/40 bg-red-950/30 p-4 text-sm text-red-200">
             加载失败：{data.error ?? '未知错误'}
           </div>
         )}
 
         {!loading && data?.ok && (
           <>
-            <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
+            <div className="mb-4 grid shrink-0 grid-cols-2 gap-3 md:mb-6 md:grid-cols-4 md:gap-4">
               <KpiCard label="本周总单量" value={String(data.totalOrderCount)} tone="sky" />
               <KpiCard label="型号总数" value={String(data.modelCount)} tone="cyan" />
               <KpiCard label="已燃烧工时" value={String(data.burnedHours)} tone="emerald" />
               <KpiCard label="总计划工时" value={String(data.plannedHours)} tone="teal" />
             </div>
 
-            <div className="grid flex-1 gap-4 lg:grid-cols-2 lg:gap-6">
-              <section className="flex min-h-[280px] flex-col rounded-2xl border border-amber-500/25 bg-slate-900/40 shadow-[inset_0_1px_0_rgba(251,191,36,0.08)]">
-                <div className="border-b border-slate-800/80 px-4 py-3 md:px-5">
+            <div className="flex min-h-0 flex-1 flex-col gap-4 lg:flex-row lg:gap-6">
+              <section className="flex min-h-0 flex-1 flex-col rounded-2xl border border-amber-500/25 bg-slate-900/40 shadow-[inset_0_1px_0_rgba(251,191,36,0.08)] lg:min-w-0 lg:flex-1">
+                <div className="shrink-0 border-b border-slate-800/80 px-4 py-3 md:px-5">
                   <h2 className="text-sm font-black uppercase tracking-widest text-amber-200/90 md:text-base">
                     未完工点名墙
                   </h2>
                   <p className="mt-1 text-[11px] text-slate-500 md:text-xs">按型号聚合 · 欠产与待燃烧工时</p>
                 </div>
-                <ul className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-y-contain px-3 py-3 md:px-4 md:py-4">
+                <ul className="custom-scrollbar min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-y-contain px-3 py-3 pr-2 md:px-4 md:py-4 md:pr-3">
                   {data.pendingModels.length === 0 ? (
                     <li className="py-12 text-center text-sm text-slate-500">本周暂无未完工型号</li>
                   ) : (
@@ -177,14 +177,14 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
                 </ul>
               </section>
 
-              <section className="flex min-h-[280px] flex-col rounded-2xl border border-emerald-500/25 bg-slate-900/40 shadow-[inset_0_1px_0_rgba(52,211,153,0.08)]">
-                <div className="border-b border-slate-800/80 px-4 py-3 md:px-5">
+              <section className="flex min-h-0 flex-1 flex-col rounded-2xl border border-emerald-500/25 bg-slate-900/40 shadow-[inset_0_1px_0_rgba(52,211,153,0.08)] lg:min-w-0 lg:flex-1">
+                <div className="shrink-0 border-b border-slate-800/80 px-4 py-3 md:px-5">
                   <h2 className="text-sm font-black uppercase tracking-widest text-emerald-200/90 md:text-base">
                     已完工战报榜
                   </h2>
                   <p className="mt-1 text-[11px] text-slate-500 md:text-xs">按型号聚合 · 实做件数与产出工时</p>
                 </div>
-                <ul className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-y-contain px-3 py-3 md:px-4 md:py-4">
+                <ul className="custom-scrollbar min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-y-contain px-3 py-3 pr-2 md:px-4 md:py-4 md:pr-3">
                   {data.completedModels.length === 0 ? (
                     <li className="py-12 text-center text-sm text-slate-500">本周暂无完工产出</li>
                   ) : (
