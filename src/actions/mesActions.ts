@@ -8,7 +8,6 @@ import {
   getShanghaiAuditWeekRangeEpochMsForOffset,
   nowEpochMsForMesStorage,
 } from '@/lib/datetimeShanghai';
-import { isOrderCompletedStatus } from '@/lib/orderStatus';
 import {
   activityLogEntryZ,
   addWorkerNameZ,
