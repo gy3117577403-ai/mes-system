@@ -1,7 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { format, isValid, parseISO } from 'date-fns';
 import {
   AlertOctagon,
@@ -210,7 +211,13 @@ export default function EnhancedOrderCard({
     !['料齐', '已配料', '未配料'].includes(task.materials) && task.materials !== '';
 
   const [materialPopoverOpen, setMaterialPopoverOpen] = useState(false);
-  const materialPopoverRootRef = useRef<HTMLDivElement>(null);
+  const [materialPopoverCoords, setMaterialPopoverCoords] = useState<{
+    top: number;
+    left: number;
+    width: number;
+  } | null>(null);
+  const materialPopoverTriggerRef = useRef<HTMLButtonElement>(null);
+  const materialPopoverPanelRef = useRef<HTMLDivElement>(null);
 
   /** 僅未配料且可編輯：才允許缺料 Popover（已配料嚴禁） */
   const showMissingMaterialPopover =
@@ -222,14 +229,53 @@ export default function EnhancedOrderCard({
     if (task.isMaterialReady !== false || ['料齐', '已配料'].includes(task.materials)) {
       queueMicrotask(() => {
         setMaterialPopoverOpen(false);
+        setMaterialPopoverCoords(null);
       });
     }
   }, [task.isMaterialReady, task.materials]);
 
+  const repositionMaterialPopover = useCallback(() => {
+    const trig = materialPopoverTriggerRef.current;
+    if (!trig || !materialPopoverOpen) return;
+    const rect = trig.getBoundingClientRect();
+    const margin = 8;
+    const gap = 6;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const width = Math.min(260, vw - 2 * margin);
+    const left = Math.max(margin, Math.min(rect.left, vw - width - margin));
+    const panel = materialPopoverPanelRef.current;
+    const h = Math.max(panel?.offsetHeight ?? 200, 140);
+    let top = rect.bottom + gap;
+    if (top + h > vh - margin) {
+      top = rect.top - h - gap;
+    }
+    top = Math.max(margin, Math.min(top, vh - h - margin));
+    setMaterialPopoverCoords({ top, left, width });
+  }, [materialPopoverOpen]);
+
+  useLayoutEffect(() => {
+    if (!materialPopoverOpen) {
+      queueMicrotask(() => setMaterialPopoverCoords(null));
+      return;
+    }
+    repositionMaterialPopover();
+    const id = requestAnimationFrame(() => repositionMaterialPopover());
+    window.addEventListener('scroll', repositionMaterialPopover, true);
+    window.addEventListener('resize', repositionMaterialPopover);
+    return () => {
+      cancelAnimationFrame(id);
+      window.removeEventListener('scroll', repositionMaterialPopover, true);
+      window.removeEventListener('resize', repositionMaterialPopover);
+    };
+  }, [materialPopoverOpen, repositionMaterialPopover]);
+
   useEffect(() => {
     if (!materialPopoverOpen) return;
     const onDown = (e: MouseEvent) => {
-      if (materialPopoverRootRef.current?.contains(e.target as Node)) return;
+      const t = e.target as Node;
+      if (materialPopoverTriggerRef.current?.contains(t)) return;
+      if (materialPopoverPanelRef.current?.contains(t)) return;
       setMaterialPopoverOpen(false);
     };
     document.addEventListener('mousedown', onDown);
@@ -299,12 +345,69 @@ export default function EnhancedOrderCard({
     );
   }
 
+  const materialMissingPopoverPortal =
+    typeof document !== 'undefined' &&
+    materialPopoverOpen &&
+    task.isMaterialReady === false &&
+    materialPopoverCoords != null &&
+    createPortal(
+      <div
+        ref={materialPopoverPanelRef}
+        role="dialog"
+        aria-label="缺料登记"
+        className={cn(
+          'z-[9999] rounded-xl border p-2.5 shadow-2xl',
+          theme === 'dark'
+            ? 'border-slate-700 bg-slate-800'
+            : 'border-gray-200 bg-white shadow-2xl'
+        )}
+        style={{
+          position: 'fixed',
+          top: materialPopoverCoords.top,
+          left: materialPopoverCoords.left,
+          width: materialPopoverCoords.width,
+        }}
+      >
+        <label className="sr-only" htmlFor={`mat-status-${task.id}`}>
+          配料状态
+        </label>
+        <select
+          id={`mat-status-${task.id}`}
+          value={task.materials}
+          onChange={(e) => {
+            updateTask(task.id, 'materials', e.target.value);
+            if (['料齐', '已配料'].includes(e.target.value)) setMaterialPopoverOpen(false);
+          }}
+          className={cn(
+            'mb-2 w-full rounded border px-2 py-1.5 text-[10px] font-bold outline-none',
+            theme === 'dark'
+              ? 'border-slate-600 bg-slate-900 text-slate-100'
+              : 'border-gray-300 bg-gray-50 text-gray-900'
+          )}
+        >
+          <option value="料齐">料已齐</option>
+          <option value="未配料">未配料</option>
+          {isCustomMaterialShortage && <option value={task.materials}>⚠️ {task.materials}</option>}
+        </select>
+        <MissingMaterialFormFields
+          key={`${task.id}-mr:${task.missingMaterialReason ?? ''}-me:${task.missingMaterialEta ?? ''}`}
+          orderId={task.id}
+          initialReason={task.missingMaterialReason}
+          initialEtaIso={task.missingMaterialEta}
+          saveOrderPatch={saveOrderPatch}
+          theme={theme}
+        />
+      </div>,
+      document.body
+    );
+
   return (
-    <div
-      className={`relative transition-all duration-300 ${styleMap[status] || styleMap.yellow} group ${
-        urgent ? 'ring-2 ring-red-500 shadow-[0_0_22px_rgba(239,68,68,0.28)]' : ''
-      }`}
-    >
+    <>
+      <div
+        className={`relative transition-all duration-300 ${styleMap[status] || styleMap.yellow} group ${
+          urgent ? 'ring-2 ring-red-500 shadow-[0_0_22px_rgba(239,68,68,0.28)]' : ''
+        }`}
+      >
       {isCompleted && (
         <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 -rotate-12 text-gray-400 font-black text-4xl opacity-40 pointer-events-none tracking-widest z-0">
           已完成
@@ -520,8 +623,9 @@ export default function EnhancedOrderCard({
                   className={`w-3.5 h-3.5 mr-1 shrink-0 ${materialsLooksKit ? 'text-emerald-400' : 'text-red-400'}`}
                 />
                 {showMissingMaterialPopover ? (
-                  <div ref={materialPopoverRootRef} className="relative flex min-w-0 flex-1 items-center gap-1">
+                  <div className="relative flex min-w-0 flex-1 items-center gap-1">
                     <button
+                      ref={materialPopoverTriggerRef}
                       type="button"
                       onClick={() => setMaterialPopoverOpen((o) => !o)}
                       className={cn(
@@ -549,48 +653,6 @@ export default function EnhancedOrderCard({
                         {formatEtaNaturalZh(task.missingMaterialEta)}
                       </span>
                     ) : null}
-                    {materialPopoverOpen && task.isMaterialReady === false && (
-                      <div
-                        role="dialog"
-                        aria-label="缺料登记"
-                        className={cn(
-                          'absolute left-0 top-[calc(100%+6px)] z-50 min-w-[200px] max-w-[min(100vw-2rem,260px)] rounded-xl border p-2.5 shadow-xl backdrop-blur-md',
-                          theme === 'dark'
-                            ? 'border-white/10 bg-slate-950/90 shadow-black/40'
-                            : 'border-gray-200 bg-white/95 shadow-lg'
-                        )}
-                      >
-                        <label className="sr-only" htmlFor={`mat-status-${task.id}`}>
-                          配料状态
-                        </label>
-                        <select
-                          id={`mat-status-${task.id}`}
-                          value={task.materials}
-                          onChange={(e) => {
-                            updateTask(task.id, 'materials', e.target.value);
-                            if (['料齐', '已配料'].includes(e.target.value)) setMaterialPopoverOpen(false);
-                          }}
-                          className={cn(
-                            'mb-2 w-full rounded border px-2 py-1.5 text-[10px] font-bold outline-none',
-                            theme === 'dark'
-                              ? 'border-white/15 bg-slate-900 text-slate-100'
-                              : 'border-gray-300 bg-gray-50 text-gray-900'
-                          )}
-                        >
-                          <option value="料齐">料已齐</option>
-                          <option value="未配料">未配料</option>
-                          {isCustomMaterialShortage && <option value={task.materials}>⚠️ {task.materials}</option>}
-                        </select>
-                        <MissingMaterialFormFields
-                          key={`${task.id}-mr:${task.missingMaterialReason ?? ''}-me:${task.missingMaterialEta ?? ''}`}
-                          orderId={task.id}
-                          initialReason={task.missingMaterialReason}
-                          initialEtaIso={task.missingMaterialEta}
-                          saveOrderPatch={saveOrderPatch}
-                          theme={theme}
-                        />
-                      </div>
-                    )}
                   </div>
                 ) : (
                   <select
@@ -660,5 +722,7 @@ export default function EnhancedOrderCard({
         </div>
       </div>
     </div>
+      {materialMissingPopoverPortal}
+    </>
   );
 }
