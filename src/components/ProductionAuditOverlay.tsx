@@ -17,12 +17,27 @@ import { formatMsToShanghaiLocale, MES_TIMEZONE } from '@/lib/datetimeShanghai';
 interface ProductionAuditOverlayProps {
   isOpen: boolean;
   onClose: () => void;
+  /** 主頁每日排產上限（分鐘）；未設週基準且無本地 daily 鍵時，用於估算週基準 = 該值 × 6 */
+  dailyCapacityMinutes?: number;
 }
 
-/** 基準週產能（分鐘），與分子同為分鐘口徑，禁止對此值除以 60 */
-const STANDARD_CAPACITY_MINUTES = 11880;
+const LS_WEEKLY_BASE_CAPACITY = 'mes_weekly_base_capacity';
+const DEFAULT_WEEKLY_BASE_CAPACITY = 10800;
 const LS_EXCEPTION_LEDGER = 'mes-audit-ledger-exception';
 const LS_ATTENDANCE_LEDGER = 'mes-audit-ledger-attendance';
+
+function readPositiveIntFromLocalStorage(key: string): number | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (raw == null || raw.trim() === '') return null;
+    const n = Number(raw.trim());
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return Math.trunc(n);
+  } catch {
+    return null;
+  }
+}
 
 type LedgerEntry = {
   id: string;
@@ -276,6 +291,38 @@ function SvgAuditRing({
   );
 }
 
+function WeeklyBaseCapacityControl({
+  baseCapacity,
+  onBaseCapacityChange,
+}: {
+  baseCapacity: number;
+  onBaseCapacityChange: (next: number) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2.5">
+      <span className="shrink-0 text-xs font-medium text-slate-300 md:text-sm">周基准产能</span>
+      <div className="flex min-w-0 items-center gap-1.5">
+        <input
+          type="number"
+          min={1}
+          max={9999999}
+          step={1}
+          value={baseCapacity}
+          onChange={(e) => {
+            const v = Math.trunc(Number(e.target.value));
+            if (!Number.isFinite(v)) return;
+            const clamped = Math.max(1, Math.min(9_999_999, v));
+            onBaseCapacityChange(clamped);
+          }}
+          className="w-[5.5rem] shrink-0 rounded-lg border border-white/15 bg-white/5 py-1.5 pl-2 pr-1 text-right text-xs font-semibold tabular-nums text-slate-100 outline-none focus:border-cyan-500/45 md:w-24 md:text-sm"
+          aria-label="周基准产能（分钟）"
+        />
+        <span className="shrink-0 text-[11px] font-medium text-slate-500 md:text-xs">min</span>
+      </div>
+    </div>
+  );
+}
+
 function LedgerSummaryCard({
   totalExceptionMinutes,
   totalAttendanceMinutes,
@@ -474,6 +521,8 @@ function TimesheetModal({
 }
 
 function MegaEfficiencyPanel({
+  baseCapacity,
+  onBaseCapacityChange,
   totalExceptionMinutes,
   totalAttendanceMinutes,
   capacityNumeratorMin,
@@ -487,6 +536,8 @@ function MegaEfficiencyPanel({
   rollingPlanRate,
   monthlyRate,
 }: {
+  baseCapacity: number;
+  onBaseCapacityChange: (next: number) => void;
   totalExceptionMinutes: number;
   totalAttendanceMinutes: number;
   capacityNumeratorMin: number;
@@ -507,11 +558,14 @@ function MegaEfficiencyPanel({
 
   return (
     <div className="grid grid-cols-1 gap-6 border-b border-slate-800 bg-slate-900/50 p-6 md:grid-cols-2 lg:grid-cols-4">
-      <LedgerSummaryCard
-        totalExceptionMinutes={totalExceptionMinutes}
-        totalAttendanceMinutes={totalAttendanceMinutes}
-        onOpenTimesheet={onOpenTimesheet}
-      />
+      <div className="flex flex-col gap-3">
+        <WeeklyBaseCapacityControl baseCapacity={baseCapacity} onBaseCapacityChange={onBaseCapacityChange} />
+        <LedgerSummaryCard
+          totalExceptionMinutes={totalExceptionMinutes}
+          totalAttendanceMinutes={totalAttendanceMinutes}
+          onOpenTimesheet={onOpenTimesheet}
+        />
+      </div>
 
       <SvgAuditRing
         percent={planRate}
@@ -522,7 +576,7 @@ function MegaEfficiencyPanel({
       <SvgAuditRing
         percent={utilizationRate}
         title="周产能利用率"
-        subtitle={`产出 ${Math.round(capacityNumeratorMin)} 工时 / 基数 ${Math.round(capacityDenominatorMin)} 工时（基准 ${STANDARD_CAPACITY_MINUTES}）`}
+        subtitle={`产出 ${Math.round(capacityNumeratorMin)} 工时 / 基数 ${Math.round(capacityDenominatorMin)} 工时（基准 ${baseCapacity}）`}
       />
 
       <SvgAuditRing
@@ -534,7 +588,11 @@ function MegaEfficiencyPanel({
   );
 }
 
-export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAuditOverlayProps) {
+export default function ProductionAuditOverlay({
+  isOpen,
+  onClose,
+  dailyCapacityMinutes,
+}: ProductionAuditOverlayProps) {
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<ProductionAuditSummaryResult | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -544,11 +602,44 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
   const [attendanceLogs, setAttendanceLogs] = useState<LedgerEntry[]>([]);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
   const [timesheetOpen, setTimesheetOpen] = useState(false);
+  const [baseCapacity, setBaseCapacity] = useState(DEFAULT_WEEKLY_BASE_CAPACITY);
+
+  const persistBaseCapacity = useCallback((next: number) => {
+    setBaseCapacity(next);
+    if (typeof window === 'undefined') return;
+    try {
+      window.localStorage.setItem(LS_WEEKLY_BASE_CAPACITY, String(next));
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   useEffect(() => {
     setExceptionLogs(loadLedger(LS_EXCEPTION_LEDGER));
     setAttendanceLogs(loadLedger(LS_ATTENDANCE_LEDGER));
   }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const fromWeekly = readPositiveIntFromLocalStorage(LS_WEEKLY_BASE_CAPACITY);
+    if (fromWeekly != null) {
+      setBaseCapacity(fromWeekly);
+      return;
+    }
+    for (const key of ['daily_limit', 'mes_daily_capacity', 'dailyCapacity'] as const) {
+      const d = readPositiveIntFromLocalStorage(key);
+      if (d != null) {
+        setBaseCapacity(Math.trunc(d * 6));
+        return;
+      }
+    }
+    const daily = dailyCapacityMinutes;
+    if (daily != null && daily > 0) {
+      setBaseCapacity(Math.trunc(daily * 6));
+      return;
+    }
+    setBaseCapacity(DEFAULT_WEEKLY_BASE_CAPACITY);
+  }, [dailyCapacityMinutes]);
 
   useEffect(() => {
     saveLedger(LS_EXCEPTION_LEDGER, exceptionLogs);
@@ -620,7 +711,7 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
         rollingPlanRate: 0,
         monthlyRate: 0,
         capacityNumeratorMin: 0,
-        capacityDenominatorMin: STANDARD_CAPACITY_MINUTES,
+        capacityDenominatorMin: baseCapacity,
       };
     }
     const weekActualHours = workloadValue(data.burnedHours);
@@ -630,7 +721,7 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
     const planRate = safeRatePercent(weekActualHours, weekPlanned);
 
     const capacityNumeratorMin = actualBaseMinutes + totalExceptionMinutes;
-    const capacityDenominatorMin = STANDARD_CAPACITY_MINUTES + totalAttendanceMinutes;
+    const capacityDenominatorMin = baseCapacity + totalAttendanceMinutes;
     const utilizationRate = safeRatePercent(capacityNumeratorMin, capacityDenominatorMin);
 
     const r = data.rolling4Weeks;
@@ -653,7 +744,7 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
       capacityNumeratorMin,
       capacityDenominatorMin,
     };
-  }, [data, totalExceptionMinutes, totalAttendanceMinutes]);
+  }, [data, totalExceptionMinutes, totalAttendanceMinutes, baseCapacity]);
 
   if (!isOpen) return null;
 
@@ -761,6 +852,8 @@ export default function ProductionAuditOverlay({ isOpen, onClose }: ProductionAu
                   className="overflow-hidden"
                 >
                   <MegaEfficiencyPanel
+                    baseCapacity={baseCapacity}
+                    onBaseCapacityChange={persistBaseCapacity}
                     totalExceptionMinutes={totalExceptionMinutes}
                     totalAttendanceMinutes={totalAttendanceMinutes}
                     capacityNumeratorMin={metrics.capacityNumeratorMin}

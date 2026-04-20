@@ -1235,7 +1235,11 @@ export default function KanbanApp() {
         setImportPlanWeek={setImportPlanWeek}
       />
 
-      <ProductionAuditOverlay isOpen={isAuditOpen} onClose={() => setIsAuditOpen(false)} />
+      <ProductionAuditOverlay
+        isOpen={isAuditOpen}
+        onClose={() => setIsAuditOpen(false)}
+        dailyCapacityMinutes={dailyCapacity}
+      />
 
       <CarryOverModal
         isOpen={carryOverOpen}

@@ -1151,7 +1151,7 @@ export async function carryOverOrdersAction(
  * - 已完工：僅要求 `updatedAt` 落在該週，不再用 `plannedDate` 二次過濾（跨週完工可計入業績）。
  *
  * **工時口徑**：Prisma `Order.totalHours` 與本函數回傳的 `*Hours` 欄位語義均為「分鐘」
- *（與產能基準 11880 同單位）；聚合時僅做 `reduce` 加總，**禁止**對 `totalHours` 再乘 60。
+ *（與審計端「週基準產能」同為分鐘口徑）；聚合時僅做 `reduce` 加總，**禁止**對 `totalHours` 再乘 60。
  */
 export async function fetchProductionAuditSummaryAction(weekOffset = 0): Promise<ProductionAuditSummaryResult> {
   const empty: ProductionAuditSummaryResult = {
