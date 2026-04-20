@@ -48,78 +48,68 @@ function normMaterialText(s: string | null | undefined): string | null {
   return t === '' ? null : t;
 }
 
-/** 自然語言到料日（不含具體時分） */
-function formatEtaNaturalZh(iso: string | null | undefined): string {
+/** Badge 上顯示到料日：`MM-dd`（如 04-18），不含時分秒 */
+function formatEtaMmDd(iso: string | null | undefined): string {
   if (!iso) return '';
   try {
     const d = parseISO(iso);
     if (!isValid(d)) return '';
-    return `${format(d, 'M月d日')} 到料`;
+    return format(d, 'MM-dd');
   } catch {
     return '';
   }
 }
 
-function MissingMaterialFormFields({
-  orderId,
-  initialReason,
-  initialEtaIso,
-  saveOrderPatch,
-  theme,
+/** 標籤形態：未登記 vs 已登記缺料 */
+function MissingMaterialMorphBadge({
+  triggerRef,
+  hasReasonDetail,
+  reasonText,
+  etaIso,
+  onToggle,
+  isOpen,
 }: {
-  orderId: string;
-  initialReason: string | null | undefined;
-  initialEtaIso: string | null | undefined;
-  saveOrderPatch: (id: string, patch: Record<string, unknown>) => void;
-  theme: AppTheme;
+  triggerRef: React.RefObject<HTMLButtonElement | null>;
+  hasReasonDetail: boolean;
+  reasonText: string;
+  etaIso: string | null | undefined;
+  onToggle: () => void;
+  isOpen: boolean;
 }) {
-  const [missingReasonDraft, setMissingReasonDraft] = useState(() => initialReason ?? '');
-  const [missingEtaDraft, setMissingEtaDraft] = useState(() => missingEtaToDateInput(initialEtaIso ?? null));
-
-  const flushMissingReason = () => {
-    const next = normMaterialText(missingReasonDraft);
-    const prev = normMaterialText(initialReason);
-    if (next === prev) return;
-    saveOrderPatch(orderId, { missingMaterialReason: next });
-  };
-
-  const flushMissingEta = () => {
-    const nextIso = dateInputToUtcNoonIso(missingEtaDraft);
-    const prev = initialEtaIso ?? null;
-    if (nextIso === prev) return;
-    saveOrderPatch(orderId, { missingMaterialEta: nextIso });
-  };
-
+  const etaShort = formatEtaMmDd(etaIso);
+  if (!hasReasonDetail) {
+    return (
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={onToggle}
+        aria-expanded={isOpen}
+        aria-haspopup="dialog"
+        className="inline-flex max-w-full shrink-0 items-center gap-1 rounded-md border border-red-700 bg-red-900/80 px-2 py-0.5 text-[10px] font-bold text-red-200 transition hover:bg-red-900/95"
+      >
+        <span aria-hidden>📦</span>
+        <span className="truncate">未配料</span>
+      </button>
+    );
+  }
+  const displayReason = reasonText.length > 18 ? `${reasonText.slice(0, 18)}…` : reasonText;
   return (
-    <>
-      <input
-        type="text"
-        value={missingReasonDraft}
-        onChange={(e) => setMissingReasonDraft(e.target.value)}
-        onBlur={flushMissingReason}
-        placeholder="填写缺料原因…"
-        className={cn(
-          'w-full rounded border px-2 py-1.5 text-[10px] outline-none focus:ring-1',
-          theme === 'dark'
-            ? 'border-white/10 bg-slate-950/60 text-slate-200 placeholder:text-slate-500 focus:border-cyan-500/50 focus:ring-cyan-500/30'
-            : 'border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 focus:border-cyan-500 focus:ring-cyan-500/25'
-        )}
-        aria-label="缺料原因"
-      />
-      <input
-        type="date"
-        value={missingEtaDraft}
-        onChange={(e) => setMissingEtaDraft(e.target.value)}
-        onBlur={flushMissingEta}
-        className={cn(
-          'w-full rounded border px-2 py-1.5 text-[10px] outline-none focus:ring-1',
-          theme === 'dark'
-            ? 'border-white/10 bg-slate-950/60 text-slate-200 focus:border-cyan-500/50 focus:ring-cyan-500/30'
-            : 'border-gray-300 bg-white text-gray-900 focus:border-cyan-500 focus:ring-cyan-500/25'
-        )}
-        aria-label="预计到料日期"
-      />
-    </>
+    <button
+      ref={triggerRef}
+      type="button"
+      onClick={onToggle}
+      aria-expanded={isOpen}
+      aria-haspopup="dialog"
+      className="inline-flex max-w-full min-w-0 flex-1 items-center gap-1 rounded-md border border-red-500 bg-red-600 px-2 py-0.5 text-left text-[10px] font-bold text-white shadow-lg shadow-red-900/50 transition hover:bg-red-500"
+    >
+      <span className="shrink-0" aria-hidden>
+        📦
+      </span>
+      <span className="min-w-0 truncate">
+        缺: {displayReason}
+        {etaShort ? ` (${etaShort})` : ''}
+      </span>
+    </button>
   );
 }
 
@@ -211,6 +201,8 @@ export default function EnhancedOrderCard({
     !['料齐', '已配料', '未配料'].includes(task.materials) && task.materials !== '';
 
   const [materialPopoverOpen, setMaterialPopoverOpen] = useState(false);
+  const [materialPopoverDraftReason, setMaterialPopoverDraftReason] = useState('');
+  const [materialPopoverDraftEta, setMaterialPopoverDraftEta] = useState('');
   const [materialPopoverCoords, setMaterialPopoverCoords] = useState<{
     top: number;
     left: number;
@@ -242,10 +234,10 @@ export default function EnhancedOrderCard({
     const gap = 6;
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    const width = Math.min(260, vw - 2 * margin);
+    const width = Math.min(256, vw - 2 * margin);
     const left = Math.max(margin, Math.min(rect.left, vw - width - margin));
     const panel = materialPopoverPanelRef.current;
-    const h = Math.max(panel?.offsetHeight ?? 200, 140);
+    const h = Math.max(panel?.offsetHeight ?? 320, 160);
     let top = rect.bottom + gap;
     if (top + h > vh - margin) {
       top = rect.top - h - gap;
@@ -345,6 +337,32 @@ export default function EnhancedOrderCard({
     );
   }
 
+  const missingMaterialReasonFilled = normMaterialText(task.missingMaterialReason) != null;
+
+  const toggleMaterialMissingPopover = () => {
+    if (materialPopoverOpen) {
+      setMaterialPopoverOpen(false);
+      return;
+    }
+    setMaterialPopoverDraftReason(task.missingMaterialReason ?? '');
+    setMaterialPopoverDraftEta(missingEtaToDateInput(task.missingMaterialEta ?? null));
+    setMaterialPopoverOpen(true);
+  };
+
+  const cancelMaterialMissingPopover = () => {
+    setMaterialPopoverDraftReason(task.missingMaterialReason ?? '');
+    setMaterialPopoverDraftEta(missingEtaToDateInput(task.missingMaterialEta ?? null));
+    setMaterialPopoverOpen(false);
+  };
+
+  const saveMaterialMissingPopover = () => {
+    saveOrderPatch(task.id, {
+      missingMaterialReason: normMaterialText(materialPopoverDraftReason),
+      missingMaterialEta: dateInputToUtcNoonIso(materialPopoverDraftEta),
+    });
+    setMaterialPopoverOpen(false);
+  };
+
   const materialMissingPopoverPortal =
     typeof document !== 'undefined' &&
     materialPopoverOpen &&
@@ -355,12 +373,7 @@ export default function EnhancedOrderCard({
         ref={materialPopoverPanelRef}
         role="dialog"
         aria-label="缺料登记"
-        className={cn(
-          'z-[9999] rounded-xl border p-2.5 shadow-2xl',
-          theme === 'dark'
-            ? 'border-slate-700 bg-slate-800'
-            : 'border-gray-200 bg-white shadow-2xl'
-        )}
+        className="z-[9999] flex w-64 max-w-[min(100vw-1rem,16rem)] flex-col gap-3 rounded-xl border border-slate-700 bg-slate-900/95 p-4 shadow-2xl backdrop-blur-md"
         style={{
           position: 'fixed',
           top: materialPopoverCoords.top,
@@ -368,35 +381,67 @@ export default function EnhancedOrderCard({
           width: materialPopoverCoords.width,
         }}
       >
-        <label className="sr-only" htmlFor={`mat-status-${task.id}`}>
-          配料状态
-        </label>
-        <select
-          id={`mat-status-${task.id}`}
-          value={task.materials}
-          onChange={(e) => {
-            updateTask(task.id, 'materials', e.target.value);
-            if (['料齐', '已配料'].includes(e.target.value)) setMaterialPopoverOpen(false);
-          }}
-          className={cn(
-            'mb-2 w-full rounded border px-2 py-1.5 text-[10px] font-bold outline-none',
-            theme === 'dark'
-              ? 'border-slate-600 bg-slate-900 text-slate-100'
-              : 'border-gray-300 bg-gray-50 text-gray-900'
-          )}
-        >
-          <option value="料齐">料已齐</option>
-          <option value="未配料">未配料</option>
-          {isCustomMaterialShortage && <option value={task.materials}>⚠️ {task.materials}</option>}
-        </select>
-        <MissingMaterialFormFields
-          key={`${task.id}-mr:${task.missingMaterialReason ?? ''}-me:${task.missingMaterialEta ?? ''}`}
-          orderId={task.id}
-          initialReason={task.missingMaterialReason}
-          initialEtaIso={task.missingMaterialEta}
-          saveOrderPatch={saveOrderPatch}
-          theme={theme}
-        />
+        <div>
+          <label className="sr-only" htmlFor={`mat-status-${task.id}`}>
+            配料状态
+          </label>
+          <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">配料状态</p>
+          <select
+            id={`mat-status-${task.id}`}
+            value={task.materials}
+            onChange={(e) => {
+              updateTask(task.id, 'materials', e.target.value);
+              if (['料齐', '已配料'].includes(e.target.value)) setMaterialPopoverOpen(false);
+            }}
+            className="w-full rounded-md border border-slate-600 bg-slate-800 px-2 py-2 text-xs font-bold text-slate-100 outline-none focus:ring-1 focus:ring-red-500"
+          >
+            <option value="料齐">料已齐</option>
+            <option value="未配料">未配料</option>
+            {isCustomMaterialShortage && <option value={task.materials}>⚠️ {task.materials}</option>}
+          </select>
+        </div>
+        <div>
+          <label htmlFor={`missing-reason-${task.id}`} className="mb-1 block text-[10px] font-semibold text-slate-400">
+            缺料原因
+          </label>
+          <input
+            id={`missing-reason-${task.id}`}
+            type="text"
+            value={materialPopoverDraftReason}
+            onChange={(e) => setMaterialPopoverDraftReason(e.target.value)}
+            placeholder="填写缺料原因…"
+            className="w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-xs text-slate-100 outline-none placeholder:text-slate-500 focus:ring-1 focus:ring-red-500"
+          />
+        </div>
+        <div>
+          <label htmlFor={`missing-eta-${task.id}`} className="mb-1 block text-[10px] font-semibold text-slate-400">
+            预计到料
+          </label>
+          <input
+            id={`missing-eta-${task.id}`}
+            type="date"
+            value={materialPopoverDraftEta}
+            onChange={(e) => setMaterialPopoverDraftEta(e.target.value)}
+            style={{ colorScheme: 'dark' }}
+            className="w-full rounded-md border border-slate-600 bg-slate-800 p-2 text-xs text-slate-100 outline-none focus:ring-1 focus:ring-red-500 [color-scheme:dark]"
+          />
+        </div>
+        <div className="mt-1 flex items-center justify-end gap-2 border-t border-slate-700/80 pt-3">
+          <button
+            type="button"
+            onClick={cancelMaterialMissingPopover}
+            className="rounded-md border border-slate-600 px-3 py-1.5 text-xs font-semibold text-slate-300 transition hover:bg-slate-800"
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            onClick={saveMaterialMissingPopover}
+            className="rounded-md bg-red-600 px-3 py-1.5 text-xs font-bold text-white shadow-md transition hover:bg-red-500"
+          >
+            保存
+          </button>
+        </div>
       </div>,
       document.body
     );
@@ -624,35 +669,25 @@ export default function EnhancedOrderCard({
                 />
                 {showMissingMaterialPopover ? (
                   <div className="relative flex min-w-0 flex-1 items-center gap-1">
-                    <button
-                      ref={materialPopoverTriggerRef}
-                      type="button"
-                      onClick={() => setMaterialPopoverOpen((o) => !o)}
-                      className={cn(
-                        'shrink-0 rounded-md border px-2 py-0.5 text-[10px] font-bold transition',
-                        theme === 'dark'
-                          ? 'border-red-500/45 bg-red-950/55 text-red-200 hover:bg-red-900/65'
-                          : 'border-red-300 bg-red-50 text-red-800 hover:bg-red-100'
-                      )}
-                      aria-expanded={materialPopoverOpen}
-                      aria-haspopup="dialog"
-                      aria-label="未配料，点击登记缺料信息"
-                    >
-                      {task.materials === '未配料'
-                        ? '未配料'
-                        : `⚠ ${task.materials.length > 10 ? `${task.materials.slice(0, 10)}…` : task.materials}`}
-                    </button>
-                    {formatEtaNaturalZh(task.missingMaterialEta) ? (
+                    {task.materials !== '未配料' && isCustomMaterialShortage ? (
                       <span
                         className={cn(
-                          'min-w-0 truncate text-[9px] font-medium tabular-nums',
-                          theme === 'dark' ? 'text-slate-400' : 'text-gray-600'
+                          'mr-1 max-w-[4.5rem] truncate text-[9px] font-bold text-amber-200',
+                          theme === 'dark' ? '' : 'text-amber-800'
                         )}
-                        title={formatEtaNaturalZh(task.missingMaterialEta)}
+                        title={task.materials}
                       >
-                        {formatEtaNaturalZh(task.missingMaterialEta)}
+                        ⚠ {task.materials}
                       </span>
                     ) : null}
+                    <MissingMaterialMorphBadge
+                      triggerRef={materialPopoverTriggerRef}
+                      hasReasonDetail={missingMaterialReasonFilled}
+                      reasonText={String(task.missingMaterialReason ?? '').trim()}
+                      etaIso={task.missingMaterialEta}
+                      onToggle={toggleMaterialMissingPopover}
+                      isOpen={materialPopoverOpen}
+                    />
                   </div>
                 ) : (
                   <select
