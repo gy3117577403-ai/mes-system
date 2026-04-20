@@ -49,6 +49,10 @@ export interface Order {
   isDrawingReady: boolean;
   /** 物料齊套綠燈 */
   isMaterialReady: boolean;
+  /** 未配料時：缺料原因 */
+  missingMaterialReason?: string | null;
+  /** 未配料時：預計到料（ISO 8601 字串，如 `2026-04-18T12:00:00.000Z`） */
+  missingMaterialEta?: string | null;
   /** 紅燈阻斷原因（與 taskStatus=PAUSED 搭配） */
   exceptionRemark?: string;
   /** AI 或計劃員給出的具體排產日／星期描述（Asia/Shanghai 語意） */

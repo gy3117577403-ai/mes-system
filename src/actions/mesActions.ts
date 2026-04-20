@@ -142,6 +142,8 @@ function defaultOrderUncheckedCreate(id: string) {
     isUrgent: false,
     isDrawingReady: false,
     isMaterialReady: false,
+    missingMaterialReason: null,
+    missingMaterialEta: null,
     exceptionRemark: null,
     plannedDate: null,
     isArchived: false,
@@ -499,6 +501,26 @@ function buildOrderPatch(updateData: Record<string, unknown>): Record<string, un
   if ('isUrgent' in updateData) setBool('isUrgent', updateData.isUrgent);
   if ('isDrawingReady' in updateData) setBool('isDrawingReady', updateData.isDrawingReady);
   if ('isMaterialReady' in updateData) setBool('isMaterialReady', updateData.isMaterialReady);
+  if ('missingMaterialReason' in updateData) {
+    const v = updateData.missingMaterialReason;
+    if (v === undefined) {
+      /* skip */
+    } else if (v === null) p.missingMaterialReason = null;
+    else {
+      const s = String(v).trim();
+      p.missingMaterialReason = s === '' ? null : s;
+    }
+  }
+  if ('missingMaterialEta' in updateData) {
+    const v = updateData.missingMaterialEta;
+    if (v === undefined) {
+      /* skip */
+    } else if (v === null || v === '') p.missingMaterialEta = null;
+    else {
+      const d = new Date(String(v));
+      p.missingMaterialEta = Number.isNaN(d.getTime()) ? null : d;
+    }
+  }
   if ('exceptionRemark' in updateData) {
     const v = updateData.exceptionRemark;
     if (v === undefined) {
@@ -816,6 +838,11 @@ export async function toggleOrderReadyStatus(
 
     if (trimmedBox) {
       patch.boxNumber = trimmedBox;
+    }
+
+    if (toggleType === 'MATERIAL' && ready) {
+      patch.missingMaterialReason = null;
+      patch.missingMaterialEta = null;
     }
 
     if (!ready) {

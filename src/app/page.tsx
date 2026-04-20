@@ -443,19 +443,51 @@ export default function KanbanApp() {
     return 分钟LoadDay;
   };
 
+  const saveOrderPatch = useCallback((orderId: string, patch: Record<string, unknown>) => {
+    setOrders((prev) =>
+      prev.map((order) => (order.id === orderId ? ({ ...order, ...patch } as Order) : order))
+    );
+    void updateOrderAction(orderId, patch);
+  }, []);
+
   const updateOrderData = useCallback(
     (orderId: string, field: string, value: any) => {
+      if (field === 'materials') {
+        const mat = String(value);
+        const ready = ['料齐', '已配料'].includes(mat);
+        const patch: Record<string, unknown> = { materials: mat, isMaterialReady: ready };
+        if (ready) {
+          patch.missingMaterialReason = null;
+          patch.missingMaterialEta = null;
+        }
+        setOrders((prev) => {
+          const o = prev.find((x) => x.id === orderId);
+          if (o && user) {
+            queueMicrotask(() =>
+              appendAuditLog('material_change', `将 ${o.model} 配料更新为 ${mat}`)
+            );
+          }
+          return prev.map((order) =>
+            order.id === orderId
+              ? ({
+                  ...order,
+                  materials: mat,
+                  isMaterialReady: ready,
+                  ...(ready ? { missingMaterialReason: null, missingMaterialEta: null } : {}),
+                } as Order)
+              : order
+          );
+        });
+        void updateOrderAction(orderId, patch);
+        return;
+      }
+
       setOrders((prev) => {
         const o = prev.find((x) => x.id === orderId);
         if (o && user) {
           if (field === 'drawing') {
             queueMicrotask(() =>
               appendAuditLog('upload_sop', `将 ${o.model} 图纸状态更新为 ${value}`)
-            );
-          }
-          if (field === 'materials') {
-            queueMicrotask(() =>
-              appendAuditLog('material_change', `将 ${o.model} 配料更新为 ${value}`)
             );
           }
         }
@@ -1320,6 +1352,7 @@ export default function KanbanApp() {
           isProcessing={isProcessing}
           getCardStatus={getCardStatus}
           updateOrderData={updateOrderData}
+          saveOrderPatch={saveOrderPatch}
           triggerBatchAISchedule={triggerBatchAISchedule}
           onDragEnd={onDragEnd}
           dailyCapacity={dailyCapacity}

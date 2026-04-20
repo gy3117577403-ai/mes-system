@@ -48,6 +48,20 @@ export function normalizeOrder(raw: Partial<Order> & { id: string }): Order {
     isUrgent: raw.isUrgent === true,
     isDrawingReady: raw.isDrawingReady === true,
     isMaterialReady: raw.isMaterialReady === true,
+    missingMaterialReason:
+      raw.missingMaterialReason === undefined
+        ? undefined
+        : raw.missingMaterialReason === null || raw.missingMaterialReason === ''
+          ? null
+          : String(raw.missingMaterialReason),
+    missingMaterialEta:
+      raw.missingMaterialEta === undefined
+        ? undefined
+        : raw.missingMaterialEta === null || raw.missingMaterialEta === ''
+          ? null
+          : typeof raw.missingMaterialEta === 'string'
+            ? raw.missingMaterialEta
+            : String(raw.missingMaterialEta),
     exceptionRemark: raw.exceptionRemark ?? undefined,
     plannedDate: raw.plannedDate ?? undefined,
     isArchived: raw.isArchived === true,

@@ -47,6 +47,10 @@ model Order {
   isDrawingReady  Boolean @default(false)
   /// 物料是否齊套（綠燈）
   isMaterialReady Boolean @default(false)
+  /// 未配料時：缺料原因（已配料後應清空）
+  missingMaterialReason String?
+  /// 未配料時：預計到料時間（已配料後應清空）
+  missingMaterialEta    DateTime?
   /// 紅燈阻斷時由 PMC／系統寫入的異常說明
   exceptionRemark String?
   /// AI 或計劃員排定後的具體星期／日期描述（建議 Asia/Shanghai 語意）

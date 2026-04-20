@@ -30,6 +30,8 @@ export function prismaOrderToFrontend(row: PrismaOrder): Order {
     isUrgent: row.isUrgent,
     isDrawingReady: row.isDrawingReady,
     isMaterialReady: row.isMaterialReady,
+    missingMaterialReason: row.missingMaterialReason ?? undefined,
+    missingMaterialEta: row.missingMaterialEta ? row.missingMaterialEta.toISOString() : undefined,
     exceptionRemark: row.exceptionRemark ?? undefined,
     plannedDate: row.plannedDate ?? undefined,
     isArchived: row.isArchived,
@@ -64,6 +66,14 @@ export function frontendOrderToPrismaCreate(o: Order) {
     isUrgent: o.isUrgent,
     isDrawingReady: o.isDrawingReady,
     isMaterialReady: o.isMaterialReady,
+    missingMaterialReason:
+      o.missingMaterialReason === undefined || o.missingMaterialReason === null || o.missingMaterialReason === ''
+        ? null
+        : String(o.missingMaterialReason),
+    missingMaterialEta:
+      o.missingMaterialEta === undefined || o.missingMaterialEta === null || o.missingMaterialEta === ''
+        ? null
+        : new Date(o.missingMaterialEta),
     exceptionRemark: o.exceptionRemark ?? null,
     plannedDate: o.plannedDate ?? null,
     isArchived: o.isArchived ?? false,

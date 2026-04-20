@@ -30,6 +30,7 @@ interface KanbanBoardProps {
   isProcessing: boolean;
   getCardStatus: (task: Order) => string;
   updateOrderData: (orderId: string, field: string, value: any) => void;
+  saveOrderPatch: (orderId: string, patch: Record<string, unknown>) => void;
   triggerBatchAISchedule: () => void;
   onDragEnd: (result: DropResult) => void;
   dailyCapacity: number;
@@ -47,6 +48,7 @@ export default function KanbanBoard({
   isProcessing,
   getCardStatus,
   updateOrderData,
+  saveOrderPatch,
   triggerBatchAISchedule,
   onDragEnd,
   dailyCapacity,
@@ -115,6 +117,7 @@ export default function KanbanBoard({
                   task={task}
                   status={getCardStatus(task)}
                   updateTask={updateOrderData}
+                  saveOrderPatch={saveOrderPatch}
                   rbac={orderCardRbac}
                   layoutMode={layoutMode}
                   theme={theme}
@@ -145,6 +148,7 @@ export default function KanbanBoard({
                   task={task}
                   status={getCardStatus(task)}
                   updateTask={updateOrderData}
+                  saveOrderPatch={saveOrderPatch}
                   rbac={orderCardRbac}
                   layoutMode={layoutMode}
                   theme={theme}
@@ -203,6 +207,7 @@ export default function KanbanBoard({
                               task={task}
                               status={getCardStatus(task)}
                               updateTask={updateOrderData}
+                              saveOrderPatch={saveOrderPatch}
                               rbac={orderCardRbac}
                               layoutMode={layoutMode}
                               theme={theme}
@@ -342,6 +347,7 @@ export default function KanbanBoard({
                                 task={task}
                                 status={getCardStatus(task)}
                                 updateTask={updateOrderData}
+                                saveOrderPatch={saveOrderPatch}
                                 rbac={orderCardRbac}
                                 layoutMode={layoutMode}
                                 theme={theme}

@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   AlertOctagon,
   CalendarClock,
@@ -23,6 +23,96 @@ import {
 } from '@/lib/rbac';
 import { isOrderCompletedStatus } from '@/lib/orderStatus';
 import type { AppTheme, LayoutMode } from '@/lib/uiTheme';
+import { cn } from '@/lib/uiTheme';
+
+function missingEtaToDateInput(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toISOString().slice(0, 10);
+}
+
+function dateInputToUtcNoonIso(ymd: string): string | null {
+  const t = ymd.trim();
+  if (!t) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(t)) return null;
+  const [y, m, d] = t.split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d, 12, 0, 0, 0)).toISOString();
+}
+
+function normMaterialText(s: string | null | undefined): string | null {
+  if (s == null) return null;
+  const t = String(s).trim();
+  return t === '' ? null : t;
+}
+
+function MaterialMissingInlineFields({
+  orderId,
+  initialReason,
+  initialEtaIso,
+  saveOrderPatch,
+  theme,
+}: {
+  orderId: string;
+  initialReason: string | null | undefined;
+  initialEtaIso: string | null | undefined;
+  saveOrderPatch: (id: string, patch: Record<string, unknown>) => void;
+  theme: AppTheme;
+}) {
+  const [missingReasonDraft, setMissingReasonDraft] = useState(() => initialReason ?? '');
+  const [missingEtaDraft, setMissingEtaDraft] = useState(() => missingEtaToDateInput(initialEtaIso ?? null));
+
+  const flushMissingReason = () => {
+    const next = normMaterialText(missingReasonDraft);
+    const prev = normMaterialText(initialReason);
+    if (next === prev) return;
+    saveOrderPatch(orderId, { missingMaterialReason: next });
+  };
+
+  const flushMissingEta = () => {
+    const nextIso = dateInputToUtcNoonIso(missingEtaDraft);
+    const prev = initialEtaIso ?? null;
+    if (nextIso === prev) return;
+    saveOrderPatch(orderId, { missingMaterialEta: nextIso });
+  };
+
+  return (
+    <div
+      className={cn(
+        'mt-0 space-y-2 rounded p-2',
+        theme === 'dark' ? 'bg-slate-800/50' : 'border border-gray-200 bg-gray-100/80'
+      )}
+    >
+      <input
+        type="text"
+        value={missingReasonDraft}
+        onChange={(e) => setMissingReasonDraft(e.target.value)}
+        onBlur={flushMissingReason}
+        placeholder="填写缺料原因…"
+        className={cn(
+          'w-full rounded border px-2 py-1.5 text-[10px] outline-none focus:ring-1',
+          theme === 'dark'
+            ? 'border-white/10 bg-slate-950/60 text-slate-200 placeholder:text-slate-500 focus:border-cyan-500/50 focus:ring-cyan-500/30'
+            : 'border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 focus:border-cyan-500 focus:ring-cyan-500/25'
+        )}
+        aria-label="缺料原因"
+      />
+      <input
+        type="date"
+        value={missingEtaDraft}
+        onChange={(e) => setMissingEtaDraft(e.target.value)}
+        onBlur={flushMissingEta}
+        className={cn(
+          'w-full rounded border px-2 py-1.5 text-[10px] outline-none focus:ring-1',
+          theme === 'dark'
+            ? 'border-white/10 bg-slate-950/60 text-slate-200 focus:border-cyan-500/50 focus:ring-cyan-500/30'
+            : 'border-gray-300 bg-white text-gray-900 focus:border-cyan-500 focus:ring-cyan-500/25'
+        )}
+        aria-label="预计到料日期"
+      />
+    </div>
+  );
+}
 
 export interface OrderCardRbacProps {
   role: UserRole;
@@ -32,6 +122,7 @@ interface EnhancedOrderCardProps {
   task: Order;
   status: string;
   updateTask: (orderId: string, field: string, value: any) => void;
+  saveOrderPatch: (orderId: string, patch: Record<string, unknown>) => void;
   rbac?: OrderCardRbacProps;
   layoutMode?: LayoutMode;
   theme?: AppTheme;
@@ -54,6 +145,7 @@ export default function EnhancedOrderCard({
   task,
   status,
   updateTask,
+  saveOrderPatch,
   rbac,
   layoutMode = 'card',
   theme = 'dark',
@@ -373,85 +465,98 @@ export default function EnhancedOrderCard({
           </div>
 
           <div
-            className={`flex gap-2 items-center justify-between transition-all duration-300 ${
+            className={`flex flex-col gap-2 transition-all duration-300 ${
               wh && !boss ? 'ring-2 ring-amber-400/50 rounded-xl p-2 bg-amber-950/20 shadow-[0_0_24px_rgba(251,191,36,0.12)]' : ''
             } ${theme === 'light' && wh && !boss ? 'bg-amber-50/90' : ''}`}
           >
-            <div
-              className={`flex items-center flex-1 min-w-[120px] px-1.5 py-1 rounded-lg border ${
-                ['料齐', '已配料'].includes(task.materials)
-                  ? theme === 'dark'
-                    ? 'border-emerald-500/40 bg-emerald-950/30'
-                    : 'border-emerald-400 bg-emerald-50'
-                  : theme === 'dark'
-                    ? 'border-red-500/40 bg-red-950/30'
-                    : 'border-red-300 bg-red-50'
-              } ${dimBody && !wh && !boss ? 'opacity-35 pointer-events-none' : ''}`}
-            >
-              <Package
-                className={`w-3.5 h-3.5 mr-1 shrink-0 ${['料齐', '已配料'].includes(task.materials) ? 'text-emerald-400' : 'text-red-400'}`}
-              />
-              <select
-                disabled={materialsDisabled}
-                value={task.materials}
-                onChange={(e) => updateTask(task.id, 'materials', e.target.value)}
-                className={`min-w-0 flex-1 text-[10px] font-bold bg-transparent outline-none cursor-pointer appearance-none truncate ${
-                  ['料齐', '已配料'].includes(task.materials) ? 'text-emerald-400' : 'text-red-400'
-                } ${materialsDisabled ? 'cursor-not-allowed opacity-60' : ''}`}
-                title={task.materials}
+            <div className="flex gap-2 items-center justify-between">
+              <div
+                className={`flex items-center flex-1 min-w-[120px] px-1.5 py-1 rounded-lg border ${
+                  ['料齐', '已配料'].includes(task.materials)
+                    ? theme === 'dark'
+                      ? 'border-emerald-500/40 bg-emerald-950/30'
+                      : 'border-emerald-400 bg-emerald-50'
+                    : theme === 'dark'
+                      ? 'border-red-500/40 bg-red-950/30'
+                      : 'border-red-300 bg-red-50'
+                } ${dimBody && !wh && !boss ? 'opacity-35 pointer-events-none' : ''}`}
               >
-                <option value="料齐">料已齐</option>
-                <option value="未配料">未配料</option>
-                {isCustomMaterialShortage && <option value={task.materials}>⚠️ {task.materials}</option>}
-              </select>
+                <Package
+                  className={`w-3.5 h-3.5 mr-1 shrink-0 ${['料齐', '已配料'].includes(task.materials) ? 'text-emerald-400' : 'text-red-400'}`}
+                />
+                <select
+                  disabled={materialsDisabled}
+                  value={task.materials}
+                  onChange={(e) => updateTask(task.id, 'materials', e.target.value)}
+                  className={`min-w-0 flex-1 text-[10px] font-bold bg-transparent outline-none cursor-pointer appearance-none truncate ${
+                    ['料齐', '已配料'].includes(task.materials) ? 'text-emerald-400' : 'text-red-400'
+                  } ${materialsDisabled ? 'cursor-not-allowed opacity-60' : ''}`}
+                  title={task.materials}
+                >
+                  <option value="料齐">料已齐</option>
+                  <option value="未配料">未配料</option>
+                  {isCustomMaterialShortage && <option value={task.materials}>⚠️ {task.materials}</option>}
+                </select>
+              </div>
+
+              <div className="flex items-center gap-1 shrink-0">
+                {task.taskStatus === 'PendingQC' ? (
+                  <span className="text-[10px] text-amber-400 font-bold px-1">待质检（顶部「质检审核」）</span>
+                ) : isCompleted ? (
+                  <button
+                    onClick={() => updateTask(task.id, 'taskStatus', 'normal')}
+                    className={`text-[10px] underline ${
+                      theme === 'dark' ? 'text-slate-400 hover:text-blue-400' : 'text-gray-600 hover:text-blue-700'
+                    }`}
+                  >
+                    撤销完成
+                  </button>
+                ) : isAnomaly ? (
+                  <button
+                    onClick={() => updateTask(task.id, 'taskStatus', 'normal')}
+                    className="text-[10px] bg-red-950/80 text-red-300 px-1.5 py-0.5 rounded font-bold hover:bg-red-900"
+                  >
+                    解除异常
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => updateTask(task.id, 'taskStatus', 'anomaly')}
+                      title="提报异常"
+                      className={`p-1 rounded transition-colors ${
+                        theme === 'dark'
+                          ? 'text-slate-500 hover:text-red-400 hover:bg-red-950/50'
+                          : 'text-gray-500 hover:text-red-600 hover:bg-red-50'
+                      }`}
+                    >
+                      <Flag className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => updateTask(task.id, 'taskStatus', 'completed')}
+                      title="标记为已完成"
+                      className={`p-1 rounded transition-colors ${
+                        theme === 'dark'
+                          ? 'text-slate-500 hover:text-emerald-400 hover:bg-emerald-950/50'
+                          : 'text-gray-500 hover:text-emerald-600 hover:bg-emerald-50'
+                      }`}
+                    >
+                      <CheckCircle2 className="w-5 h-5" />
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
 
-            <div className="flex items-center gap-1 shrink-0">
-              {task.taskStatus === 'PendingQC' ? (
-                <span className="text-[10px] text-amber-400 font-bold px-1">待质检（顶部「质检审核」）</span>
-              ) : isCompleted ? (
-                <button
-                  onClick={() => updateTask(task.id, 'taskStatus', 'normal')}
-                  className={`text-[10px] underline ${
-                    theme === 'dark' ? 'text-slate-400 hover:text-blue-400' : 'text-gray-600 hover:text-blue-700'
-                  }`}
-                >
-                  撤销完成
-                </button>
-              ) : isAnomaly ? (
-                <button
-                  onClick={() => updateTask(task.id, 'taskStatus', 'normal')}
-                  className="text-[10px] bg-red-950/80 text-red-300 px-1.5 py-0.5 rounded font-bold hover:bg-red-900"
-                >
-                  解除异常
-                </button>
-              ) : (
-                <>
-                  <button
-                    onClick={() => updateTask(task.id, 'taskStatus', 'anomaly')}
-                    title="提报异常"
-                    className={`p-1 rounded transition-colors ${
-                      theme === 'dark'
-                        ? 'text-slate-500 hover:text-red-400 hover:bg-red-950/50'
-                        : 'text-gray-500 hover:text-red-600 hover:bg-red-50'
-                    }`}
-                  >
-                    <Flag className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => updateTask(task.id, 'taskStatus', 'completed')}
-                    title="标记为已完成"
-                    className={`p-1 rounded transition-colors ${
-                      theme === 'dark'
-                        ? 'text-slate-500 hover:text-emerald-400 hover:bg-emerald-950/50'
-                        : 'text-gray-500 hover:text-emerald-600 hover:bg-emerald-50'
-                    }`}
-                  >
-                    <CheckCircle2 className="w-5 h-5" />
-                  </button>
-                </>
-              )}
-            </div>
+            {!materialsDisabled && task.isMaterialReady === false && (
+              <MaterialMissingInlineFields
+                key={`${task.id}-mr:${task.missingMaterialReason ?? ''}-me:${task.missingMaterialEta ?? ''}`}
+                orderId={task.id}
+                initialReason={task.missingMaterialReason}
+                initialEtaIso={task.missingMaterialEta}
+                saveOrderPatch={saveOrderPatch}
+                theme={theme}
+              />
+            )}
           </div>
         </div>
       </div>
