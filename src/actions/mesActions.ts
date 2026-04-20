@@ -189,7 +189,8 @@ export async function fetchInitialData(): Promise<FetchInitialDataResult> {
     const [rows, workerRows, logRows, settings] = await Promise.all([
       prisma.order.findMany({
         where: { deletedAt: null, isArchived: false },
-        orderBy: { createdAt: 'desc' },
+        /** 主看板資料：急單優先，其餘按交期 EDD 升序（deliveryDate 多為 yyyy-MM-dd 字串，字元序等同日曆序） */
+        orderBy: [{ isUrgent: 'desc' }, { deliveryDate: 'asc' }],
       }),
       prisma.mesWorker.findMany({ orderBy: { sortOrder: 'asc' } }),
       prisma.mesActivityLog.findMany({

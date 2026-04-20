@@ -58,6 +58,22 @@ import {
   parseShanghaiWallClockToEpochMs,
 } from '@/lib/datetimeShanghai';
 
+/** 無效或空交期排在同急迫度層級最末，避免沉底有效交期單據 */
+function deliveryDateEpochMsForKanbanSort(raw: string | null | undefined): number {
+  const s = String(raw ?? '').trim();
+  if (!s) return Number.MAX_SAFE_INTEGER;
+  const ms = new Date(s).getTime();
+  return Number.isFinite(ms) ? ms : Number.MAX_SAFE_INTEGER;
+}
+
+/** 左側三核心池：急單絕對置頂，其餘嚴格按交期（deliveryDate）升序 */
+function compareKanbanLeftPoolOrders(a: Order, b: Order): number {
+  const ua = a.isUrgent === true ? 1 : 0;
+  const ub = b.isUrgent === true ? 1 : 0;
+  if (ua !== ub) return ub - ua;
+  return deliveryDateEpochMsForKanbanSort(a.deliveryDate) - deliveryDateEpochMsForKanbanSort(b.deliveryDate);
+}
+
 const ALARM_MSG: Record<AlarmKind, string> = {
   Material: '物料准备',
   Maintenance: '设备维修',
@@ -406,9 +422,9 @@ export default function KanbanApp() {
     });
 
     return {
-      techPoolOrders: tech,
-      warehousePoolOrders: wh,
-      readyPoolOrders: ready,
+      techPoolOrders: [...tech].sort(compareKanbanLeftPoolOrders),
+      warehousePoolOrders: [...wh].sort(compareKanbanLeftPoolOrders),
+      readyPoolOrders: [...ready].sort(compareKanbanLeftPoolOrders),
     };
   }, [filteredOrders]);
 
