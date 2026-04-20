@@ -1,7 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 'use client';
 
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { format, isValid, parseISO } from 'date-fns';
 import {
   AlertOctagon,
   CalendarClock,
@@ -46,7 +47,19 @@ function normMaterialText(s: string | null | undefined): string | null {
   return t === '' ? null : t;
 }
 
-function MaterialMissingInlineFields({
+/** 自然語言到料日（不含具體時分） */
+function formatEtaNaturalZh(iso: string | null | undefined): string {
+  if (!iso) return '';
+  try {
+    const d = parseISO(iso);
+    if (!isValid(d)) return '';
+    return `${format(d, 'M月d日')} 到料`;
+  } catch {
+    return '';
+  }
+}
+
+function MissingMaterialFormFields({
   orderId,
   initialReason,
   initialEtaIso,
@@ -77,12 +90,7 @@ function MaterialMissingInlineFields({
   };
 
   return (
-    <div
-      className={cn(
-        'mt-0 space-y-2 rounded p-2',
-        theme === 'dark' ? 'bg-slate-800/50' : 'border border-gray-200 bg-gray-100/80'
-      )}
-    >
+    <>
       <input
         type="text"
         value={missingReasonDraft}
@@ -110,7 +118,7 @@ function MaterialMissingInlineFields({
         )}
         aria-label="预计到料日期"
       />
-    </div>
+    </>
   );
 }
 
@@ -200,6 +208,33 @@ export default function EnhancedOrderCard({
 
   const isCustomMaterialShortage =
     !['料齐', '已配料', '未配料'].includes(task.materials) && task.materials !== '';
+
+  const [materialPopoverOpen, setMaterialPopoverOpen] = useState(false);
+  const materialPopoverRootRef = useRef<HTMLDivElement>(null);
+
+  /** 僅未配料且可編輯：才允許缺料 Popover（已配料嚴禁） */
+  const showMissingMaterialPopover =
+    !materialsDisabled && task.isMaterialReady === false && !['料齐', '已配料'].includes(task.materials);
+
+  const materialsLooksKit = ['料齐', '已配料'].includes(task.materials) || task.isMaterialReady === true;
+
+  useEffect(() => {
+    if (task.isMaterialReady !== false || ['料齐', '已配料'].includes(task.materials)) {
+      queueMicrotask(() => {
+        setMaterialPopoverOpen(false);
+      });
+    }
+  }, [task.isMaterialReady, task.materials]);
+
+  useEffect(() => {
+    if (!materialPopoverOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (materialPopoverRootRef.current?.contains(e.target as Node)) return;
+      setMaterialPopoverOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [materialPopoverOpen]);
 
   const handleSopFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
@@ -471,8 +506,8 @@ export default function EnhancedOrderCard({
           >
             <div className="flex gap-2 items-center justify-between">
               <div
-                className={`flex items-center flex-1 min-w-[120px] px-1.5 py-1 rounded-lg border ${
-                  ['料齐', '已配料'].includes(task.materials)
+                className={`flex items-center flex-1 min-w-[120px] gap-1 px-1.5 py-1 rounded-lg border ${
+                  materialsLooksKit
                     ? theme === 'dark'
                       ? 'border-emerald-500/40 bg-emerald-950/30'
                       : 'border-emerald-400 bg-emerald-50'
@@ -482,21 +517,96 @@ export default function EnhancedOrderCard({
                 } ${dimBody && !wh && !boss ? 'opacity-35 pointer-events-none' : ''}`}
               >
                 <Package
-                  className={`w-3.5 h-3.5 mr-1 shrink-0 ${['料齐', '已配料'].includes(task.materials) ? 'text-emerald-400' : 'text-red-400'}`}
+                  className={`w-3.5 h-3.5 mr-1 shrink-0 ${materialsLooksKit ? 'text-emerald-400' : 'text-red-400'}`}
                 />
-                <select
-                  disabled={materialsDisabled}
-                  value={task.materials}
-                  onChange={(e) => updateTask(task.id, 'materials', e.target.value)}
-                  className={`min-w-0 flex-1 text-[10px] font-bold bg-transparent outline-none cursor-pointer appearance-none truncate ${
-                    ['料齐', '已配料'].includes(task.materials) ? 'text-emerald-400' : 'text-red-400'
-                  } ${materialsDisabled ? 'cursor-not-allowed opacity-60' : ''}`}
-                  title={task.materials}
-                >
-                  <option value="料齐">料已齐</option>
-                  <option value="未配料">未配料</option>
-                  {isCustomMaterialShortage && <option value={task.materials}>⚠️ {task.materials}</option>}
-                </select>
+                {showMissingMaterialPopover ? (
+                  <div ref={materialPopoverRootRef} className="relative flex min-w-0 flex-1 items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setMaterialPopoverOpen((o) => !o)}
+                      className={cn(
+                        'shrink-0 rounded-md border px-2 py-0.5 text-[10px] font-bold transition',
+                        theme === 'dark'
+                          ? 'border-red-500/45 bg-red-950/55 text-red-200 hover:bg-red-900/65'
+                          : 'border-red-300 bg-red-50 text-red-800 hover:bg-red-100'
+                      )}
+                      aria-expanded={materialPopoverOpen}
+                      aria-haspopup="dialog"
+                      aria-label="未配料，点击登记缺料信息"
+                    >
+                      {task.materials === '未配料'
+                        ? '未配料'
+                        : `⚠ ${task.materials.length > 10 ? `${task.materials.slice(0, 10)}…` : task.materials}`}
+                    </button>
+                    {formatEtaNaturalZh(task.missingMaterialEta) ? (
+                      <span
+                        className={cn(
+                          'min-w-0 truncate text-[9px] font-medium tabular-nums',
+                          theme === 'dark' ? 'text-slate-400' : 'text-gray-600'
+                        )}
+                        title={formatEtaNaturalZh(task.missingMaterialEta)}
+                      >
+                        {formatEtaNaturalZh(task.missingMaterialEta)}
+                      </span>
+                    ) : null}
+                    {materialPopoverOpen && task.isMaterialReady === false && (
+                      <div
+                        role="dialog"
+                        aria-label="缺料登记"
+                        className={cn(
+                          'absolute left-0 top-[calc(100%+6px)] z-50 min-w-[200px] max-w-[min(100vw-2rem,260px)] rounded-xl border p-2.5 shadow-xl backdrop-blur-md',
+                          theme === 'dark'
+                            ? 'border-white/10 bg-slate-950/90 shadow-black/40'
+                            : 'border-gray-200 bg-white/95 shadow-lg'
+                        )}
+                      >
+                        <label className="sr-only" htmlFor={`mat-status-${task.id}`}>
+                          配料状态
+                        </label>
+                        <select
+                          id={`mat-status-${task.id}`}
+                          value={task.materials}
+                          onChange={(e) => {
+                            updateTask(task.id, 'materials', e.target.value);
+                            if (['料齐', '已配料'].includes(e.target.value)) setMaterialPopoverOpen(false);
+                          }}
+                          className={cn(
+                            'mb-2 w-full rounded border px-2 py-1.5 text-[10px] font-bold outline-none',
+                            theme === 'dark'
+                              ? 'border-white/15 bg-slate-900 text-slate-100'
+                              : 'border-gray-300 bg-gray-50 text-gray-900'
+                          )}
+                        >
+                          <option value="料齐">料已齐</option>
+                          <option value="未配料">未配料</option>
+                          {isCustomMaterialShortage && <option value={task.materials}>⚠️ {task.materials}</option>}
+                        </select>
+                        <MissingMaterialFormFields
+                          key={`${task.id}-mr:${task.missingMaterialReason ?? ''}-me:${task.missingMaterialEta ?? ''}`}
+                          orderId={task.id}
+                          initialReason={task.missingMaterialReason}
+                          initialEtaIso={task.missingMaterialEta}
+                          saveOrderPatch={saveOrderPatch}
+                          theme={theme}
+                        />
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <select
+                    disabled={materialsDisabled}
+                    value={task.materials}
+                    onChange={(e) => updateTask(task.id, 'materials', e.target.value)}
+                    className={`min-w-0 flex-1 text-[10px] font-bold bg-transparent outline-none cursor-pointer appearance-none truncate ${
+                      materialsLooksKit ? 'text-emerald-400' : 'text-red-400'
+                    } ${materialsDisabled ? 'cursor-not-allowed opacity-60' : ''}`}
+                    title={task.materials}
+                  >
+                    <option value="料齐">料已齐</option>
+                    <option value="未配料">未配料</option>
+                    {isCustomMaterialShortage && <option value={task.materials}>⚠️ {task.materials}</option>}
+                  </select>
+                )}
               </div>
 
               <div className="flex items-center gap-1 shrink-0">
@@ -546,17 +656,6 @@ export default function EnhancedOrderCard({
                 )}
               </div>
             </div>
-
-            {!materialsDisabled && task.isMaterialReady === false && (
-              <MaterialMissingInlineFields
-                key={`${task.id}-mr:${task.missingMaterialReason ?? ''}-me:${task.missingMaterialEta ?? ''}`}
-                orderId={task.id}
-                initialReason={task.missingMaterialReason}
-                initialEtaIso={task.missingMaterialEta}
-                saveOrderPatch={saveOrderPatch}
-                theme={theme}
-              />
-            )}
           </div>
         </div>
       </div>
