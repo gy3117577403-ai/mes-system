@@ -6,6 +6,8 @@ import { nowEpochMsForMesStorage } from '@/lib/datetimeShanghai';
 
 const DEEPSEEK_CHAT_URL = 'https://api.deepseek.com/chat/completions';
 const DEEPSEEK_MODEL = 'deepseek-chat';
+const ABNORMAL_CLAIM_CONTEXT_WARNING =
+  '异常工时台账表 MesAbnormalClaim 不可用，本次 AI 仅基于订单、交期、产能、缺料和图纸状态进行分析。';
 
 export type AiCopilotMutation =
   | { type: 'UPDATE_ORDER_DATE'; orderId: string; newDate: string }
@@ -38,6 +40,11 @@ type DeepSeekChatBody = {
   error?: { message?: string };
 };
 
+type SchedulerContextBuildResult = {
+  context: string;
+  warnings: string[];
+};
+
 function fallbackAiCopilotResponse(
   reply: string,
   unreasonableAlerts: string[] = ['AI 排单执行失败，请检查模型配置、数据库连接或稍后重试']
@@ -52,6 +59,17 @@ function fallbackAiCopilotResponse(
 
 function safeErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function uniqueNonEmpty(items: string[]): string[] {
+  return [...new Set(items.map((item) => String(item).trim()).filter(Boolean))];
+}
+
+function withContextWarnings(result: AiCopilotResponse, warnings: string[]): AiCopilotResponse {
+  return {
+    ...result,
+    unreasonableAlerts: uniqueNonEmpty([...warnings, ...result.unreasonableAlerts]),
+  };
 }
 
 function extractJsonObjectText(raw: string): string {
@@ -122,9 +140,28 @@ function normalizeAiPayload(raw: unknown): AiCopilotResponse {
   };
 }
 
-async function buildSchedulerContext(currentBaseLimit: number) {
-  const [orders, exceptions] = await Promise.all([
-    prisma.order.findMany({
+async function buildSchedulerContext(currentBaseLimit: number): Promise<SchedulerContextBuildResult> {
+  const warnings: string[] = [];
+
+  let orders: Array<{
+    id: string;
+    model: string;
+    client: string;
+    plannedDate: string | null;
+    assignedDay: string;
+    deliveryDate: string;
+    totalQty: number;
+    reportedQty: number;
+    qty: number;
+    totalHours: number;
+    taskStatus: string;
+    isUrgent: boolean;
+    isMaterialReady: boolean;
+    isDrawingReady: boolean;
+  }>;
+
+  try {
+    orders = await prisma.order.findMany({
       where: {
         deletedAt: null,
         isArchived: false,
@@ -147,8 +184,24 @@ async function buildSchedulerContext(currentBaseLimit: number) {
         isMaterialReady: true,
         isDrawingReady: true,
       },
-    }),
-    prisma.mesAbnormalClaim.findMany({
+    });
+  } catch (error) {
+    throw new Error(`订单排产上下文读取失败：${safeErrorMessage(error)}`);
+  }
+
+  let exceptions: Array<{
+    id: string;
+    orderId: string;
+    workerName: string;
+    claimedHours: number;
+    reason: string;
+    status: string;
+    createdAt: number;
+    order: { model: string };
+  }> = [];
+
+  try {
+    exceptions = await prisma.mesAbnormalClaim.findMany({
       orderBy: { createdAt: 'desc' },
       take: 100,
       select: {
@@ -161,11 +214,15 @@ async function buildSchedulerContext(currentBaseLimit: number) {
         createdAt: true,
         order: { select: { model: true } },
       },
-    }),
-  ]);
+    });
+  } catch (error) {
+    console.error('[buildSchedulerContext] MesAbnormalClaim context unavailable:', error);
+    warnings.push(ABNORMAL_CLAIM_CONTEXT_WARNING);
+  }
 
-  return JSON.stringify({
+  const context = JSON.stringify({
     currentBaseLimit,
+    contextWarnings: warnings,
     orders: orders.map((o) => {
       const totalQuantity = Number(o.totalQty || o.qty || 1);
       const planMinutes = Number(o.totalHours) || 0;
@@ -197,6 +254,8 @@ async function buildSchedulerContext(currentBaseLimit: number) {
       createdAt: e.createdAt,
     })),
   });
+
+  return { context, warnings };
 }
 
 export async function interactWithAiCopilotAction(
@@ -206,7 +265,8 @@ export async function interactWithAiCopilotAction(
   const prompt = String(userPrompt ?? '').trim();
   if (!prompt) {
     return {
-      ok: true,
+      ok: false,
+      error: '请输入 AI 排单指令后再执行。',
       data: fallbackAiCopilotResponse('请输入 AI 排单指令后再执行。', ['用户指令为空，未触发 AI 排单']),
     };
   }
@@ -214,24 +274,26 @@ export async function interactWithAiCopilotAction(
   const apiKey = (process.env.DEEPSEEK_API_KEY ?? '').trim();
   if (!apiKey) {
     return {
-      ok: true,
+      ok: false,
+      error: 'AI Key 未配置：请在 Sealos 环境变量中配置 DEEPSEEK_API_KEY。',
       data: fallbackAiCopilotResponse('AI 服务未配置，请在 Sealos 环境变量中配置 API Key', [
         '缺少 DEEPSEEK_API_KEY，无法调用 DeepSeek 官方接口',
       ]),
     };
   }
 
-  let compactContext: string;
+  let contextResult: SchedulerContextBuildResult;
   try {
-    compactContext = await buildSchedulerContext(currentBaseLimit);
+    contextResult = await buildSchedulerContext(currentBaseLimit);
   } catch (dbError) {
     const message = safeErrorMessage(dbError);
-    console.error('[interactWithAiCopilotAction] Prisma context query failed:', dbError);
+    console.error('[interactWithAiCopilotAction] Prisma order context query failed:', dbError);
     return {
-      ok: true,
+      ok: false,
+      error: '数据库连接失败或订单排产表不可用，AI 排单无法读取核心上下文。',
       data: fallbackAiCopilotResponse(
-        `AI 排单执行失败：数据库连接或排单上下文读取异常。请检查 DATABASE_URL、Prisma 连接和订单表结构。详情：${message.slice(0, 180)}`,
-        ['Prisma 查询失败，无法读取当前排产上下文']
+        `AI 排单执行失败：数据库连接或订单排产上下文读取异常。请检查 DATABASE_URL、Prisma 连接和 Order 表结构。详情：${message.slice(0, 180)}`,
+        ['数据库连接失败或 Order 表不可用，无法读取当前排产上下文']
       ),
       rawModelPreview: message.slice(0, 500),
     };
@@ -272,7 +334,7 @@ export async function interactWithAiCopilotAction(
           { role: 'system', content: system },
           {
             role: 'user',
-            content: `当前排产上下文 JSON：${compactContext}\n\n用户自然语言指令：${prompt}`,
+            content: `当前排产上下文 JSON：${contextResult.context}\n\n用户自然语言指令：${prompt}`,
           },
         ],
       }),
@@ -283,9 +345,12 @@ export async function interactWithAiCopilotAction(
       console.error('DeepSeek API 响应失败:', res.status, errorText);
       return {
         ok: true,
-        data: fallbackAiCopilotResponse(
-          `AI 调度大脑响应异常 (HTTP ${res.status})。详情: ${errorText.slice(0, 150)}。请检查 API 密钥、模型权限或账户余额。`,
-          ['API 接口连接受阻，无法进行大盘评估']
+        data: withContextWarnings(
+          fallbackAiCopilotResponse(
+            `AI 调度大脑响应异常 (HTTP ${res.status})。请检查 API 密钥、模型权限或账户余额。`,
+            ['API 接口连接受阻，无法进行大盘评估']
+          ),
+          contextResult.warnings
         ),
         rawModelPreview: errorText.slice(0, 500),
       };
@@ -299,9 +364,9 @@ export async function interactWithAiCopilotAction(
       console.error('DeepSeek API 响应不是合法 JSON:', jsonError);
       return {
         ok: true,
-        data: fallbackAiCopilotResponse(
-          `AI 接口返回格式异常，无法读取响应 JSON。详情：${message.slice(0, 150)}`,
-          ['API 响应体不是合法 JSON']
+        data: withContextWarnings(
+          fallbackAiCopilotResponse('AI 接口返回格式异常，无法读取响应 JSON。', ['API 响应体不是合法 JSON']),
+          contextResult.warnings
         ),
         rawModelPreview: message.slice(0, 500),
       };
@@ -311,9 +376,12 @@ export async function interactWithAiCopilotAction(
       console.error('DeepSeek API 返回业务错误:', body.error.message);
       return {
         ok: true,
-        data: fallbackAiCopilotResponse(
-          `AI 调度大脑返回错误：${body.error.message.slice(0, 180)}。请检查 API 密钥、模型权限或账户余额。`,
-          ['API 返回业务错误，无法进行大盘评估']
+        data: withContextWarnings(
+          fallbackAiCopilotResponse(
+            `AI 调度大脑返回错误：${body.error.message.slice(0, 180)}。请检查 API 密钥、模型权限或账户余额。`,
+            ['API 返回业务错误，无法进行大盘评估']
+          ),
+          contextResult.warnings
         ),
         rawModelPreview: body.error.message.slice(0, 500),
       };
@@ -324,9 +392,11 @@ export async function interactWithAiCopilotAction(
       console.error('DeepSeek API 返回空内容:', body);
       return {
         ok: true,
-        data: fallbackAiCopilotResponse(
-          'AI 调度大脑返回为空，未能自动渲染大盘。请稍后再试或换个说法。',
-          ['AI 输出为空']
+        data: withContextWarnings(
+          fallbackAiCopilotResponse('AI 调度大脑返回为空，未能自动渲染大盘。请稍后再试或换个说法。', [
+            'AI 输出为空',
+          ]),
+          contextResult.warnings
         ),
       };
     }
@@ -335,16 +405,19 @@ export async function interactWithAiCopilotAction(
       const parsedResult = JSON.parse(extractJsonObjectText(rawContent));
       return {
         ok: true,
-        data: normalizeAiPayload(parsedResult),
+        data: withContextWarnings(normalizeAiPayload(parsedResult), contextResult.warnings),
         rawModelPreview: rawContent.slice(0, 500),
       };
     } catch (parseError) {
       console.error('AI 返回的数据无法解析为严格 JSON:', parseError);
       return {
         ok: true,
-        data: fallbackAiCopilotResponse(
-          'AI 专家推演成功，但返回的数据结构格式异常，未能自动渲染大盘。请稍后再试或换个说法。',
-          ['AI 输出格式非标准 JSON']
+        data: withContextWarnings(
+          fallbackAiCopilotResponse(
+            'AI 专家推演成功，但返回的数据结构格式异常，未能自动渲染大盘。请稍后再试或换个说法。',
+            ['AI 输出格式非标准 JSON']
+          ),
+          contextResult.warnings
         ),
         rawModelPreview: rawContent.slice(0, 500),
       };
@@ -354,9 +427,11 @@ export async function interactWithAiCopilotAction(
     console.error('[interactWithAiCopilotAction] DeepSeek request failed:', error);
     return {
       ok: true,
-      data: fallbackAiCopilotResponse(
-        `AI 调度大脑连接异常：${message.slice(0, 180)}。请检查网络、API 密钥或账户状态。`,
-        ['AI 接口调用异常，无法进行大盘评估']
+      data: withContextWarnings(
+        fallbackAiCopilotResponse('AI 调度大脑连接异常。请检查网络、API 密钥或账户状态。', [
+          'AI 接口调用异常，无法进行大盘评估',
+        ]),
+        contextResult.warnings
       ),
       rawModelPreview: message.slice(0, 500),
     };

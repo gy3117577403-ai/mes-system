@@ -15,6 +15,7 @@
     "lint": "eslint .",
     "check:all": "pnpm run type-check && pnpm run lint",
     "db:check": "node scripts/check-db-counts.cjs",
+    "db:schema:check": "node scripts/check-db-schema.cjs",
     "build-exe": "electron-builder --win",
     "prepare": "husky"
   },

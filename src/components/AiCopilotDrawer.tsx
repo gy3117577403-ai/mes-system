@@ -22,11 +22,39 @@ const quickPrompts = [
   '把最紧急的订单优先排到本周前两天',
 ];
 
+function classifyCopilotError(message: string): string {
+  const text = message.trim();
+  if (!text) return 'AI 排单执行失败，请检查模型配置、数据库连接或稍后重试。';
+  if (/DEEPSEEK_API_KEY|API Key|AI Key|未配置/.test(text)) {
+    return 'AI Key 未配置：请在 Sealos 环境变量中配置 DEEPSEEK_API_KEY。';
+  }
+  if (/MesAbnormalClaim|缺表|missing table|does not exist|不可用/.test(text)) {
+    return '数据库缺表：异常工时台账表 MesAbnormalClaim 不可用，AI 将降级为仅基于订单上下文分析。';
+  }
+  if (/DATABASE_URL|数据库连接|Prisma|Order 表|connect|connection/i.test(text)) {
+    return '数据库连接失败：AI 无法读取订单排产上下文，请检查 DATABASE_URL 和数据库状态。';
+  }
+  if (/JSON|格式|解析|format/i.test(text)) {
+    return '模型返回格式异常：AI 返回内容无法按结构化 JSON 渲染。';
+  }
+  if (/fetch|network|timeout|ECONN|ENOTFOUND/i.test(text)) {
+    return '网络或模型服务异常：请稍后重试，或检查 DeepSeek 服务可用性。';
+  }
+  return text;
+}
+
+function safePreview(preview?: string): string {
+  if (!preview) return '';
+  if (/sk-[A-Za-z0-9]|postgres(?:ql)?:\/\/|DATABASE_URL|Bearer\s+/i.test(preview)) return '';
+  return preview.slice(0, 180);
+}
+
 export default function AiCopilotDrawer({ currentBaseLimit, onApplied }: AiCopilotDrawerProps) {
   const [open, setOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [diagnosis, setDiagnosis] = useState<AiCopilotResponse | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
+  const [modelPreview, setModelPreview] = useState('');
   const [isThinking, startThinking] = useTransition();
   const [isApplying, startApplying] = useTransition();
 
@@ -48,25 +76,26 @@ export default function AiCopilotDrawer({ currentBaseLimit, onApplied }: AiCopil
       return;
     }
     setErrorMessage('');
+    setModelPreview('');
     startThinking(async () => {
       try {
         const res = await interactWithAiCopilotAction(text, currentBaseLimit);
+        const preview = safePreview(res.rawModelPreview);
+        setModelPreview(preview);
+
         if (!res.ok || !res.data) {
-          const message = res.error ?? 'AI 排单执行失败，请检查模型配置、数据库连接或稍后重试';
+          const message = classifyCopilotError(res.error ?? 'AI 排单执行失败，请检查模型配置、数据库连接或稍后重试。');
           setErrorMessage(message);
           toast.error(message);
+          if (res.data) setDiagnosis(res.data);
           return;
         }
+
         setDiagnosis(res.data);
-        if (res.data.unreasonableAlerts.length > 0) {
-          setErrorMessage('');
-        }
+        setErrorMessage('');
         toast.success('AI 已完成排产沙盘推演');
       } catch (error) {
-        const message =
-          error instanceof Error
-            ? error.message
-            : 'AI 排单执行失败，请检查模型配置、数据库连接或稍后重试';
+        const message = classifyCopilotError(error instanceof Error ? error.message : String(error));
         setErrorMessage(message);
         toast.error('AI 排单执行失败，请稍后重试');
       }
@@ -76,11 +105,12 @@ export default function AiCopilotDrawer({ currentBaseLimit, onApplied }: AiCopil
   const applyMutations = () => {
     if (!diagnosis?.proposedMutations.length) return;
     setErrorMessage('');
+    setModelPreview('');
     startApplying(async () => {
       try {
         const res = await executeAiCopilotMutationsAction(diagnosis.proposedMutations);
         if (!res.ok) {
-          const message = res.error ?? '执行 AI 建议失败';
+          const message = classifyCopilotError(res.error ?? '执行 AI 建议失败');
           setErrorMessage(message);
           toast.error(message);
           return;
@@ -88,7 +118,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, onApplied }: AiCopil
         toast.success(`已执行：订单更新 ${res.updatedOrders} 条，异常工时 ${res.exceptionLogs} 条`);
         await onApplied?.();
       } catch (error) {
-        const message = error instanceof Error ? error.message : '执行 AI 建议失败';
+        const message = classifyCopilotError(error instanceof Error ? error.message : String(error));
         setErrorMessage(message);
         toast.error(message);
       }
@@ -194,6 +224,12 @@ export default function AiCopilotDrawer({ currentBaseLimit, onApplied }: AiCopil
                   {errorMessage && (
                     <div className="rounded-md border border-red-400/40 bg-red-500/10 p-4 text-sm leading-6 text-red-100">
                       {errorMessage}
+                    </div>
+                  )}
+
+                  {modelPreview && (
+                    <div className="rounded-md border border-slate-600 bg-slate-900/80 p-3 text-xs leading-5 text-slate-300">
+                      模型/接口安全预览：{modelPreview}
                     </div>
                   )}
 
