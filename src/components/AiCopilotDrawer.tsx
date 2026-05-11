@@ -26,6 +26,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, onApplied }: AiCopil
   const [open, setOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [diagnosis, setDiagnosis] = useState<AiCopilotResponse | null>(null);
+  const [errorMessage, setErrorMessage] = useState('');
   const [isThinking, startThinking] = useTransition();
   const [isApplying, startApplying] = useTransition();
 
@@ -46,27 +47,51 @@ export default function AiCopilotDrawer({ currentBaseLimit, onApplied }: AiCopil
       toast.error('先输入一句自然语言调度指令');
       return;
     }
+    setErrorMessage('');
     startThinking(async () => {
-      const res = await interactWithAiCopilotAction(text, currentBaseLimit);
-      if (!res.ok || !res.data) {
-        toast.error(res.error ?? 'AI 调度副驾调用失败');
-        return;
+      try {
+        const res = await interactWithAiCopilotAction(text, currentBaseLimit);
+        if (!res.ok || !res.data) {
+          const message = res.error ?? 'AI 排单执行失败，请检查模型配置、数据库连接或稍后重试';
+          setErrorMessage(message);
+          toast.error(message);
+          return;
+        }
+        setDiagnosis(res.data);
+        if (res.data.unreasonableAlerts.length > 0) {
+          setErrorMessage('');
+        }
+        toast.success('AI 已完成排产沙盘推演');
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : 'AI 排单执行失败，请检查模型配置、数据库连接或稍后重试';
+        setErrorMessage(message);
+        toast.error('AI 排单执行失败，请稍后重试');
       }
-      setDiagnosis(res.data);
-      toast.success('AI 已完成排产沙盘推演');
     });
   };
 
   const applyMutations = () => {
     if (!diagnosis?.proposedMutations.length) return;
+    setErrorMessage('');
     startApplying(async () => {
-      const res = await executeAiCopilotMutationsAction(diagnosis.proposedMutations);
-      if (!res.ok) {
-        toast.error(res.error ?? '执行 AI 建议失败');
-        return;
+      try {
+        const res = await executeAiCopilotMutationsAction(diagnosis.proposedMutations);
+        if (!res.ok) {
+          const message = res.error ?? '执行 AI 建议失败';
+          setErrorMessage(message);
+          toast.error(message);
+          return;
+        }
+        toast.success(`已执行：订单更新 ${res.updatedOrders} 条，异常工时 ${res.exceptionLogs} 条`);
+        await onApplied?.();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '执行 AI 建议失败';
+        setErrorMessage(message);
+        toast.error(message);
       }
-      toast.success(`已执行：订单更新 ${res.updatedOrders} 条，异常工时 ${res.exceptionLogs} 条`);
-      await onApplied?.();
     });
   };
 
@@ -113,7 +138,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, onApplied }: AiCopil
                     <h2 className="text-lg font-bold tracking-wide">Scheduler Copilot</h2>
                   </div>
                   <p className="mt-1 text-xs text-slate-400">
-                    MIMO 运筹推演 / 主动审查 / 异常工时 / Excel 诊断
+                    DeepSeek 运筹推演 / 主动审查 / 异常工时 / Excel 诊断
                   </p>
                 </div>
                 <button
@@ -155,7 +180,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, onApplied }: AiCopil
                   className="flex w-full items-center justify-center gap-2 rounded-lg bg-cyan-400 px-4 py-3 text-sm font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   <Send className="h-4 w-4" />
-                  {isThinking ? 'MIMO 正在推演车间沙盘...' : '发送给 AI 调度副驾'}
+                  {isThinking ? 'AI 正在推演车间沙盘...' : '发送给 AI 调度副驾'}
                 </button>
               </section>
 
@@ -166,10 +191,17 @@ export default function AiCopilotDrawer({ currentBaseLimit, onApplied }: AiCopil
                 </div>
 
                 <div className="space-y-4 p-4">
+                  {errorMessage && (
+                    <div className="rounded-md border border-red-400/40 bg-red-500/10 p-4 text-sm leading-6 text-red-100">
+                      {errorMessage}
+                    </div>
+                  )}
+
                   <div className="rounded-md border border-cyan-500/20 bg-cyan-500/10 p-4">
                     <div className="mb-2 text-xs font-bold uppercase tracking-wide text-cyan-200">对话回应</div>
                     <p className="whitespace-pre-wrap text-sm leading-6 text-slate-100">
-                      {diagnosis?.reply ?? '等待你的调度指令。AI 会读取当前真实订单、产能基准和异常工时台账后再回答。'}
+                      {diagnosis?.reply ??
+                        '等待你的调度指令。AI 会读取当前真实订单、产能基准和异常工时台账后再回答。'}
                     </p>
                   </div>
 
@@ -202,7 +234,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, onApplied }: AiCopil
                       className="flex items-center justify-center gap-2 rounded-lg border border-lime-300/50 bg-lime-400 px-4 py-3 text-sm font-black text-slate-950 transition hover:bg-lime-300 disabled:cursor-not-allowed disabled:border-slate-700 disabled:bg-slate-800 disabled:text-slate-500"
                     >
                       <Zap className="h-4 w-4" />
-                      {isApplying ? '正在执行 AI 建议...' : '⚡ 确认采纳 AI 建议并刷新车间'}
+                      {isApplying ? '正在执行 AI 建议...' : '确认采纳 AI 建议并刷新车间'}
                     </button>
                     <div className="text-center text-xs text-slate-500">{mutationSummary}</div>
 
@@ -213,7 +245,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, onApplied }: AiCopil
                       className="flex items-center justify-center gap-2 rounded-lg border border-cyan-300/30 bg-slate-900 px-4 py-3 text-sm font-bold text-cyan-100 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:border-slate-800 disabled:text-slate-600"
                     >
                       <Download className="h-4 w-4" />
-                      📥 导出当前排产诊断与异常台账 (Excel)
+                      导出当前排产诊断与异常台账 (Excel)
                     </button>
                   </div>
                 </div>

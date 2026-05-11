@@ -33,9 +33,14 @@ export type AiCopilotActionResult = {
   rawModelPreview?: string;
 };
 
+type DeepSeekChatBody = {
+  choices?: { message?: { content?: string } }[];
+  error?: { message?: string };
+};
+
 function fallbackAiCopilotResponse(
   reply: string,
-  unreasonableAlerts: string[] = ['AI 调度大脑暂不可用，无法进行大盘评估']
+  unreasonableAlerts: string[] = ['AI 排单执行失败，请检查模型配置、数据库连接或稍后重试']
 ): AiCopilotResponse {
   return {
     reply,
@@ -43,6 +48,10 @@ function fallbackAiCopilotResponse(
     proposedMutations: [],
     exportDataSummary: [],
   };
+}
+
+function safeErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function extractJsonObjectText(raw: string): string {
@@ -60,16 +69,12 @@ function isIsoDate(value: unknown): value is string {
 }
 
 function assignedDayFromYmd(ymd: string): string {
-  const day = new Date(`${ymd}T00:00:00+08:00`).getUTCDay();
-  const map: Record<number, string> = {
-    1: 'Monday',
-    2: 'Tuesday',
-    3: 'Wednesday',
-    4: 'Thursday',
-    5: 'Friday',
-    6: 'Saturday',
-  };
-  return map[day] ?? 'Unscheduled';
+  const weekday = new Intl.DateTimeFormat('en-US', {
+    weekday: 'long',
+    timeZone: 'Asia/Shanghai',
+  }).format(new Date(`${ymd}T00:00:00+08:00`));
+  const allowed = new Set(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']);
+  return allowed.has(weekday) ? weekday : 'Unscheduled';
 }
 
 function normalizeAiPayload(raw: unknown): AiCopilotResponse {
@@ -100,18 +105,18 @@ function normalizeAiPayload(raw: unknown): AiCopilotResponse {
   const exportRows = Array.isArray(obj.exportDataSummary) ? obj.exportDataSummary : [];
 
   return {
-    reply: String(obj.reply ?? 'AI 已完成推演，但未返回可展示摘要。'),
+    reply: String(obj.reply ?? 'AI 已完成推演，但返回内容缺少可展示摘要。'),
     unreasonableAlerts: Array.isArray(obj.unreasonableAlerts)
       ? obj.unreasonableAlerts.map((x) => String(x)).filter(Boolean)
-      : [],
+      : ['AI 返回内容缺少合理性审查字段'],
     proposedMutations: safeMutations,
     exportDataSummary: exportRows.map((row) => {
       const r = row && typeof row === 'object' ? (row as Record<string, unknown>) : {};
       return {
-        型号: String(r['型号'] ?? ''),
-        状态: String(r['状态'] ?? ''),
-        计划工时: Number(r['计划工时'] ?? 0),
-        交期风险: String(r['交期风险'] ?? ''),
+        型号: String(r['型号'] ?? r['model'] ?? r['partNumber'] ?? ''),
+        状态: String(r['状态'] ?? r['status'] ?? ''),
+        计划工时: Number(r['计划工时'] ?? r['planMinutes'] ?? r['plannedMinutes'] ?? 0),
+        交期风险: String(r['交期风险'] ?? r['deliveryRisk'] ?? ''),
       };
     }),
   };
@@ -199,17 +204,38 @@ export async function interactWithAiCopilotAction(
   currentBaseLimit: number
 ): Promise<AiCopilotActionResult> {
   const prompt = String(userPrompt ?? '').trim();
-  if (!prompt) return { ok: false, error: '请输入调度指令或诊断问题。' };
+  if (!prompt) {
+    return {
+      ok: true,
+      data: fallbackAiCopilotResponse('请输入 AI 排单指令后再执行。', ['用户指令为空，未触发 AI 排单']),
+    };
+  }
 
   const apiKey = (process.env.DEEPSEEK_API_KEY ?? '').trim();
   if (!apiKey) {
     return {
-      ok: false,
-      error: '缺少 DeepSeek API Key：请在 GitHub Secrets、Sealos 或本地 .env 中配置 DEEPSEEK_API_KEY。',
+      ok: true,
+      data: fallbackAiCopilotResponse('AI 服务未配置，请在 Sealos 环境变量中配置 API Key', [
+        '缺少 DEEPSEEK_API_KEY，无法调用 DeepSeek 官方接口',
+      ]),
     };
   }
 
-  const compactContext = await buildSchedulerContext(currentBaseLimit);
+  let compactContext: string;
+  try {
+    compactContext = await buildSchedulerContext(currentBaseLimit);
+  } catch (dbError) {
+    const message = safeErrorMessage(dbError);
+    console.error('[interactWithAiCopilotAction] Prisma context query failed:', dbError);
+    return {
+      ok: true,
+      data: fallbackAiCopilotResponse(
+        `AI 排单执行失败：数据库连接或排单上下文读取异常。请检查 DATABASE_URL、Prisma 连接和订单表结构。详情：${message.slice(0, 180)}`,
+        ['Prisma 查询失败，无法读取当前排产上下文']
+      ),
+      rawModelPreview: message.slice(0, 500),
+    };
+  }
 
   const system =
     '你是一个顶级的工业 MES 运筹调度副驾与数据审计员。当前系统时间为 2026年5月11日。请阅读系统提供的当前车间排单上下文、每日产能基准以及异常工时台账，并理解用户的自然语言指令（如调单、改交期、记异常）。\n' +
@@ -217,12 +243,13 @@ export async function interactWithAiCopilotAction(
     '1. 回应用户的具体诉求，并在虚拟沙盘中推演调整后的结果。\n' +
     '2. 严格审查本周排盘合理性，指出所有不合理状态（如某日工时溢出上限、交期倒挂违约等）。\n' +
     '3. 如果用户指令包含记录异常工时，请提取相应的分钟数和原因。\n\n' +
-    '务必返回严格且纯净的 JSON 对象，绝不包含任何 Markdown 标记或解释文字。JSON 结构必须严格如下：\n' +
+    '务必返回严格且纯净的 JSON 对象，绝不包含任何 Markdown 标记、解释文字或思维链。JSON 结构必须严格如下：\n' +
     '{\n' +
     '  "reply": "对老板自然语言指令的专业回复与当前大盘评估摘要（直接可用作 UI 文本）",\n' +
     '  "unreasonableAlerts": ["具体的不合理点预警1", "具体预警2"],\n' +
     '  "proposedMutations": [\n' +
     '    { "type": "UPDATE_ORDER_DATE", "orderId": "...", "newDate": "YYYY-MM-DD" },\n' +
+    '    { "type": "UPDATE_DELIVERY_DATE", "orderId": "...", "newDate": "YYYY-MM-DD" },\n' +
     '    { "type": "LOG_EXCEPTION_HOUR", "minutes": 120, "reason": "故障原因" }\n' +
     '  ],\n' +
     '  "exportDataSummary": [\n' +
@@ -257,43 +284,54 @@ export async function interactWithAiCopilotAction(
       return {
         ok: true,
         data: fallbackAiCopilotResponse(
-          `⚠️ AI 调度大脑响应异常 (HTTP ${res.status})。详情: ${errorText.slice(0, 150)}。请检查 API 密钥或账户余额。`,
+          `AI 调度大脑响应异常 (HTTP ${res.status})。详情: ${errorText.slice(0, 150)}。请检查 API 密钥、模型权限或账户余额。`,
           ['API 接口连接受阻，无法进行大盘评估']
         ),
         rawModelPreview: errorText.slice(0, 500),
       };
     }
 
+    let body: DeepSeekChatBody;
     try {
-      const body = (await res.json()) as {
-        choices?: { message?: { content?: string } }[];
-        error?: { message?: string };
+      body = (await res.json()) as DeepSeekChatBody;
+    } catch (jsonError) {
+      const message = safeErrorMessage(jsonError);
+      console.error('DeepSeek API 响应不是合法 JSON:', jsonError);
+      return {
+        ok: true,
+        data: fallbackAiCopilotResponse(
+          `AI 接口返回格式异常，无法读取响应 JSON。详情：${message.slice(0, 150)}`,
+          ['API 响应体不是合法 JSON']
+        ),
+        rawModelPreview: message.slice(0, 500),
       };
+    }
 
-      if (body.error?.message) {
-        console.error('DeepSeek API 返回业务错误:', body.error.message);
-        return {
-          ok: true,
-          data: fallbackAiCopilotResponse(
-            `⚠️ AI 调度大脑返回错误：${body.error.message.slice(0, 180)}。请检查 API 密钥、模型权限或账户余额。`,
-            ['API 返回业务错误，无法进行大盘评估']
-          ),
-          rawModelPreview: body.error.message.slice(0, 500),
-        };
-      }
+    if (body.error?.message) {
+      console.error('DeepSeek API 返回业务错误:', body.error.message);
+      return {
+        ok: true,
+        data: fallbackAiCopilotResponse(
+          `AI 调度大脑返回错误：${body.error.message.slice(0, 180)}。请检查 API 密钥、模型权限或账户余额。`,
+          ['API 返回业务错误，无法进行大盘评估']
+        ),
+        rawModelPreview: body.error.message.slice(0, 500),
+      };
+    }
 
-      const rawContent = body.choices?.[0]?.message?.content;
-      if (!rawContent) {
-        console.error('DeepSeek API 返回空内容:', body);
-        return {
-          ok: true,
-          data: fallbackAiCopilotResponse(
-            '⚠️ AI 调度大脑返回为空，未能自动渲染大盘。请稍后再试。',
-            ['AI 输出为空']
-          ),
-        };
-      }
+    const rawContent = body.choices?.[0]?.message?.content;
+    if (!rawContent) {
+      console.error('DeepSeek API 返回空内容:', body);
+      return {
+        ok: true,
+        data: fallbackAiCopilotResponse(
+          'AI 调度大脑返回为空，未能自动渲染大盘。请稍后再试或换个说法。',
+          ['AI 输出为空']
+        ),
+      };
+    }
 
+    try {
       const parsedResult = JSON.parse(extractJsonObjectText(rawContent));
       return {
         ok: true,
@@ -305,18 +343,19 @@ export async function interactWithAiCopilotAction(
       return {
         ok: true,
         data: fallbackAiCopilotResponse(
-          '⚠️ AI 专家推演成功，但返回的数据结构格式异常，未能自动渲染大盘。请稍后再试或换个说法。',
+          'AI 专家推演成功，但返回的数据结构格式异常，未能自动渲染大盘。请稍后再试或换个说法。',
           ['AI 输出格式非标准 JSON']
         ),
+        rawModelPreview: rawContent.slice(0, 500),
       };
     }
-  } catch (e) {
-    console.error('[interactWithAiCopilotAction]', e);
-    const message = e instanceof Error ? e.message : String(e);
+  } catch (error) {
+    const message = safeErrorMessage(error);
+    console.error('[interactWithAiCopilotAction] DeepSeek request failed:', error);
     return {
       ok: true,
       data: fallbackAiCopilotResponse(
-        `⚠️ AI 调度大脑连接异常：${message.slice(0, 180)}。请检查网络、API 密钥或账户状态。`,
+        `AI 调度大脑连接异常：${message.slice(0, 180)}。请检查网络、API 密钥或账户状态。`,
         ['AI 接口调用异常，无法进行大盘评估']
       ),
       rawModelPreview: message.slice(0, 500),
@@ -386,11 +425,12 @@ export async function executeAiCopilotMutationsAction(
 
     revalidatePath('/');
     return { ok: true, updatedOrders, exceptionLogs };
-  } catch (e) {
-    console.error('[executeAiCopilotMutationsAction]', e);
+  } catch (error) {
+    const message = safeErrorMessage(error);
+    console.error('[executeAiCopilotMutationsAction]', error);
     return {
       ok: false,
-      error: e instanceof Error ? e.message : String(e),
+      error: `AI 建议执行失败：${message}`,
       updatedOrders,
       exceptionLogs,
     };
