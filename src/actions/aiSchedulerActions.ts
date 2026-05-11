@@ -4,8 +4,8 @@ import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/prisma';
 import { nowEpochMsForMesStorage } from '@/lib/datetimeShanghai';
 
-const MIMO_CHAT_URL = 'https://token-plan-sgp.xiaomimimo.com/v1/chat/completions';
-const DEFAULT_MIMO_MODEL = 'mimo-v2.5-pro';
+const DEEPSEEK_CHAT_URL = 'https://api.deepseek.com/chat/completions';
+const DEEPSEEK_MODEL = 'deepseek-chat';
 
 export type AiCopilotMutation =
   | { type: 'UPDATE_ORDER_DATE'; orderId: string; newDate: string }
@@ -189,18 +189,11 @@ export async function interactWithAiCopilotAction(
   const prompt = String(userPrompt ?? '').trim();
   if (!prompt) return { ok: false, error: '请输入调度指令或诊断问题。' };
 
-  const apiKey = (
-    process.env.MIMO_TOKEN_PLAN_KEY ??
-    process.env.XIAOMI_MIMO_TOKEN_PLAN_KEY ??
-    process.env.XIAOMI_MIMO_API_KEY ??
-    process.env.MIMO_API_KEY ??
-    ''
-  ).trim();
+  const apiKey = (process.env.DEEPSEEK_API_KEY ?? '').trim();
   if (!apiKey) {
-    return { ok: false, error: '缺少小米 MIMO Token Plan Key：请配置 MIMO_TOKEN_PLAN_KEY。' };
+    return { ok: false, error: '缺少 DeepSeek API Key：请配置 DEEPSEEK_API_KEY。' };
   }
 
-  const model = (process.env.MIMO_MODEL ?? DEFAULT_MIMO_MODEL).trim() || DEFAULT_MIMO_MODEL;
   const compactContext = await buildSchedulerContext(currentBaseLimit);
 
   const system =
@@ -223,15 +216,14 @@ export async function interactWithAiCopilotAction(
     '}';
 
   try {
-    const res = await fetch(MIMO_CHAT_URL, {
+    const res = await fetch(DEEPSEEK_CHAT_URL, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
-        'X-Token-Plan-Key': apiKey,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model,
+        model: DEEPSEEK_MODEL,
         temperature: 0.1,
         response_format: { type: 'json_object' },
         messages: [
@@ -246,7 +238,7 @@ export async function interactWithAiCopilotAction(
 
     if (!res.ok) {
       const t = await res.text().catch(() => '');
-      return { ok: false, error: `MIMO HTTP ${res.status}: ${t.slice(0, 500)}` };
+      return { ok: false, error: `DeepSeek HTTP ${res.status}: ${t.slice(0, 500)}` };
     }
 
     const body = (await res.json()) as {
@@ -256,7 +248,7 @@ export async function interactWithAiCopilotAction(
     if (body.error?.message) return { ok: false, error: body.error.message };
 
     const content = body.choices?.[0]?.message?.content;
-    if (!content) return { ok: false, error: 'MIMO 返回为空。' };
+    if (!content) return { ok: false, error: 'DeepSeek 返回为空。' };
 
     const parsed = JSON.parse(extractJsonObjectText(content));
     return { ok: true, data: normalizeAiPayload(parsed), rawModelPreview: content.slice(0, 500) };
