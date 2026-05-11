@@ -3,14 +3,14 @@ RUN apk add --no-cache libc6-compat openssl
 WORKDIR /app
 
 FROM base AS builder
-COPY package.json pnpm-lock.yaml* ./
+COPY package.json pnpm-lock.yaml* pnpm-workspace.yaml* .npmrc* ./
 RUN npm install -g pnpm@9.15.0
 RUN pnpm install --no-frozen-lockfile
 COPY . .
 ARG DATABASE_URL=postgresql://postgres:placeholder@localhost:5432/postgres
 ENV DATABASE_URL=${DATABASE_URL}
-RUN npx prisma generate
-RUN pnpm run build
+RUN pnpm exec prisma generate
+RUN pnpm exec next build
 
 FROM base AS runner
 ENV NODE_ENV=production
