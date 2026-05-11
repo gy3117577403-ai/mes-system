@@ -33,6 +33,18 @@ export type AiCopilotActionResult = {
   rawModelPreview?: string;
 };
 
+function fallbackAiCopilotResponse(
+  reply: string,
+  unreasonableAlerts: string[] = ['AI 调度大脑暂不可用，无法进行大盘评估']
+): AiCopilotResponse {
+  return {
+    reply,
+    unreasonableAlerts,
+    proposedMutations: [],
+    exportDataSummary: [],
+  };
+}
+
 function extractJsonObjectText(raw: string): string {
   const trimmed = raw.trim();
   const fence = /^```(?:json)?\s*([\s\S]*?)```$/m.exec(trimmed);
@@ -240,24 +252,75 @@ export async function interactWithAiCopilotAction(
     });
 
     if (!res.ok) {
-      const t = await res.text().catch(() => '');
-      return { ok: false, error: `DeepSeek HTTP ${res.status}: ${t.slice(0, 500)}` };
+      const errorText = await res.text().catch(() => '');
+      console.error('DeepSeek API 响应失败:', res.status, errorText);
+      return {
+        ok: true,
+        data: fallbackAiCopilotResponse(
+          `⚠️ AI 调度大脑响应异常 (HTTP ${res.status})。详情: ${errorText.slice(0, 150)}。请检查 API 密钥或账户余额。`,
+          ['API 接口连接受阻，无法进行大盘评估']
+        ),
+        rawModelPreview: errorText.slice(0, 500),
+      };
     }
 
-    const body = (await res.json()) as {
-      choices?: { message?: { content?: string } }[];
-      error?: { message?: string };
-    };
-    if (body.error?.message) return { ok: false, error: body.error.message };
+    try {
+      const body = (await res.json()) as {
+        choices?: { message?: { content?: string } }[];
+        error?: { message?: string };
+      };
 
-    const content = body.choices?.[0]?.message?.content;
-    if (!content) return { ok: false, error: 'DeepSeek 返回为空。' };
+      if (body.error?.message) {
+        console.error('DeepSeek API 返回业务错误:', body.error.message);
+        return {
+          ok: true,
+          data: fallbackAiCopilotResponse(
+            `⚠️ AI 调度大脑返回错误：${body.error.message.slice(0, 180)}。请检查 API 密钥、模型权限或账户余额。`,
+            ['API 返回业务错误，无法进行大盘评估']
+          ),
+          rawModelPreview: body.error.message.slice(0, 500),
+        };
+      }
 
-    const parsed = JSON.parse(extractJsonObjectText(content));
-    return { ok: true, data: normalizeAiPayload(parsed), rawModelPreview: content.slice(0, 500) };
+      const rawContent = body.choices?.[0]?.message?.content;
+      if (!rawContent) {
+        console.error('DeepSeek API 返回空内容:', body);
+        return {
+          ok: true,
+          data: fallbackAiCopilotResponse(
+            '⚠️ AI 调度大脑返回为空，未能自动渲染大盘。请稍后再试。',
+            ['AI 输出为空']
+          ),
+        };
+      }
+
+      const parsedResult = JSON.parse(extractJsonObjectText(rawContent));
+      return {
+        ok: true,
+        data: normalizeAiPayload(parsedResult),
+        rawModelPreview: rawContent.slice(0, 500),
+      };
+    } catch (parseError) {
+      console.error('AI 返回的数据无法解析为严格 JSON:', parseError);
+      return {
+        ok: true,
+        data: fallbackAiCopilotResponse(
+          '⚠️ AI 专家推演成功，但返回的数据结构格式异常，未能自动渲染大盘。请稍后再试或换个说法。',
+          ['AI 输出格式非标准 JSON']
+        ),
+      };
+    }
   } catch (e) {
     console.error('[interactWithAiCopilotAction]', e);
-    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    const message = e instanceof Error ? e.message : String(e);
+    return {
+      ok: true,
+      data: fallbackAiCopilotResponse(
+        `⚠️ AI 调度大脑连接异常：${message.slice(0, 180)}。请检查网络、API 密钥或账户状态。`,
+        ['AI 接口调用异常，无法进行大盘评估']
+      ),
+      rawModelPreview: message.slice(0, 500),
+    };
   }
 }
 
