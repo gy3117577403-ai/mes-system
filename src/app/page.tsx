@@ -32,6 +32,7 @@ import CarryOverModal from '@/components/CarryOverModal';
 import KanbanBoard from '@/components/KanbanBoard';
 import WorkshopView from '@/components/WorkshopView';
 import BossDashboard from '@/components/BossDashboard';
+import AiCopilotDrawer from '@/components/AiCopilotDrawer';
 import { AddOrderModal } from '@/components/Modals';
 import QCReviewModal from '@/components/QCReviewModal';
 import { normalizeOrder } from '@/lib/mesOrder';
@@ -1296,6 +1297,8 @@ export default function KanbanApp() {
         onSynced={handleSyncRefresh}
         onRequestHardClearBoard={triggerHardClearBoardFromWizard}
       />
+
+      <AiCopilotDrawer currentBaseLimit={dailyCapacity} onApplied={handleSyncRefresh} />
 
       {/* 浮动警报拦截横幅 */}
       {redAlertTasks.length > 0 && viewMode === 'manager' && (
