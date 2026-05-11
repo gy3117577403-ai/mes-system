@@ -2,7 +2,6 @@
 
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/prisma';
-import { nowEpochMsForMesStorage } from '@/lib/datetimeShanghai';
 
 const DEEPSEEK_CHAT_URL = 'https://api.deepseek.com/chat/completions';
 const DEEPSEEK_MODEL = 'deepseek-chat';
@@ -196,7 +195,7 @@ async function buildSchedulerContext(currentBaseLimit: number): Promise<Schedule
     claimedHours: number;
     reason: string;
     status: string;
-    createdAt: number;
+    createdAt: Date;
     order: { model: string };
   }> = [];
 
@@ -251,7 +250,7 @@ async function buildSchedulerContext(currentBaseLimit: number): Promise<Schedule
       minutes: Math.round(Number(e.claimedHours) * 60),
       reason: e.reason,
       status: e.status,
-      createdAt: e.createdAt,
+      createdAt: e.createdAt.toISOString(),
     })),
   });
 
@@ -490,7 +489,7 @@ export async function executeAiCopilotMutationsAction(
               claimedHours: minutes / 60,
               reason: `${reason}${m.orderId ? '' : '（AI 未指定订单，已自动关联当前最早有效订单）'}`,
               status: 'APPROVED',
-              createdAt: nowEpochMsForMesStorage(),
+              createdAt: new Date(),
             },
           });
           exceptionLogs += 1;

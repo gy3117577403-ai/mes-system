@@ -893,7 +893,7 @@ export async function createAbnormalClaimAction(input: {
         claimedHours,
         reason,
         status: 'PENDING',
-        createdAt: nowEpochMsForMesStorage(),
+        createdAt: new Date(),
       },
     });
     return { ok: true, claimId: row.id };

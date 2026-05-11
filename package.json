@@ -16,6 +16,9 @@
     "check:all": "pnpm run type-check && pnpm run lint",
     "db:check": "node scripts/check-db-counts.cjs",
     "db:schema:check": "node scripts/check-db-schema.cjs",
+    "db:sql:create-abnormal-claim": "node scripts/generate-missing-mes-abnormal-claim-sql.cjs",
+    "db:verify:abnormal-claim": "node scripts/verify-mes-abnormal-claim-table.cjs",
+    "db:patch:abnormal-claim": "node scripts/apply-mes-abnormal-claim-patch.cjs",
     "build-exe": "electron-builder --win",
     "prepare": "husky"
   },

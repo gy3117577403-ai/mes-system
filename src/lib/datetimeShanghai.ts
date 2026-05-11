@@ -13,7 +13,7 @@ export const MES_TIMEZONE = 'Asia/Shanghai' as const;
  * 業務意圖：
  * - JavaScript `Date` 內部均為 UTC epoch；此值與在 `Asia/Shanghai` 牆鐘下觀測到的「同一物理時刻」嚴格對應。
  * - 不依賴宿主機時區漂移；展示層一律使用 `formatInTimeZone` / `formatMsToShanghaiLocale`。
- * - Prisma Extension 在 `Order` / `MesActivityLog` / `MesAbnormalClaim` 建立時若未顯式傳入時間欄位，將回退到此函數。
+ * - Prisma Extension 在 `Order` / `MesActivityLog` 建立時若未顯式傳入時間欄位，將回退到此函數。
  */
 export function nowEpochMsForMesStorage(): number {
   return Date.now();

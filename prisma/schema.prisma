@@ -96,8 +96,9 @@ model MesAbnormalClaim {
   reason       String
   /// PENDING 待審、APPROVED 已通過、REJECTED 已駁回
   status       String @default("PENDING")
-  /// 建立時間（JS 毫秒時間戳）
-  createdAt    Float
+  /// 建立時間（PostgreSQL TIMESTAMP(3)）
+  createdAt    DateTime @default(now())
 
+  @@index([createdAt])
   @@index([orderId])
 }

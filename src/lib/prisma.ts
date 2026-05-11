@@ -40,7 +40,7 @@ function createMesPrismaClient() {
             Object.prototype.hasOwnProperty.call(data, 'createdAt') &&
             data.createdAt !== undefined &&
             data.createdAt !== null;
-          const nextData = hasCreated ? data : { ...data, createdAt: nowEpochMsForMesStorage() };
+          const nextData = hasCreated ? data : { ...data, createdAt: new Date() };
           return query({ ...args, data: nextData as typeof args.data });
         },
       },
