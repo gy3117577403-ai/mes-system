@@ -191,7 +191,10 @@ export async function interactWithAiCopilotAction(
 
   const apiKey = (process.env.DEEPSEEK_API_KEY ?? '').trim();
   if (!apiKey) {
-    return { ok: false, error: '缺少 DeepSeek API Key：请配置 DEEPSEEK_API_KEY。' };
+    return {
+      ok: false,
+      error: '缺少 DeepSeek API Key：请在 GitHub Secrets、Sealos 或本地 .env 中配置 DEEPSEEK_API_KEY。',
+    };
   }
 
   const compactContext = await buildSchedulerContext(currentBaseLimit);
