@@ -24,6 +24,7 @@ import {
   isBoss,
 } from '@/lib/rbac';
 import { isOrderCompletedStatus } from '@/lib/orderStatus';
+import { isDrawingReadyForSchedule, isMaterialReadyForSchedule } from '@/lib/scheduleEligibility';
 import type { AppTheme, LayoutMode } from '@/lib/uiTheme';
 import { cn } from '@/lib/uiTheme';
 
@@ -215,7 +216,8 @@ export default function EnhancedOrderCard({
   const showMissingMaterialPopover =
     !materialsDisabled && task.isMaterialReady === false && !['料齐', '已配料'].includes(task.materials);
 
-  const materialsLooksKit = ['料齐', '已配料'].includes(task.materials) || task.isMaterialReady === true;
+  const drawingLooksReady = isDrawingReadyForSchedule(task);
+  const materialsLooksKit = isMaterialReadyForSchedule(task);
 
   useEffect(() => {
     if (task.isMaterialReady !== false || ['料齐', '已配料'].includes(task.materials)) {
@@ -286,8 +288,8 @@ export default function EnhancedOrderCard({
   const clientShort =
     (task.client || '—').length > 4 ? `${(task.client || '').slice(0, 4)}…` : task.client || '—';
 
-  const drawingOk = task.drawing === '已发';
-  const materialOk = ['料齐', '已配料'].includes(task.materials);
+  const drawingOk = drawingLooksReady;
+  const materialOk = materialsLooksKit;
 
   /** 精簡列表：單行條狀，供 DnD 整塊拖拽 */
   if (layoutMode === 'compact') {
@@ -606,7 +608,7 @@ export default function EnhancedOrderCard({
           >
             <div
               className={`flex items-center flex-1 min-w-[120px] px-1.5 py-1 rounded-lg border ${
-                task.drawing === '已发'
+                drawingLooksReady
                   ? theme === 'dark'
                     ? 'border-emerald-500/40 bg-emerald-950/30'
                     : 'border-emerald-400 bg-emerald-50'
@@ -616,14 +618,14 @@ export default function EnhancedOrderCard({
               } ${dimBody && !eng && !boss ? 'opacity-35 pointer-events-none' : ''}`}
             >
               <FileText
-                className={`w-3.5 h-3.5 mr-1 shrink-0 ${task.drawing === '已发' ? 'text-emerald-400' : 'text-red-400'}`}
+                className={`w-3.5 h-3.5 mr-1 shrink-0 ${drawingLooksReady ? 'text-emerald-400' : 'text-red-400'}`}
               />
               <select
                 disabled={drawingDisabled}
                 value={task.drawing}
                 onChange={(e) => updateTask(task.id, 'drawing', e.target.value)}
                 className={`min-w-0 flex-1 text-[10px] font-bold bg-transparent outline-none cursor-pointer appearance-none truncate ${
-                  task.drawing === '已发' ? 'text-emerald-400' : 'text-red-400'
+                  drawingLooksReady ? 'text-emerald-400' : 'text-red-400'
                 } ${drawingDisabled ? 'cursor-not-allowed opacity-60' : ''}`}
               >
                 <option value="已发">已发图</option>

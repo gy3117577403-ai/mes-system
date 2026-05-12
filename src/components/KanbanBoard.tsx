@@ -109,7 +109,7 @@ export default function KanbanBoard({
         <main className="flex-1 overflow-x-auto overflow-y-hidden p-2 flex gap-3 items-start hide-scrollbar-smooth">
           {poolShell(
             '技术攻坚池',
-            `缺失图纸 / SOP · ${techPoolOrders.length} 单`,
+            `缺失图纸 · ${techPoolOrders.length} 单`,
             'red',
             <div className={cn('flex-1 overflow-y-auto p-3 custom-scrollbar min-h-[200px]', cardGap)}>
               {techPoolOrders.map((task) => (

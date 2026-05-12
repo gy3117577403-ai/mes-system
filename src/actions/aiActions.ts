@@ -76,7 +76,7 @@ export async function runDeepSeekScheduleAction(): Promise<{
     const skipped = orders.length - schedulableOrders.length;
 
     if (schedulableOrders.length === 0) {
-      return { ok: true, updated: 0, rawModelPreview: `已跳过 ${skipped} 单未下发图纸/SOP或未配料齐的订单。` };
+      return { ok: true, updated: 0, rawModelPreview: `已跳过 ${skipped} 单图纸未下发或配料未齐的订单。` };
     }
 
     const todaySh = shanghaiDateTodayISO();
@@ -101,6 +101,7 @@ export async function runDeepSeekScheduleAction(): Promise<{
 
     const system = [
       '系统级硬规则：禁止把 scheduleEligible=false 的订单排入任何日期；DRAWING_NOT_READY 留在技术攻坚池；MATERIAL_NOT_READY 留在仓库配料池；只有 scheduleEligible=true 才允许排产。',
+      'SOP 未上传仅作为文档提醒，不作为排产拦截条件。',
       '你是线束 MES 柔性排产调度器。必须只输出一个 JSON 对象，不要输出任何解释文字。',
       'JSON 顶层字段为 "assignments"：数组，每项含 orderId(string)、assignedDay(string)、taskStatus(string)、plannedDate(string，可选)。',
       `assignedDay 必须从以下英文键中择一：${allowedDays.join(', ')}。`,
@@ -196,7 +197,7 @@ export async function runDeepSeekScheduleAction(): Promise<{
       }
     });
 
-    const skippedPreview = skipped > 0 ? `已跳过 ${skipped} 单未下发图纸/SOP或未配料齐的订单。\n` : '';
+    const skippedPreview = skipped > 0 ? `已跳过 ${skipped} 单图纸未下发或配料未齐的订单。\n` : '';
     return { ok: true, updated, rawModelPreview: `${skippedPreview}${content.slice(0, 400)}` };
   } catch (e) {
     console.error('[runDeepSeekScheduleAction]', e);

@@ -11,14 +11,35 @@ type ScheduleEligibilityOrder = Omit<
 
 const SCHEDULED_TASK_STATUSES = new Set(['SCHEDULED', 'IN_PROGRESS', 'PAUSED']);
 
+export function normalizeReadyFlag(value: unknown): boolean {
+  if (value === true) return true;
+  if (value === false) return false;
+  if (value === 1) return true;
+  if (value === 0) return false;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
+  }
+  return false;
+}
+
+export function isDrawingReadyForSchedule(order: Partial<ScheduleEligibilityOrder>): boolean {
+  return normalizeReadyFlag(order.isDrawingReady);
+}
+
+export function isMaterialReadyForSchedule(order: Partial<ScheduleEligibilityOrder>): boolean {
+  return normalizeReadyFlag(order.isMaterialReady);
+}
+
 export function getScheduleBlockReasons(order: Partial<ScheduleEligibilityOrder>): ScheduleBlockReason[] {
   const reasons: ScheduleBlockReason[] = [];
 
-  if (order.isDrawingReady !== true) {
+  if (!isDrawingReadyForSchedule(order)) {
     reasons.push('DRAWING_NOT_READY');
   }
 
-  if (order.isMaterialReady !== true) {
+  if (!isMaterialReadyForSchedule(order)) {
     reasons.push('MATERIAL_NOT_READY');
   }
 
@@ -49,17 +70,17 @@ export function isScheduleAssigned(order: Partial<ScheduleEligibilityOrder>): bo
 }
 
 export function formatScheduleBlockReason(reason: ScheduleBlockReason): string {
-  if (reason === 'DRAWING_NOT_READY') return '未下发图纸/SOP';
-  return '未配料齐';
+  if (reason === 'DRAWING_NOT_READY') return '图纸未下发';
+  return '配料未齐';
 }
 
 export function formatScheduleBlockMessage(order: { model?: string | null }, reasons: ScheduleBlockReason[]): string {
   const model = String(order.model ?? '').trim() || '未知订单';
   if (reasons.includes('DRAWING_NOT_READY')) {
-    return `订单 ${model} 未下发图纸/SOP，禁止进入排产池。`;
+    return `订单 ${model} 图纸未下发，禁止进入排产池。`;
   }
   if (reasons.includes('MATERIAL_NOT_READY')) {
-    return `订单 ${model} 未配料齐，禁止进入排产池。`;
+    return `订单 ${model} 配料未齐，禁止进入排产池。`;
   }
   return `订单 ${model} 不符合排产资格，禁止进入排产池。`;
 }

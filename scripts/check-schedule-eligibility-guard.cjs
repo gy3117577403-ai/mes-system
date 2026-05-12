@@ -16,6 +16,7 @@ const checks = [
       'batchUpdateAssignedDaysAction',
       'rejectIneligibleScheduleWrite',
       'restoreInvalidScheduledOrdersAction',
+      'repairMisclassifiedReadyOrdersAction',
     ],
   },
   {
@@ -34,6 +35,7 @@ const checks = [
       'getRequiredPool',
       'handleRestoreInvalidScheduledOrders',
       'restoreInvalidScheduledOrdersAction',
+      'handleRepairMisclassifiedReadyOrders',
     ],
   },
 ];
@@ -66,6 +68,39 @@ if (!/batchUpdateAssignedDaysAction[\s\S]*rejectIneligibleScheduleWrite/.test(as
   failures.push('src/actions/mesActions.ts: batchUpdateAssignedDaysAction lacks canEnterSchedule guard');
 }
 
+const eligibility = read('src/lib/scheduleEligibility.ts');
+const canEnterBlock = eligibility.slice(eligibility.indexOf('function canEnterSchedule'));
+for (const forbidden of ['SOP_NOT_READY', 'sopReady', 'uploadSop', 'isSopReady']) {
+  if (eligibility.includes(forbidden)) {
+    failures.push(`src/lib/scheduleEligibility.ts: forbidden SOP hard-block token "${forbidden}" found`);
+  }
+}
+if (/canEnterSchedule[\s\S]*(SOP|sop)/.test(canEnterBlock)) {
+  failures.push('src/lib/scheduleEligibility.ts: canEnterSchedule must not inspect SOP state');
+}
+
+const projectFiles = [
+  'src/actions/aiActions.ts',
+  'src/actions/aiSchedulerActions.ts',
+  'src/actions/mesActions.ts',
+  'src/app/page.tsx',
+  'src/components/KanbanBoard.tsx',
+  'src/lib/scheduleEligibility.ts',
+];
+const allProjectText = projectFiles.map((file) => `${file}\n${read(file)}`).join('\n');
+const slash = '/';
+for (const forbiddenText of [`未下发图纸${slash}SOP`, `缺失图纸${slash}SOP`]) {
+  if (allProjectText.includes(forbiddenText)) {
+    failures.push(`project text: forbidden mixed SOP blocking copy "${forbiddenText}" found`);
+  }
+}
+if (/restoreInvalidScheduledOrdersAction[\s\S]*(SOP_NOT_READY|sopReady|uploadSop|isSopReady)/.test(mesActions)) {
+  failures.push('src/actions/mesActions.ts: restoreInvalidScheduledOrdersAction must not restore by SOP state');
+}
+if (/SOP[^。\n]*(禁止排产|阻止排产|拦截排产)/.test(aiScheduler)) {
+  failures.push('src/actions/aiSchedulerActions.ts: AI prompt appears to treat SOP as a scheduling blocker');
+}
+
 if (failures.length > 0) {
   console.error('Schedule eligibility guard check failed:');
   for (const failure of failures) console.error(`- ${failure}`);
@@ -73,4 +108,3 @@ if (failures.length > 0) {
 }
 
 console.log('Schedule eligibility guard check passed.');
-

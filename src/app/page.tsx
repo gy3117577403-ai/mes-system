@@ -51,6 +51,7 @@ import {
   patchMesSettingsAction,
   softDeleteOrdersAction,
   restoreInvalidScheduledOrdersAction,
+  repairMisclassifiedReadyOrdersAction,
   type FetchInitialDataResult,
 } from '@/actions/mesActions';
 import { diffOrder } from '@/lib/orderDiff';
@@ -424,10 +425,9 @@ export default function KanbanApp() {
     () => filteredOrders.filter((t) => t.taskStatus === 'anomaly').length,
     [filteredOrders]
   );
-
   const handleRestoreInvalidScheduledOrders = async () => {
     const ok = window.confirm(
-      '将把所有未下发图纸/SOP或未配料齐却已进入排产日的订单退回技术攻坚池或仓库配料池。不会删除订单，也不会修改交期、数量、客户、型号。是否继续？'
+      `将恢复违规排产订单：\n图纸未下发但已排产：${invalidDrawingScheduledCount} 单\n配料未齐但已排产：${invalidMaterialScheduledCount} 单\n\nSOP 未上传不会被恢复，也不会影响排产资格。\n不会删除订单，也不会修改交期、数量、客户、型号。是否继续？`
     );
     if (!ok) return;
     setIsProcessing(true);
@@ -447,6 +447,29 @@ export default function KanbanApp() {
       await handleSyncRefresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '恢复违规排产失败');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleRepairMisclassifiedReadyOrders = async () => {
+    setIsProcessing(true);
+    try {
+      const res = await repairMisclassifiedReadyOrdersAction();
+      if (!res.ok) {
+        toast.error(res.error ?? '修复误分类失败');
+        return;
+      }
+      toast.success(`已重新识别 ${res.repairedCount} 单为可排产订单。`);
+      if (res.repairedCount > 0) {
+        showAlert(
+          '误分类修复完成',
+          '这些订单不会自动恢复到原来的星期排产，请重新执行智能排产或手动排产。'
+        );
+      }
+      await handleSyncRefresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '修复误分类失败');
     } finally {
       setIsProcessing(false);
     }
@@ -481,6 +504,10 @@ export default function KanbanApp() {
       readyPoolOrders: [...ready].sort(compareKanbanLeftPoolOrders),
     };
   }, [filteredOrders]);
+  const misclassifiedReadyOrders = useMemo(
+    () => [...techPoolOrders, ...warehousePoolOrders].filter((t) => canEnterSchedule(t)),
+    [techPoolOrders, warehousePoolOrders]
+  );
 
   // ==========================================
   // 4. 数据操作与 AI 分配算法 (纯内存版)
@@ -546,6 +573,25 @@ export default function KanbanApp() {
                   ...(ready ? { missingMaterialReason: null, missingMaterialEta: null } : {}),
                 } as Order)
               : order
+          );
+        });
+        void updateOrderAction(orderId, patch);
+        return;
+      }
+
+      if (field === 'drawing') {
+        const drawing = String(value);
+        const ready = drawing === '已发';
+        const patch: Record<string, unknown> = { drawing, isDrawingReady: ready };
+        setOrders((prev) => {
+          const o = prev.find((x) => x.id === orderId);
+          if (o && user) {
+            queueMicrotask(() =>
+              appendAuditLog('upload_sop', `将 ${o.model} 图纸状态更新为 ${drawing}`)
+            );
+          }
+          return prev.map((order) =>
+            order.id === orderId ? ({ ...order, drawing, isDrawingReady: ready } as Order) : order
           );
         });
         void updateOrderAction(orderId, patch);
@@ -965,7 +1011,7 @@ export default function KanbanApp() {
           
           setOrders(updatedOrders);
           if (skippedIneligible > 0) {
-            toast(`已跳过 ${skippedIneligible} 单未下发图纸/SOP或未配料齐的订单。`);
+            toast(`已跳过 ${skippedIneligible} 单图纸未下发或配料未齐的订单。`);
           }
           const prevById = new Map(ordersBeforeAi.map((o) => [o.id, o]));
           for (const o of updatedOrders) {
@@ -1368,7 +1414,7 @@ export default function KanbanApp() {
       <AiCopilotDrawer currentBaseLimit={dailyCapacity} onApplied={handleSyncRefresh} />
 
       {/* 浮动警报拦截横幅 */}
-      {redAlertTasks.length > 0 && viewMode === 'manager' && (
+      {(redAlertTasks.length > 0 || misclassifiedReadyOrders.length > 0) && viewMode === 'manager' && (
         <div
           className={cn(
             'p-3 shrink-0 animate-in slide-in-from-top-2',
@@ -1392,7 +1438,7 @@ export default function KanbanApp() {
                   onClick={() => setStatusFilter('all')}
                   className="rounded-full border border-red-400/50 px-2 py-0.5 text-red-100"
                 >
-                  未下发图纸/SOP却已排产：{invalidDrawingScheduledCount} 单
+                  图纸未下发却已排产：{invalidDrawingScheduledCount} 单
                 </button>
                 <button
                   type="button"
@@ -1416,6 +1462,16 @@ export default function KanbanApp() {
                     className="rounded-full bg-red-500 px-3 py-1 font-bold text-white shadow-[0_0_16px_rgba(239,68,68,0.45)] disabled:opacity-50"
                   >
                     一键恢复违规排产
+                  </button>
+                )}
+                {misclassifiedReadyOrders.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleRepairMisclassifiedReadyOrders}
+                    disabled={isProcessing}
+                    className="rounded-full bg-cyan-500 px-3 py-1 font-bold text-slate-950 shadow-[0_0_16px_rgba(34,211,238,0.35)] disabled:opacity-50"
+                  >
+                    修复误分类
                   </button>
                 )}
               </div>

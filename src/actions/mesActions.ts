@@ -837,7 +837,7 @@ export async function restoreInvalidScheduledOrdersAction(): Promise<{
         await tx.mesActivityLog.create({
           data: {
             ts: nowEpochMsForMesStorage(),
-            text: `系统恢复违规排产：订单 ${row.model} 因未下发图纸/SOP或未配料齐，已从排产池退回待处理池。`,
+            text: `系统恢复违规排产：订单 ${row.model} 因图纸未下发或配料未齐，已从排产池退回待处理池。`,
             operator: 'system',
             role: 'system',
             actionType: 'schedule_guard_restore',
@@ -855,6 +855,86 @@ export async function restoreInvalidScheduledOrdersAction(): Promise<{
       error: e instanceof Error ? e.message : String(e),
       restoredCount: 0,
       restoredOrders: [],
+    };
+  }
+}
+
+export async function repairMisclassifiedReadyOrdersAction(): Promise<{
+  ok: boolean;
+  error?: string;
+  repairedCount: number;
+  repairedOrders: Array<{ id: string; model: string; client: string }>;
+}> {
+  try {
+    const rows = await prisma.order.findMany({
+      where: {
+        deletedAt: null,
+        isArchived: false,
+        taskStatus: { notIn: ['IN_PROGRESS', 'COMPLETED', 'completed'] },
+      },
+      select: {
+        id: true,
+        model: true,
+        client: true,
+        drawing: true,
+        materials: true,
+        assignedDay: true,
+        plannedDate: true,
+        taskStatus: true,
+        isDrawingReady: true,
+        isMaterialReady: true,
+      },
+      orderBy: [{ deliveryDate: 'asc' }, { createdAt: 'asc' }],
+    });
+
+    const drawingTextReady = (value: string | null | undefined) => ['已发', '已发图'].includes(String(value ?? '').trim());
+    const materialTextReady = (value: string | null | undefined) => ['料齐', '已配料', '料已齐'].includes(String(value ?? '').trim());
+
+    const legacyReadyRows = rows.filter(
+      (row) =>
+        (row.isDrawingReady !== true || row.isMaterialReady !== true) &&
+        drawingTextReady(row.drawing) &&
+        materialTextReady(row.materials)
+    );
+
+    if (legacyReadyRows.length > 0) {
+      await prisma.$transaction(
+        legacyReadyRows.map((row) =>
+          prisma.order.update({
+            where: { id: row.id },
+            data: {
+              isDrawingReady: true,
+              isMaterialReady: true,
+              missingMaterialReason: null,
+              missingMaterialEta: null,
+            },
+          })
+        )
+      );
+    }
+
+    const repairedOrders = rows
+      .map((row) =>
+        legacyReadyRows.some((legacy) => legacy.id === row.id)
+          ? { ...row, isDrawingReady: true, isMaterialReady: true }
+          : row
+      )
+      .filter((row) => canEnterSchedule(row))
+      .filter((row) => {
+        const day = String(row.assignedDay ?? '').trim();
+        const planned = String(row.plannedDate ?? '').trim();
+        return (day === '' || day === 'Unscheduled') && planned === '';
+      })
+      .map((row) => ({ id: row.id, model: row.model, client: row.client }));
+
+    return { ok: true, repairedCount: repairedOrders.length, repairedOrders };
+  } catch (e) {
+    console.error('[repairMisclassifiedReadyOrdersAction]', e);
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+      repairedCount: 0,
+      repairedOrders: [],
     };
   }
 }
