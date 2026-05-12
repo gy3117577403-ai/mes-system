@@ -374,7 +374,6 @@ export default function KanbanApp() {
     if (task.taskStatus === 'anomaly') return 'anomaly';
     if (task.isImportError) return 'red';
 
-    const isReady = task.drawing === '已发' && ['料齐', '已配料'].includes(task.materials);
     const isScheduled = task.assignedDay !== 'Unscheduled';
 
     if (canEnterSchedule(task)) return 'green';
@@ -453,6 +452,10 @@ export default function KanbanApp() {
   };
 
   const handleRepairMisclassifiedReadyOrders = async () => {
+    const ok = window.confirm(
+      '将把历史数据中明确显示已发图、料已齐但布尔字段未同步的订单修正为可排产状态。不会自动排产，也不会修改交期、数量、客户、型号。是否继续？'
+    );
+    if (!ok) return;
     setIsProcessing(true);
     try {
       const res = await repairMisclassifiedReadyOrdersAction();
@@ -460,7 +463,7 @@ export default function KanbanApp() {
         toast.error(res.error ?? '修复误分类失败');
         return;
       }
-      toast.success(`已重新识别 ${res.repairedCount} 单为可排产订单。`);
+      toast.success(`已同步 ${res.repairedCount} 单图纸/配料状态，请重新排产。`);
       if (res.repairedCount > 0) {
         showAlert(
           '误分类修复完成',
@@ -1471,7 +1474,7 @@ export default function KanbanApp() {
                     disabled={isProcessing}
                     className="rounded-full bg-cyan-500 px-3 py-1 font-bold text-slate-950 shadow-[0_0_16px_rgba(34,211,238,0.35)] disabled:opacity-50"
                   >
-                    修复误分类
+                    同步已发图/料齐状态
                   </button>
                 )}
               </div>

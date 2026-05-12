@@ -898,9 +898,9 @@ export async function repairMisclassifiedReadyOrdersAction(): Promise<{
     );
 
     if (legacyReadyRows.length > 0) {
-      await prisma.$transaction(
-        legacyReadyRows.map((row) =>
-          prisma.order.update({
+      await prisma.$transaction(async (tx) => {
+        for (const row of legacyReadyRows) {
+          await tx.order.update({
             where: { id: row.id },
             data: {
               isDrawingReady: true,
@@ -908,9 +908,18 @@ export async function repairMisclassifiedReadyOrdersAction(): Promise<{
               missingMaterialReason: null,
               missingMaterialEta: null,
             },
-          })
-        )
-      );
+          });
+          await tx.mesActivityLog.create({
+            data: {
+              ts: nowEpochMsForMesStorage(),
+              text: `系统修复误分类：订单 ${row.model} 的图纸/配料状态已按历史文本同步为就绪。`,
+              operator: 'system',
+              role: 'system',
+              actionType: 'schedule_ready_flag_repair',
+            },
+          });
+        }
+      });
     }
 
     const repairedOrders = rows

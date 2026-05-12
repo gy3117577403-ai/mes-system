@@ -28,6 +28,17 @@ const checks = [
     patterns: ['scheduleEligibility', 'canEnterSchedule', '禁止排产'],
   },
   {
+    file: 'src/components/OrderCard.tsx',
+    patterns: [
+      'isDrawingReadyForSchedule',
+      'isMaterialReadyForSchedule',
+      'drawingDisplayValue',
+      'materialDisplayValue',
+      '标记已发图',
+      '标记料齐',
+    ],
+  },
+  {
     file: 'src/app/page.tsx',
     patterns: [
       'scheduleEligibility',
@@ -99,6 +110,17 @@ if (/restoreInvalidScheduledOrdersAction[\s\S]*(SOP_NOT_READY|sopReady|uploadSop
 }
 if (/SOP[^。\n]*(禁止排产|阻止排产|拦截排产)/.test(aiScheduler)) {
   failures.push('src/actions/aiSchedulerActions.ts: AI prompt appears to treat SOP as a scheduling blocker');
+}
+
+const orderCard = read('src/components/OrderCard.tsx');
+if (/select[\s\S]{0,400}value=\{task\.drawing\}/.test(orderCard) || /select[\s\S]{0,400}value=\{task\.materials\}/.test(orderCard)) {
+  failures.push('src/components/OrderCard.tsx: readiness controls must not use raw text fields as displayed state');
+}
+if (!orderCard.includes("drawingLooksReady ? '已发图' : '标记已发图'")) {
+  failures.push('src/components/OrderCard.tsx: drawing action copy must avoid showing current-state 已发图 when not ready');
+}
+if (!orderCard.includes("materialsLooksKit ? '料已齐' : '标记料齐'")) {
+  failures.push('src/components/OrderCard.tsx: material action copy must avoid showing current-state 料已齐 when not ready');
 }
 
 if (failures.length > 0) {

@@ -9,7 +9,13 @@ import { UserRole } from '@/types/auth';
 import EnhancedOrderCard, { OrderCardRbacProps } from './OrderCard';
 import { canUseKanbanDnD } from '@/lib/rbac';
 import { isOrderCompletedStatus } from '@/lib/orderStatus';
-import { canEnterSchedule, getScheduleBlockReasons, formatScheduleBlockReason } from '@/lib/scheduleEligibility';
+import {
+  canEnterSchedule,
+  formatScheduleBlockReason,
+  getScheduleBlockReasons,
+  isDrawingReadyForSchedule,
+  isMaterialReadyForSchedule,
+} from '@/lib/scheduleEligibility';
 import type { AppTheme, LayoutMode } from '@/lib/uiTheme';
 import {
   cn,
@@ -60,6 +66,11 @@ export default function KanbanBoard({
 }: KanbanBoardProps) {
   const canDrag = canUseKanbanDnD(role);
   const cardGap = layoutMode === 'compact' ? 'space-y-1.5' : 'space-y-3';
+  const scheduleBlockLabel = (task: Order) => {
+    if (!isDrawingReadyForSchedule(task)) return formatScheduleBlockReason('DRAWING_NOT_READY');
+    if (!isMaterialReadyForSchedule(task)) return formatScheduleBlockReason('MATERIAL_NOT_READY');
+    return getScheduleBlockReasons(task).map(formatScheduleBlockReason).join('、');
+  };
 
   const poolShell = (
     title: string,
@@ -116,7 +127,7 @@ export default function KanbanBoard({
                 <div key={task.id} className="space-y-1">
                   {!canEnterSchedule(task) && (
                     <div className="rounded-lg border border-red-500/50 bg-red-950/70 px-2 py-1 text-[11px] font-bold text-red-200">
-                      禁止排产：{getScheduleBlockReasons(task).map(formatScheduleBlockReason).join('、')}
+                      禁止排产：{scheduleBlockLabel(task)}
                     </div>
                   )}
                   <EnhancedOrderCard
@@ -153,7 +164,7 @@ export default function KanbanBoard({
                 <div key={task.id} className="space-y-1">
                   {!canEnterSchedule(task) && (
                     <div className="rounded-lg border border-amber-500/50 bg-amber-950/70 px-2 py-1 text-[11px] font-bold text-amber-100">
-                      禁止排产：{getScheduleBlockReasons(task).map(formatScheduleBlockReason).join('、')}
+                      禁止排产：{scheduleBlockLabel(task)}
                     </div>
                   )}
                   <EnhancedOrderCard

@@ -24,7 +24,13 @@ import {
   isBoss,
 } from '@/lib/rbac';
 import { isOrderCompletedStatus } from '@/lib/orderStatus';
-import { isDrawingReadyForSchedule, isMaterialReadyForSchedule } from '@/lib/scheduleEligibility';
+import {
+  canEnterSchedule,
+  formatScheduleBlockReason,
+  getScheduleBlockReasons,
+  isDrawingReadyForSchedule,
+  isMaterialReadyForSchedule,
+} from '@/lib/scheduleEligibility';
 import type { AppTheme, LayoutMode } from '@/lib/uiTheme';
 import { cn } from '@/lib/uiTheme';
 
@@ -218,6 +224,11 @@ export default function EnhancedOrderCard({
 
   const drawingLooksReady = isDrawingReadyForSchedule(task);
   const materialsLooksKit = isMaterialReadyForSchedule(task);
+  const blockReasons = getScheduleBlockReasons(task);
+  const scheduleEligible = canEnterSchedule(task);
+  const drawingDisplayValue = drawingLooksReady ? '已发' : '未发图';
+  const materialDisplayValue = materialsLooksKit ? '料齐' : '未配料';
+  const isAdminDebug = boss;
 
   useEffect(() => {
     if (task.isMaterialReady !== false || ['料齐', '已配料'].includes(task.materials)) {
@@ -323,7 +334,7 @@ export default function EnhancedOrderCard({
           </span>
           <FileText
             className={`w-3.5 h-3.5 shrink-0 ${drawingOk ? 'text-emerald-500' : 'text-red-500'}`}
-            aria-label={drawingOk ? '图纸已发' : '图纸未齐'}
+            aria-label={drawingOk ? '图纸已发' : '图纸未下发'}
           />
           <Package
             className={`w-3.5 h-3.5 shrink-0 ${materialOk ? 'text-emerald-500' : 'text-amber-500'}`}
@@ -365,10 +376,22 @@ export default function EnhancedOrderCard({
     setMaterialPopoverOpen(false);
   };
 
+  const handleDrawingStatusChange = (value: string) => {
+    if (value === '未发图' && drawingLooksReady) {
+      const ok = window.confirm('确定要将该订单标记为图纸未下发吗？这会禁止排产。');
+      if (!ok) return;
+    }
+    updateTask(task.id, 'drawing', value);
+  };
+
+  const handleMaterialStatusChange = (value: string) => {
+    updateTask(task.id, 'materials', value);
+  };
+
   const materialMissingPopoverPortal =
     typeof document !== 'undefined' &&
     materialPopoverOpen &&
-    task.isMaterialReady === false &&
+    !materialsLooksKit &&
     materialPopoverCoords != null &&
     createPortal(
       <div
@@ -390,9 +413,9 @@ export default function EnhancedOrderCard({
           <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-slate-500">配料状态</p>
           <select
             id={`mat-status-${task.id}`}
-            value={task.materials}
+            value={materialDisplayValue}
             onChange={(e) => {
-              updateTask(task.id, 'materials', e.target.value);
+              handleMaterialStatusChange(e.target.value);
               if (['料齐', '已配料'].includes(e.target.value)) setMaterialPopoverOpen(false);
             }}
             className="w-full rounded-md border border-slate-600 bg-slate-800 px-2 py-2 text-xs font-bold text-slate-100 outline-none focus:ring-1 focus:ring-red-500"
@@ -596,6 +619,16 @@ export default function EnhancedOrderCard({
           </div>
         )}
 
+        {isAdminDebug && (
+          <div
+            className="mb-2 rounded-lg border border-slate-700/70 bg-slate-950/70 px-2 py-1 text-[10px] font-mono text-slate-400"
+            title={`isDrawingReady=${String(task.isDrawingReady)}; isMaterialReady=${String(task.isMaterialReady)}; canEnterSchedule=${String(scheduleEligible)}; blockReasons=${blockReasons.join(',') || 'none'}`}
+          >
+            ready debug: drawing={String(task.isDrawingReady)} material={String(task.isMaterialReady)} eligible=
+            {String(scheduleEligible)} reasons={blockReasons.map(formatScheduleBlockReason).join(',') || 'none'}
+          </div>
+        )}
+
         <div
           className={`flex flex-col gap-2 pt-2 border-t ${
             theme === 'dark' ? 'border-slate-700/60' : 'border-gray-200'
@@ -622,13 +655,13 @@ export default function EnhancedOrderCard({
               />
               <select
                 disabled={drawingDisabled}
-                value={task.drawing}
-                onChange={(e) => updateTask(task.id, 'drawing', e.target.value)}
+                value={drawingDisplayValue}
+                onChange={(e) => handleDrawingStatusChange(e.target.value)}
                 className={`min-w-0 flex-1 text-[10px] font-bold bg-transparent outline-none cursor-pointer appearance-none truncate ${
                   drawingLooksReady ? 'text-emerald-400' : 'text-red-400'
                 } ${drawingDisabled ? 'cursor-not-allowed opacity-60' : ''}`}
               >
-                <option value="已发">已发图</option>
+                <option value="已发">{drawingLooksReady ? '已发图' : '标记已发图'}</option>
                 <option value="未发图">未发图</option>
                 <option value="修改中">图修改</option>
               </select>
@@ -694,14 +727,14 @@ export default function EnhancedOrderCard({
                 ) : (
                   <select
                     disabled={materialsDisabled}
-                    value={task.materials}
-                    onChange={(e) => updateTask(task.id, 'materials', e.target.value)}
+                    value={materialDisplayValue}
+                    onChange={(e) => handleMaterialStatusChange(e.target.value)}
                     className={`min-w-0 flex-1 text-[10px] font-bold bg-transparent outline-none cursor-pointer appearance-none truncate ${
                       materialsLooksKit ? 'text-emerald-400' : 'text-red-400'
                     } ${materialsDisabled ? 'cursor-not-allowed opacity-60' : ''}`}
                     title={task.materials}
                   >
-                    <option value="料齐">料已齐</option>
+                    <option value="料齐">{materialsLooksKit ? '料已齐' : '标记料齐'}</option>
                     <option value="未配料">未配料</option>
                     {isCustomMaterialShortage && <option value={task.materials}>⚠️ {task.materials}</option>}
                   </select>
