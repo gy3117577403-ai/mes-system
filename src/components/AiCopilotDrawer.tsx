@@ -29,6 +29,7 @@ import {
   type AiCopilotContextSummary,
   type AiCopilotResponse,
 } from '@/actions/aiSchedulerActions';
+import { repairMisclassifiedReadyOrdersAction } from '@/actions/mesActions';
 import type { Order } from '@/types';
 import {
   canEnterSchedule,
@@ -63,11 +64,31 @@ type DbStatusPayload = {
   message?: string;
 };
 
+type ReadyFlagsPayload = {
+  ok?: boolean;
+  totalProblemOrders?: number;
+  legacyTextReadyButFlagBlocked?: number;
+  drawingTextReadyButFlagFalse?: number;
+  materialTextReadyButFlagFalse?: number;
+  examples?: Array<{
+    id: string;
+    client: string;
+    model: string;
+    drawing: string;
+    materials: string;
+    isDrawingReady: boolean;
+    isMaterialReady: boolean;
+  }>;
+  message?: string;
+};
+
 type ContextDiagnostics = {
   ai?: AiStatusPayload;
   db?: DbStatusPayload;
+  readyFlags?: ReadyFlagsPayload;
   aiError?: string;
   dbError?: string;
+  readyFlagsError?: string;
   checkedAt?: string;
 };
 
@@ -188,6 +209,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
   const [isThinking, startThinking] = useTransition();
   const [isApplying, startApplying] = useTransition();
   const [isChecking, startChecking] = useTransition();
+  const [isRepairingReadyFlags, startRepairingReadyFlags] = useTransition();
 
   const localSummary = useMemo(
     () => buildLocalSummary(orders, currentBaseLimit),
@@ -325,9 +347,10 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
   const checkContext = () => {
     startChecking(async () => {
       const next: ContextDiagnostics = { checkedAt: new Date().toLocaleString('zh-CN', { hour12: false }) };
-      const [aiResult, dbResult] = await Promise.allSettled([
+      const [aiResult, dbResult, readyFlagsResult] = await Promise.allSettled([
         fetchJson<AiStatusPayload>('/api/ai/status'),
         fetchJson<DbStatusPayload>('/api/db/status'),
+        fetchJson<ReadyFlagsPayload>('/api/db/ready-flags'),
       ]);
 
       if (aiResult.status === 'fulfilled') next.ai = aiResult.value;
@@ -336,11 +359,41 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
       if (dbResult.status === 'fulfilled') next.db = dbResult.value;
       else next.dbError = dbResult.reason instanceof Error ? dbResult.reason.message : String(dbResult.reason);
 
+      if (readyFlagsResult.status === 'fulfilled') next.readyFlags = readyFlagsResult.value;
+      else next.readyFlagsError = readyFlagsResult.reason instanceof Error ? readyFlagsResult.reason.message : String(readyFlagsResult.reason);
+
       setDiagnostics(next);
     });
   };
 
+  const repairReadyFlags = () => {
+    const confirmed = window.confirm(
+      '该操作会把历史文本中明确为已发图/料齐的订单，同步到排产布尔字段。系统仍会保留排产硬规则。是否继续？'
+    );
+    if (!confirmed) return;
+
+    startRepairingReadyFlags(async () => {
+      try {
+        const res = await repairMisclassifiedReadyOrdersAction();
+        if (!res.ok) {
+          const message = res.error || '同步历史图纸/物料状态失败';
+          toast.error(message);
+          setErrorMessage(classifyCopilotError(message));
+          return;
+        }
+        toast.success(`已同步 ${res.repairedCount} 单图纸/配料状态，请重新排产。`);
+        await onApplied?.();
+        checkContext();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        toast.error('同步历史图纸/物料状态失败');
+        setErrorMessage(classifyCopilotError(message));
+      }
+    });
+  };
+
   const contextWarnings = activeSummary.contextWarnings ?? [];
+  const readyFlagProblems = diagnostics?.readyFlags?.legacyTextReadyButFlagBlocked ?? 0;
 
   return (
     <>
@@ -480,6 +533,40 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
                   </div>
                 </div>
 
+                <div className="rounded-2xl border border-amber-300/20 bg-amber-400/10 p-4 text-xs leading-5 text-amber-50">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="font-bold text-amber-100">数据一致性风险</div>
+                      <p className="mt-1 text-amber-100/80">
+                        历史订单如果存在文本状态与布尔字段不一致，AI 和排产系统会以布尔字段为准。这是历史数据问题，不是 AI 模型问题。
+                      </p>
+                    </div>
+                    <ShieldCheck className="h-5 w-5 text-amber-100" />
+                  </div>
+                  {diagnostics?.readyFlags ? (
+                    <div className="space-y-2">
+                      <p>
+                        状态不一致：{diagnostics.readyFlags.legacyTextReadyButFlagBlocked ?? 0} 单；图纸文本已发但布尔 false：
+                        {diagnostics.readyFlags.drawingTextReadyButFlagFalse ?? 0} 单；物料文本料齐但布尔 false：
+                        {diagnostics.readyFlags.materialTextReadyButFlagFalse ?? 0} 单。
+                      </p>
+                      {readyFlagProblems > 0 && (
+                        <button
+                          type="button"
+                          onClick={repairReadyFlags}
+                          disabled={isRepairingReadyFlags}
+                          className="mt-1 flex w-full items-center justify-center gap-2 rounded-xl border border-amber-200/40 bg-amber-200 px-3 py-2 text-xs font-black text-slate-950 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {isRepairingReadyFlags ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
+                          同步历史图纸/物料状态
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <p>点击“检查 AI 上下文”后，会读取只读诊断接口并展示历史状态不一致数量。</p>
+                  )}
+                </div>
+
                 <button
                   type="button"
                   onClick={checkContext}
@@ -501,10 +588,29 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
                     {diagnostics.db?.missingTables?.includes('MesAbnormalClaim') && (
                       <p className="mt-2 text-amber-200">MesAbnormalClaim 缺表时，异常工时上下文会降级，但订单上下文不一定失败。</p>
                     )}
-                    {(diagnostics.aiError || diagnostics.dbError) && (
+                    {diagnostics.readyFlags && (
+                      <div className="mt-2 rounded-xl border border-amber-300/20 bg-amber-400/10 p-3 text-amber-50">
+                        <p>
+                          ready-flags：{diagnostics.readyFlags.message || '已完成只读诊断'}；状态不一致{' '}
+                          {diagnostics.readyFlags.legacyTextReadyButFlagBlocked ?? 0} 单。
+                        </p>
+                        {(diagnostics.readyFlags.examples ?? []).slice(0, 5).length > 0 && (
+                          <div className="mt-2 space-y-1 text-[11px] text-amber-100/85">
+                            {(diagnostics.readyFlags.examples ?? []).slice(0, 5).map((order) => (
+                              <p key={order.id}>
+                                {order.client} / {order.model}：drawing={order.drawing || '-'} materials={order.materials || '-'} flag=
+                                {String(order.isDrawingReady)}/{String(order.isMaterialReady)}
+                              </p>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {(diagnostics.aiError || diagnostics.dbError || diagnostics.readyFlagsError) && (
                       <div className="mt-2 rounded-xl border border-rose-400/25 bg-rose-500/10 p-3 text-rose-100">
                         {diagnostics.aiError && <p>AI 状态异常：{diagnostics.aiError}</p>}
                         {diagnostics.dbError && <p>数据库状态异常：{diagnostics.dbError}</p>}
+                        {diagnostics.readyFlagsError && <p>ready-flags 状态异常：{diagnostics.readyFlagsError}</p>}
                       </div>
                     )}
                   </div>
