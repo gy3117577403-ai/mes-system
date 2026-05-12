@@ -7,6 +7,7 @@ import {
   formatScheduleBlockMessage,
   getRequiredPool,
   getScheduleBlockReasons,
+  isScheduleAssigned,
 } from '@/lib/scheduleEligibility';
 
 const DEEPSEEK_CHAT_URL = 'https://api.deepseek.com/chat/completions';
@@ -33,10 +34,23 @@ export type AiCopilotResponse = {
   exportDataSummary: AiCopilotExportRow[];
 };
 
+export type AiCopilotContextSummary = {
+  totalOrders: number;
+  schedulableOrders: number;
+  blockedByDrawing: number;
+  blockedByMaterial: number;
+  scheduledOrders: number;
+  urgentOrders: number;
+  riskOrders: number;
+  dailyCapacity: number;
+  contextWarnings: string[];
+};
+
 export type AiCopilotActionResult = {
   ok: boolean;
   error?: string;
   data?: AiCopilotResponse;
+  contextSummary?: AiCopilotContextSummary;
   rawModelPreview?: string;
 };
 
@@ -48,6 +62,7 @@ type DeepSeekChatBody = {
 type SchedulerContextBuildResult = {
   context: string;
   warnings: string[];
+  summary: AiCopilotContextSummary;
 };
 
 function fallbackAiCopilotResponse(
@@ -225,9 +240,33 @@ async function buildSchedulerContext(currentBaseLimit: number): Promise<Schedule
     warnings.push(ABNORMAL_CLAIM_CONTEXT_WARNING);
   }
 
+  const todayYmd = new Date().toISOString().slice(0, 10);
+  const blockedByDrawing = orders.filter((o) => getScheduleBlockReasons(o).includes('DRAWING_NOT_READY')).length;
+  const blockedByMaterial = orders.filter(
+    (o) =>
+      !getScheduleBlockReasons(o).includes('DRAWING_NOT_READY') &&
+      getScheduleBlockReasons(o).includes('MATERIAL_NOT_READY')
+  ).length;
+  const summary: AiCopilotContextSummary = {
+    totalOrders: orders.length,
+    schedulableOrders: orders.filter((o) => canEnterSchedule(o)).length,
+    blockedByDrawing,
+    blockedByMaterial,
+    scheduledOrders: orders.filter((o) => isScheduleAssigned(o)).length,
+    urgentOrders: orders.filter((o) => o.isUrgent).length,
+    riskOrders: orders.filter((o) => {
+      const deliveryDate = String(o.deliveryDate ?? '').trim();
+      if (!deliveryDate) return false;
+      return deliveryDate < todayYmd && !isScheduleAssigned(o);
+    }).length,
+    dailyCapacity: currentBaseLimit,
+    contextWarnings: warnings,
+  };
+
   const context = JSON.stringify({
     currentBaseLimit,
     contextWarnings: warnings,
+    contextSummary: summary,
     orders: orders.map((o) => {
       const totalQuantity = Number(o.totalQty || o.qty || 1);
       const planMinutes = Number(o.totalHours) || 0;
@@ -263,7 +302,7 @@ async function buildSchedulerContext(currentBaseLimit: number): Promise<Schedule
     })),
   });
 
-  return { context, warnings };
+  return { context, warnings, summary };
 }
 
 export async function interactWithAiCopilotAction(
@@ -361,6 +400,7 @@ export async function interactWithAiCopilotAction(
           ),
           contextResult.warnings
         ),
+        contextSummary: contextResult.summary,
         rawModelPreview: errorText.slice(0, 500),
       };
     }
@@ -377,6 +417,7 @@ export async function interactWithAiCopilotAction(
           fallbackAiCopilotResponse('AI 接口返回格式异常，无法读取响应 JSON。', ['API 响应体不是合法 JSON']),
           contextResult.warnings
         ),
+        contextSummary: contextResult.summary,
         rawModelPreview: message.slice(0, 500),
       };
     }
@@ -392,6 +433,7 @@ export async function interactWithAiCopilotAction(
           ),
           contextResult.warnings
         ),
+        contextSummary: contextResult.summary,
         rawModelPreview: body.error.message.slice(0, 500),
       };
     }
@@ -407,6 +449,7 @@ export async function interactWithAiCopilotAction(
           ]),
           contextResult.warnings
         ),
+        contextSummary: contextResult.summary,
       };
     }
 
@@ -415,6 +458,7 @@ export async function interactWithAiCopilotAction(
       return {
         ok: true,
         data: withContextWarnings(normalizeAiPayload(parsedResult), contextResult.warnings),
+        contextSummary: contextResult.summary,
         rawModelPreview: rawContent.slice(0, 500),
       };
     } catch (parseError) {
@@ -428,6 +472,7 @@ export async function interactWithAiCopilotAction(
           ),
           contextResult.warnings
         ),
+        contextSummary: contextResult.summary,
         rawModelPreview: rawContent.slice(0, 500),
       };
     }
@@ -442,6 +487,7 @@ export async function interactWithAiCopilotAction(
         ]),
         contextResult.warnings
       ),
+      contextSummary: contextResult.summary,
       rawModelPreview: message.slice(0, 500),
     };
   }

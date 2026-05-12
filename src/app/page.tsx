@@ -1414,7 +1414,7 @@ export default function KanbanApp() {
         onRequestHardClearBoard={triggerHardClearBoardFromWizard}
       />
 
-      <AiCopilotDrawer currentBaseLimit={dailyCapacity} onApplied={handleSyncRefresh} />
+      <AiCopilotDrawer currentBaseLimit={dailyCapacity} orders={orders} onApplied={handleSyncRefresh} />
 
       {/* 浮动警报拦截横幅 */}
       {(redAlertTasks.length > 0 || misclassifiedReadyOrders.length > 0) && viewMode === 'manager' && (
