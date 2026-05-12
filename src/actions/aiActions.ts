@@ -2,6 +2,7 @@
 
 import { prisma } from '@/lib/prisma';
 import { formatMsToShanghaiLocale, shanghaiDateTodayISO } from '@/lib/datetimeShanghai';
+import { canEnterSchedule, getRequiredPool, getScheduleBlockReasons } from '@/lib/scheduleEligibility';
 
 /** SiliconFlow OpenAI 相容端點（國內可達，DeepSeek 系列） */
 const SILICONFLOW_CHAT_URL = 'https://api.siliconflow.cn/v1/chat/completions';
@@ -71,8 +72,15 @@ export async function runDeepSeekScheduleAction(): Promise<{
       return { ok: true, updated: 0, rawModelPreview: '(無待排工單)' };
     }
 
+    const schedulableOrders = orders.filter((o) => canEnterSchedule(o));
+    const skipped = orders.length - schedulableOrders.length;
+
+    if (schedulableOrders.length === 0) {
+      return { ok: true, updated: 0, rawModelPreview: `已跳过 ${skipped} 单未下发图纸/SOP或未配料齐的订单。` };
+    }
+
     const todaySh = shanghaiDateTodayISO();
-    const orderPayload = orders.map((o) => ({
+    const orderPayload = schedulableOrders.map((o) => ({
       orderId: o.id,
       client: o.client,
       model: o.model,
@@ -84,11 +92,15 @@ export async function runDeepSeekScheduleAction(): Promise<{
       createdAtShanghai: formatMsToShanghaiLocale(o.createdAt),
       assignedDayCurrent: o.assignedDay,
       taskStatusCurrent: o.taskStatus,
+      scheduleEligible: canEnterSchedule(o),
+      blockReasons: getScheduleBlockReasons(o),
+      requiredPool: getRequiredPool(o),
     }));
 
     const allowedDays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Unscheduled'];
 
     const system = [
+      '系统级硬规则：禁止把 scheduleEligible=false 的订单排入任何日期；DRAWING_NOT_READY 留在技术攻坚池；MATERIAL_NOT_READY 留在仓库配料池；只有 scheduleEligible=true 才允许排产。',
       '你是线束 MES 柔性排产调度器。必须只输出一个 JSON 对象，不要输出任何解释文字。',
       'JSON 顶层字段为 "assignments"：数组，每项含 orderId(string)、assignedDay(string)、taskStatus(string)、plannedDate(string，可选)。',
       `assignedDay 必须从以下英文键中择一：${allowedDays.join(', ')}。`,
@@ -161,6 +173,8 @@ export async function runDeepSeekScheduleAction(): Promise<{
         const oid = a.orderId?.trim();
         if (!oid) continue;
         if (!allowed.has(a.assignedDay)) continue;
+        const order = schedulableOrders.find((o) => o.id === oid);
+        if (!order || !canEnterSchedule(order)) continue;
         const ts = typeof a.taskStatus === 'string' && a.taskStatus.trim() ? a.taskStatus.trim() : 'SCHEDULED';
         const planned =
           typeof a.plannedDate === 'string' && a.plannedDate.trim() ? a.plannedDate.trim() : null;
@@ -182,7 +196,8 @@ export async function runDeepSeekScheduleAction(): Promise<{
       }
     });
 
-    return { ok: true, updated, rawModelPreview: content.slice(0, 400) };
+    const skippedPreview = skipped > 0 ? `已跳过 ${skipped} 单未下发图纸/SOP或未配料齐的订单。\n` : '';
+    return { ok: true, updated, rawModelPreview: `${skippedPreview}${content.slice(0, 400)}` };
   } catch (e) {
     console.error('[runDeepSeekScheduleAction]', e);
     return { ok: false, error: e instanceof Error ? e.message : String(e) };

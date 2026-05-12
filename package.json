@@ -19,6 +19,7 @@
     "db:sql:create-abnormal-claim": "node scripts/generate-missing-mes-abnormal-claim-sql.cjs",
     "db:verify:abnormal-claim": "node scripts/verify-mes-abnormal-claim-table.cjs",
     "db:patch:abnormal-claim": "node scripts/apply-mes-abnormal-claim-patch.cjs",
+    "check:schedule-guard": "node scripts/check-schedule-eligibility-guard.cjs",
     "build-exe": "electron-builder --win",
     "prepare": "husky"
   },

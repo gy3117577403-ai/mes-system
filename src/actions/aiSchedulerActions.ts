@@ -2,6 +2,12 @@
 
 import { revalidatePath } from 'next/cache';
 import { prisma } from '@/lib/prisma';
+import {
+  canEnterSchedule,
+  formatScheduleBlockMessage,
+  getRequiredPool,
+  getScheduleBlockReasons,
+} from '@/lib/scheduleEligibility';
 
 const DEEPSEEK_CHAT_URL = 'https://api.deepseek.com/chat/completions';
 const DEEPSEEK_MODEL = 'deepseek-chat';
@@ -240,6 +246,9 @@ async function buildSchedulerContext(currentBaseLimit: number): Promise<Schedule
         isUrgent: o.isUrgent,
         isMaterialReady: o.isMaterialReady,
         isDrawingReady: o.isDrawingReady,
+        scheduleEligible: canEnterSchedule(o),
+        blockReasons: getScheduleBlockReasons(o),
+        requiredPool: getRequiredPool(o),
       };
     }),
     exceptionHourLedger: exceptions.map((e) => ({
@@ -299,6 +308,7 @@ export async function interactWithAiCopilotAction(
   }
 
   const system =
+    '系统级硬规则：禁止把 scheduleEligible=false 的订单排入任何日期。DRAWING_NOT_READY 必须保留在技术攻坚池。MATERIAL_NOT_READY 必须保留在仓库配料池。只有 scheduleEligible=true 才允许生成 UPDATE_ORDER_DATE。违反这些规则的建议会被后端拒绝执行。\n\n' +
     '你是一个顶级的工业 MES 运筹调度副驾与数据审计员。当前系统时间为 2026年5月11日。请阅读系统提供的当前车间排单上下文、每日产能基准以及异常工时台账，并理解用户的自然语言指令（如调单、改交期、记异常）。\n' +
     '请执行以下运筹推演：\n' +
     '1. 回应用户的具体诉求，并在虚拟沙盘中推演调整后的结果。\n' +
@@ -439,10 +449,18 @@ export async function interactWithAiCopilotAction(
 
 export async function executeAiCopilotMutationsAction(
   proposedMutations: AiCopilotMutation[]
-): Promise<{ ok: boolean; error?: string; updatedOrders: number; exceptionLogs: number }> {
+): Promise<{
+  ok: boolean;
+  error?: string;
+  updatedOrders: number;
+  exceptionLogs: number;
+  rejectedMutations?: Array<{ mutation: AiCopilotMutation; reason: string }>;
+  unreasonableAlerts?: string[];
+}> {
   const list = Array.isArray(proposedMutations) ? proposedMutations : [];
   let updatedOrders = 0;
   let exceptionLogs = 0;
+  const rejectedMutations: Array<{ mutation: AiCopilotMutation; reason: string }> = [];
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -455,6 +473,26 @@ export async function executeAiCopilotMutationsAction(
       for (const m of list) {
         if (m.type === 'UPDATE_ORDER_DATE') {
           if (!isIsoDate(m.newDate) || !m.orderId) continue;
+          const order = await tx.order.findFirst({
+            where: { id: m.orderId, deletedAt: null, isArchived: false },
+            select: {
+              id: true,
+              model: true,
+              assignedDay: true,
+              plannedDate: true,
+              taskStatus: true,
+              isDrawingReady: true,
+              isMaterialReady: true,
+            },
+          });
+          if (!order || !canEnterSchedule(order)) {
+            const reasons = order ? getScheduleBlockReasons(order) : [];
+            const reason = order
+              ? `AI 建议已被系统拦截：${formatScheduleBlockMessage(order, reasons)}`
+              : `AI 建议已被系统拦截：订单 ${m.orderId} 不存在或已归档，禁止排产。`;
+            rejectedMutations.push({ mutation: m, reason });
+            continue;
+          }
           const result = await tx.order.updateMany({
             where: { id: m.orderId, deletedAt: null, isArchived: false },
             data: {
@@ -498,7 +536,14 @@ export async function executeAiCopilotMutationsAction(
     });
 
     revalidatePath('/');
-    return { ok: true, updatedOrders, exceptionLogs };
+    return {
+      ok: rejectedMutations.length === 0,
+      error: rejectedMutations.length > 0 ? `已拦截 ${rejectedMutations.length} 条不符合排产资格的 AI 建议。` : undefined,
+      updatedOrders,
+      exceptionLogs,
+      rejectedMutations,
+      unreasonableAlerts: rejectedMutations.map((item) => item.reason),
+    };
   } catch (error) {
     const message = safeErrorMessage(error);
     console.error('[executeAiCopilotMutationsAction]', error);
@@ -507,6 +552,7 @@ export async function executeAiCopilotMutationsAction(
       error: `AI 建议执行失败：${message}`,
       updatedOrders,
       exceptionLogs,
+      rejectedMutations,
     };
   }
 }

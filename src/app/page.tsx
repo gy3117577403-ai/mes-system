@@ -50,10 +50,18 @@ import {
   createActivityLogAction,
   patchMesSettingsAction,
   softDeleteOrdersAction,
+  restoreInvalidScheduledOrdersAction,
   type FetchInitialDataResult,
 } from '@/actions/mesActions';
 import { diffOrder } from '@/lib/orderDiff';
 import { isOrderCompletedStatus } from '@/lib/orderStatus';
+import {
+  canEnterSchedule,
+  formatScheduleBlockMessage,
+  getRequiredPool,
+  getScheduleBlockReasons,
+  isScheduleAssigned,
+} from '@/lib/scheduleEligibility';
 import {
   getShanghaiBatchImportMondayYmd,
   parseShanghaiWallClockToEpochMs,
@@ -368,8 +376,8 @@ export default function KanbanApp() {
     const isReady = task.drawing === '已发' && ['料齐', '已配料'].includes(task.materials);
     const isScheduled = task.assignedDay !== 'Unscheduled';
 
-    if (isReady) return 'green';
-    if (!isReady && isScheduled) return 'red';
+    if (canEnterSchedule(task)) return 'green';
+    if (!canEnterSchedule(task) && isScheduled) return 'red';
     return 'yellow';
   };
 
@@ -395,6 +403,54 @@ export default function KanbanApp() {
   }, [orders, searchQuery, statusFilter]);
 
   const redAlertTasks = useMemo(() => filteredOrders.filter(t => getCardStatus(t) === 'red' || t.taskStatus === 'anomaly'), [filteredOrders]);
+  const invalidScheduledOrders = useMemo(
+    () => filteredOrders.filter((t) => isScheduleAssigned(t) && !canEnterSchedule(t)),
+    [filteredOrders]
+  );
+  const invalidDrawingScheduledCount = useMemo(
+    () => invalidScheduledOrders.filter((t) => getScheduleBlockReasons(t).includes('DRAWING_NOT_READY')).length,
+    [invalidScheduledOrders]
+  );
+  const invalidMaterialScheduledCount = useMemo(
+    () =>
+      invalidScheduledOrders.filter(
+        (t) =>
+          !getScheduleBlockReasons(t).includes('DRAWING_NOT_READY') &&
+          getScheduleBlockReasons(t).includes('MATERIAL_NOT_READY')
+      ).length,
+    [invalidScheduledOrders]
+  );
+  const workshopAnomalyCount = useMemo(
+    () => filteredOrders.filter((t) => t.taskStatus === 'anomaly').length,
+    [filteredOrders]
+  );
+
+  const handleRestoreInvalidScheduledOrders = async () => {
+    const ok = window.confirm(
+      '将把所有未下发图纸/SOP或未配料齐却已进入排产日的订单退回技术攻坚池或仓库配料池。不会删除订单，也不会修改交期、数量、客户、型号。是否继续？'
+    );
+    if (!ok) return;
+    setIsProcessing(true);
+    try {
+      const res = await restoreInvalidScheduledOrdersAction();
+      if (!res.ok) {
+        toast.error(res.error ?? '恢复违规排产失败');
+        return;
+      }
+      toast.success(`已恢复 ${res.restoredCount} 单违规排产。`);
+      if (res.restoredOrders.length > 0) {
+        showAlert(
+          '违规排产已恢复',
+          res.restoredOrders.map((item) => `${item.model} -> ${item.targetPool}`).join('\n')
+        );
+      }
+      await handleSyncRefresh();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '恢复违规排产失败');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
 
   /** 左側三池：技術 / 倉庫 / 就緒（僅就緒可拖入日曆） */
   const { techPoolOrders, warehousePoolOrders, readyPoolOrders } = useMemo(() => {
@@ -406,20 +462,17 @@ export default function KanbanApp() {
       if (isOrderCompletedStatus(task.taskStatus)) return;
       if (task.taskStatus === 'PendingQC') return;
       if (task.assignedDay !== 'Unscheduled') return;
-
-      const drawingOk = task.drawing === '已发';
-      const materialOk = ['料齐', '已配料'].includes(task.materials);
-
-      if (!drawingOk) {
+      const requiredPool = getRequiredPool(task);
+      if (requiredPool === 'TECH_POOL') {
         tech.push(task);
-      } else if (task.isUrgent) {
-        // 急單：僅需圖紙已發即可進入就緒池，無視物料
-        ready.push(task);
-      } else if (!materialOk) {
-        wh.push(task);
-      } else {
-        ready.push(task);
+        return;
       }
+      if (requiredPool === 'MATERIAL_POOL') {
+        wh.push(task);
+        return;
+      }
+      ready.push(task);
+      return;
     });
 
     return {
@@ -668,6 +721,10 @@ export default function KanbanApp() {
         activeAlarm: null,
         isUrgent: newOrderForm.isUrgent === true,
       });
+      if (!canEnterSchedule(newOrder)) {
+        newOrder.assignedDay = 'Unscheduled';
+        newOrder.plannedDate = undefined;
+      }
 
       setOrders((prev) => [newOrder, ...prev]);
       void createOrderAction(newOrder, targetDateStr);
@@ -728,7 +785,8 @@ export default function KanbanApp() {
   };
 
   const triggerBatchAISchedule = () => {
-    const aiEligiblePool = readyPoolOrders.filter((o) => !o.isUrgent);
+    const skippedIneligible = readyPoolOrders.filter((o) => !canEnterSchedule(o)).length;
+    const aiEligiblePool = readyPoolOrders.filter((o) => !o.isUrgent && canEnterSchedule(o));
     if (aiEligiblePool.length === 0) {
       if (readyPoolOrders.length > 0) {
         showAlert(
@@ -906,6 +964,9 @@ export default function KanbanApp() {
           }
           
           setOrders(updatedOrders);
+          if (skippedIneligible > 0) {
+            toast(`已跳过 ${skippedIneligible} 单未下发图纸/SOP或未配料齐的订单。`);
+          }
           const prevById = new Map(ordersBeforeAi.map((o) => [o.id, o]));
           for (const o of updatedOrders) {
             const prev = prevById.get(o.id);
@@ -1145,8 +1206,14 @@ export default function KanbanApp() {
     const nextDay =
       destination.droppableId === 'ReadyPool' ? 'Unscheduled' : destination.droppableId;
 
+    const draggedOrder = orders.find((x) => x.id === draggableId);
+    if (nextDay !== 'Unscheduled' && draggedOrder && !canEnterSchedule(draggedOrder)) {
+      toast.error(formatScheduleBlockMessage(draggedOrder, getScheduleBlockReasons(draggedOrder)));
+      return;
+    }
+
     if (source.droppableId !== destination.droppableId) {
-      const o = orders.find((x) => x.id === draggableId);
+      const o = draggedOrder;
       if (o && user) {
         appendAuditLog(
           'schedule_drag',
@@ -1319,6 +1386,39 @@ export default function KanbanApp() {
               >
                 ⚠️ 异常拦截：发现 {redAlertTasks.length} 份“缺料排产”或“车间报错”的订单！
               </h3>
+              <div className="mb-2 flex flex-wrap items-center gap-2 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('all')}
+                  className="rounded-full border border-red-400/50 px-2 py-0.5 text-red-100"
+                >
+                  未下发图纸/SOP却已排产：{invalidDrawingScheduledCount} 单
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('all')}
+                  className="rounded-full border border-amber-400/50 px-2 py-0.5 text-amber-100"
+                >
+                  未配料齐却已排产：{invalidMaterialScheduledCount} 单
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('anomaly')}
+                  className="rounded-full border border-fuchsia-400/50 px-2 py-0.5 text-fuchsia-100"
+                >
+                  车间报错：{workshopAnomalyCount} 单
+                </button>
+                {(invalidDrawingScheduledCount + invalidMaterialScheduledCount) > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleRestoreInvalidScheduledOrders}
+                    disabled={isProcessing}
+                    className="rounded-full bg-red-500 px-3 py-1 font-bold text-white shadow-[0_0_16px_rgba(239,68,68,0.45)] disabled:opacity-50"
+                  >
+                    一键恢复违规排产
+                  </button>
+                )}
+              </div>
               <div className="flex gap-2 overflow-x-auto pb-1 custom-scrollbar">
                 {redAlertTasks.map((t: any) => (
                   <div

@@ -110,9 +110,21 @@ export default function AiCopilotDrawer({ currentBaseLimit, onApplied }: AiCopil
       try {
         const res = await executeAiCopilotMutationsAction(diagnosis.proposedMutations);
         if (!res.ok) {
+          if (res.unreasonableAlerts?.length) {
+            setDiagnosis((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    unreasonableAlerts: [...res.unreasonableAlerts!, ...prev.unreasonableAlerts],
+                    proposedMutations: [],
+                  }
+                : prev
+            );
+          }
           const message = classifyCopilotError(res.error ?? '执行 AI 建议失败');
           setErrorMessage(message);
           toast.error(message);
+          await onApplied?.();
           return;
         }
         toast.success(`已执行：订单更新 ${res.updatedOrders} 条，异常工时 ${res.exceptionLogs} 条`);

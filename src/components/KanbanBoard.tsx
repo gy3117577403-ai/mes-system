@@ -9,6 +9,7 @@ import { UserRole } from '@/types/auth';
 import EnhancedOrderCard, { OrderCardRbacProps } from './OrderCard';
 import { canUseKanbanDnD } from '@/lib/rbac';
 import { isOrderCompletedStatus } from '@/lib/orderStatus';
+import { canEnterSchedule, getScheduleBlockReasons, formatScheduleBlockReason } from '@/lib/scheduleEligibility';
 import type { AppTheme, LayoutMode } from '@/lib/uiTheme';
 import {
   cn,
@@ -112,16 +113,22 @@ export default function KanbanBoard({
             'red',
             <div className={cn('flex-1 overflow-y-auto p-3 custom-scrollbar min-h-[200px]', cardGap)}>
               {techPoolOrders.map((task) => (
-                <EnhancedOrderCard
-                  key={task.id}
-                  task={task}
-                  status={getCardStatus(task)}
-                  updateTask={updateOrderData}
-                  saveOrderPatch={saveOrderPatch}
-                  rbac={orderCardRbac}
-                  layoutMode={layoutMode}
-                  theme={theme}
-                />
+                <div key={task.id} className="space-y-1">
+                  {!canEnterSchedule(task) && (
+                    <div className="rounded-lg border border-red-500/50 bg-red-950/70 px-2 py-1 text-[11px] font-bold text-red-200">
+                      禁止排产：{getScheduleBlockReasons(task).map(formatScheduleBlockReason).join('、')}
+                    </div>
+                  )}
+                  <EnhancedOrderCard
+                    task={task}
+                    status={getCardStatus(task)}
+                    updateTask={updateOrderData}
+                    saveOrderPatch={saveOrderPatch}
+                    rbac={orderCardRbac}
+                    layoutMode={layoutMode}
+                    theme={theme}
+                  />
+                </div>
               ))}
               {techPoolOrders.length === 0 && (
                 <div
@@ -143,16 +150,22 @@ export default function KanbanBoard({
             'yellow',
             <div className={cn('flex-1 overflow-y-auto p-3 custom-scrollbar min-h-[200px]', cardGap)}>
               {warehousePoolOrders.map((task) => (
-                <EnhancedOrderCard
-                  key={task.id}
-                  task={task}
-                  status={getCardStatus(task)}
-                  updateTask={updateOrderData}
-                  saveOrderPatch={saveOrderPatch}
-                  rbac={orderCardRbac}
-                  layoutMode={layoutMode}
-                  theme={theme}
-                />
+                <div key={task.id} className="space-y-1">
+                  {!canEnterSchedule(task) && (
+                    <div className="rounded-lg border border-amber-500/50 bg-amber-950/70 px-2 py-1 text-[11px] font-bold text-amber-100">
+                      禁止排产：{getScheduleBlockReasons(task).map(formatScheduleBlockReason).join('、')}
+                    </div>
+                  )}
+                  <EnhancedOrderCard
+                    task={task}
+                    status={getCardStatus(task)}
+                    updateTask={updateOrderData}
+                    saveOrderPatch={saveOrderPatch}
+                    rbac={orderCardRbac}
+                    layoutMode={layoutMode}
+                    theme={theme}
+                  />
+                </div>
               ))}
               {warehousePoolOrders.length === 0 && (
                 <div

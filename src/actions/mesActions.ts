@@ -31,8 +31,87 @@ import type { Order } from '@/types';
 import type { ActivityLogEntry } from '@/types';
 import type { AppTheme, LayoutMode } from '@/lib/uiTheme';
 import { isOrderCompletedStatus } from '@/lib/orderStatus';
+import {
+  canEnterSchedule,
+  formatScheduleBlockMessage,
+  getRequiredPool,
+  getScheduleBlockReasons,
+  isScheduleAssigned,
+  type ScheduleBlockReason,
+} from '@/lib/scheduleEligibility';
 
 const SETTINGS_ID = 'singleton';
+const SCHEDULED_WRITE_STATUSES = new Set(['SCHEDULED', 'IN_PROGRESS', 'PAUSED']);
+
+type RejectedScheduleOrder = {
+  id: string;
+  model: string;
+  client?: string;
+  reasons: ScheduleBlockReason[];
+  error: string;
+};
+
+function wantsScheduleAssignment(patch: Record<string, unknown>): boolean {
+  if ('assignedDay' in patch) {
+    const day = String(patch.assignedDay ?? '').trim();
+    if (day !== '' && day !== 'Unscheduled') return true;
+  }
+  if ('plannedDate' in patch) {
+    const planned = patch.plannedDate == null ? '' : String(patch.plannedDate).trim();
+    if (planned !== '') return true;
+  }
+  if ('taskStatus' in patch) {
+    const status = String(patch.taskStatus ?? '').trim();
+    if (SCHEDULED_WRITE_STATUSES.has(status)) return true;
+  }
+  return false;
+}
+
+async function rejectIneligibleScheduleWrite(
+  orderId: string,
+  patch: Record<string, unknown>
+): Promise<RejectedScheduleOrder | null> {
+  if (!wantsScheduleAssignment(patch)) return null;
+
+  const existing = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: {
+      id: true,
+      model: true,
+      client: true,
+      assignedDay: true,
+      plannedDate: true,
+      taskStatus: true,
+      isDrawingReady: true,
+      isMaterialReady: true,
+    },
+  });
+
+  const next = {
+    ...(existing ?? {
+      id: orderId,
+      model: '',
+      client: '',
+      assignedDay: 'Unscheduled',
+      plannedDate: null,
+      taskStatus: 'normal',
+      isDrawingReady: false,
+      isMaterialReady: false,
+    }),
+    ...patch,
+  };
+
+  const reasons = getScheduleBlockReasons(next);
+  if (canEnterSchedule(next)) return null;
+
+  return {
+    id: orderId,
+    model: String(next.model ?? ''),
+    client: String(next.client ?? ''),
+    reasons,
+    error: formatScheduleBlockMessage(next, reasons),
+  };
+}
 
 /**
  * 標記完工時強制 `reportedQty = totalQty`（庫存欄位名），確保審計實做件數與工時核算有基数。
@@ -291,6 +370,11 @@ export async function createOrderAction(
       ...(parsed.data as Partial<Order> & { id: string }),
       plannedDate: plannedMsStr,
     });
+    if (!canEnterSchedule(o)) {
+      o.assignedDay = 'Unscheduled';
+      o.plannedDate = undefined;
+      if (o.taskStatus === 'SCHEDULED') o.taskStatus = 'PENDING';
+    }
     await prisma.order.create({
       data: frontendOrderToPrismaCreate(o),
     });
@@ -394,6 +478,11 @@ export async function importOrdersOverwriteWeekAction(
           ...(raw as Partial<Order> & { id: string }),
           plannedDate: plannedMsStr,
         });
+        if (!canEnterSchedule(o)) {
+          o.assignedDay = 'Unscheduled';
+          o.plannedDate = undefined;
+          if (o.taskStatus === 'SCHEDULED') o.taskStatus = 'PENDING';
+        }
         const data = frontendOrderToPrismaCreate(o);
         const { id, ...rest } = data;
         await tx.order.upsert({
@@ -556,7 +645,7 @@ export async function updateOrderAction(
   orderId: string,
   updateData: Record<string, unknown>,
   options?: { expectedUpdatedAt?: string | number | Date }
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; rejectedOrders?: RejectedScheduleOrder[] }> {
   const idRes = orderIdZ.safeParse(orderId);
   if (!idRes.success) {
     return { ok: false, error: idRes.error.issues.map((i) => i.message).join('; ') };
@@ -602,6 +691,11 @@ export async function updateOrderAction(
     const patch = buildOrderPatch(safeUpdate);
     if (Object.keys(patch).length === 0) return { ok: true };
 
+    const rejected = await rejectIneligibleScheduleWrite(id, patch);
+    if (rejected) {
+      return { ok: false, error: rejected.error, rejectedOrders: [rejected] };
+    }
+
     const merged = await mergeCompletionReportedQty(id, patch, safeUpdate as Record<string, unknown>);
     await orderUpdateOrCreateFromPatch(id, merged);
     return { ok: true };
@@ -613,21 +707,31 @@ export async function updateOrderAction(
 
 export async function batchUpdateOrdersAction(
   updates: { id: string; data: Record<string, unknown> }[]
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; rejectedOrders?: RejectedScheduleOrder[] }> {
   const listRes = batchUpdateOrdersZ.safeParse(updates);
   if (!listRes.success) {
     return { ok: false, error: listRes.error.issues.map((i) => i.message).join('; ') };
   }
   try {
+    const rejectedOrders: RejectedScheduleOrder[] = [];
     await Promise.all(
       listRes.data.map(async ({ id, data }) => {
         const patch = buildOrderPatch(data);
         if (Object.keys(patch).length === 0) return;
+        const rejected = await rejectIneligibleScheduleWrite(id, patch);
+        if (rejected) {
+          rejectedOrders.push(rejected);
+          return;
+        }
         const merged = await mergeCompletionReportedQty(id, patch, data as Record<string, unknown>);
         await orderUpdateOrCreateFromPatch(id, merged);
       })
     );
-    return { ok: true };
+    return {
+      ok: rejectedOrders.length === 0,
+      error: rejectedOrders.length > 0 ? `已拒绝 ${rejectedOrders.length} 单不符合排产资格的更新。` : undefined,
+      rejectedOrders,
+    };
   } catch (e) {
     console.error('[batchUpdateOrdersAction]', e);
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
@@ -637,14 +741,20 @@ export async function batchUpdateOrdersAction(
 /** 用於 AI 排產：僅批量更新 assignedDay */
 export async function batchUpdateAssignedDaysAction(
   items: { id: string; assignedDay: string }[]
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<{ ok: boolean; error?: string; rejectedOrders?: RejectedScheduleOrder[] }> {
   const parsed = batchAssignedDaysZ.safeParse(items);
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues.map((i) => i.message).join('; ') };
   }
   try {
+    const rejectedOrders: RejectedScheduleOrder[] = [];
     await Promise.all(
       parsed.data.map(async ({ id, assignedDay }) => {
+        const rejected = await rejectIneligibleScheduleWrite(id, { assignedDay });
+        if (rejected) {
+          rejectedOrders.push(rejected);
+          return;
+        }
         try {
           await prisma.order.update({
             where: { id },
@@ -661,10 +771,91 @@ export async function batchUpdateAssignedDaysAction(
         }
       })
     );
-    return { ok: true };
+    return {
+      ok: rejectedOrders.length === 0,
+      error: rejectedOrders.length > 0 ? `已拒绝 ${rejectedOrders.length} 单不符合排产资格的排产。` : undefined,
+      rejectedOrders,
+    };
   } catch (e) {
     console.error('[batchUpdateAssignedDaysAction]', e);
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+export async function restoreInvalidScheduledOrdersAction(): Promise<{
+  ok: boolean;
+  error?: string;
+  restoredCount: number;
+  restoredOrders: Array<{
+    id: string;
+    model: string;
+    client: string;
+    reasons: ScheduleBlockReason[];
+    targetPool: ReturnType<typeof getRequiredPool>;
+  }>;
+}> {
+  try {
+    const rows = await prisma.order.findMany({
+      where: { deletedAt: null, isArchived: false },
+      select: {
+        id: true,
+        model: true,
+        client: true,
+        assignedDay: true,
+        plannedDate: true,
+        taskStatus: true,
+        isDrawingReady: true,
+        isMaterialReady: true,
+      },
+    });
+
+    const invalidRows = rows.filter((row) => isScheduleAssigned(row) && !canEnterSchedule(row));
+
+    if (invalidRows.length === 0) {
+      return { ok: true, restoredCount: 0, restoredOrders: [] };
+    }
+
+    const restoredOrders = invalidRows.map((row) => ({
+      id: row.id,
+      model: row.model,
+      client: row.client,
+      reasons: getScheduleBlockReasons(row),
+      targetPool: getRequiredPool(row),
+    }));
+
+    await prisma.$transaction(async (tx) => {
+      for (const row of invalidRows) {
+        await tx.order.update({
+          where: { id: row.id },
+          data: {
+            assignedDay: 'Unscheduled',
+            plannedDate: null,
+            ...(row.taskStatus === 'SCHEDULED' ? { taskStatus: 'PENDING' } : {}),
+          },
+        });
+
+        await tx.mesActivityLog.create({
+          data: {
+            ts: nowEpochMsForMesStorage(),
+            text: `系统恢复违规排产：订单 ${row.model} 因未下发图纸/SOP或未配料齐，已从排产池退回待处理池。`,
+            operator: 'system',
+            role: 'system',
+            actionType: 'schedule_guard_restore',
+          },
+        });
+      }
+    });
+
+    revalidatePath('/');
+    return { ok: true, restoredCount: restoredOrders.length, restoredOrders };
+  } catch (e) {
+    console.error('[restoreInvalidScheduledOrdersAction]', e);
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : String(e),
+      restoredCount: 0,
+      restoredOrders: [],
+    };
   }
 }
 
