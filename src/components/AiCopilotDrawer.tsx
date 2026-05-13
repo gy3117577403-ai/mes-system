@@ -95,18 +95,26 @@ type AiRunListItem = {
 
 type ReadyFlagsPayload = {
   ok?: boolean;
+  generatedAt?: string;
   totalProblemOrders?: number;
   legacyTextReadyButFlagBlocked?: number;
   drawingTextReadyButFlagFalse?: number;
   materialTextReadyButFlagFalse?: number;
+  latestProblemUpdatedAt?: string | null;
+  oldestProblemCreatedAt?: string | null;
+  possibleReasons?: string[];
   examples?: Array<{
     id: string;
     client: string;
     model: string;
+    deliveryDate?: string;
     drawing: string;
     materials: string;
     isDrawingReady: boolean;
     isMaterialReady: boolean;
+    assignedDay?: string;
+    createdAt?: string | null;
+    updatedAt?: string | null;
   }>;
   message?: string;
 };
@@ -143,6 +151,13 @@ const stateTone: Record<WorkerState, string> = {
   done: 'bg-emerald-300 shadow-emerald-300/70',
   error: 'bg-rose-400 shadow-rose-400/70',
 };
+
+function formatDateTime(value?: string | Date | null): string {
+  if (!value) return '未知';
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return '未知';
+  return date.toLocaleString('zh-CN', { hour12: false });
+}
 
 function classifyCopilotError(message: string): string {
   const text = message.trim();
@@ -621,6 +636,33 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
                         {diagnostics.readyFlags.drawingTextReadyButFlagFalse ?? 0} 单；物料文本料齐但布尔 false：
                         {diagnostics.readyFlags.materialTextReadyButFlagFalse ?? 0} 单。
                       </p>
+                      <p className="text-amber-100/85">
+                        最近问题更新时间：{formatDateTime(diagnostics.readyFlags.latestProblemUpdatedAt)}；最早问题创建时间：
+                        {formatDateTime(diagnostics.readyFlags.oldestProblemCreatedAt)}。
+                      </p>
+                      {(diagnostics.readyFlags.possibleReasons ?? []).length > 0 && (
+                        <div className="rounded-xl border border-amber-200/20 bg-slate-950/30 p-3">
+                          <div className="mb-1 font-bold text-amber-100">来源判断</div>
+                          <ul className="space-y-1">
+                            {(diagnostics.readyFlags.possibleReasons ?? []).map((reason) => (
+                              <li key={reason}>- {reason}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                      {(diagnostics.readyFlags.examples ?? []).slice(0, 3).length > 0 && (
+                        <div className="rounded-xl border border-amber-200/20 bg-slate-950/30 p-3 text-[11px] text-amber-100/85">
+                          <div className="mb-1 font-bold text-amber-100">示例订单</div>
+                          {(diagnostics.readyFlags.examples ?? []).slice(0, 3).map((order) => (
+                            <p key={order.id}>
+                              {order.client} / {order.model}：drawing={order.drawing || '-'} materials={order.materials || '-'} flag=
+                              {String(order.isDrawingReady)}/{String(order.isMaterialReady)}；创建 {formatDateTime(order.createdAt)}；更新{' '}
+                              {formatDateTime(order.updatedAt)}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                      <p className="font-bold text-amber-100">这不是 AI 模型问题，是订单历史字段与排产布尔字段不一致。</p>
                       {readyFlagProblems > 0 && (
                         <button
                           type="button"
@@ -705,12 +747,24 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
                           ready-flags：{diagnostics.readyFlags.message || '已完成只读诊断'}；状态不一致{' '}
                           {diagnostics.readyFlags.legacyTextReadyButFlagBlocked ?? 0} 单。
                         </p>
+                        <p className="mt-1">
+                          最近问题更新时间：{formatDateTime(diagnostics.readyFlags.latestProblemUpdatedAt)}；最早问题创建时间：
+                          {formatDateTime(diagnostics.readyFlags.oldestProblemCreatedAt)}。
+                        </p>
+                        {(diagnostics.readyFlags.possibleReasons ?? []).length > 0 && (
+                          <div className="mt-2 space-y-1 text-[11px] text-amber-100/85">
+                            {(diagnostics.readyFlags.possibleReasons ?? []).map((reason) => (
+                              <p key={reason}>- {reason}</p>
+                            ))}
+                          </div>
+                        )}
                         {(diagnostics.readyFlags.examples ?? []).slice(0, 5).length > 0 && (
                           <div className="mt-2 space-y-1 text-[11px] text-amber-100/85">
                             {(diagnostics.readyFlags.examples ?? []).slice(0, 5).map((order) => (
                               <p key={order.id}>
                                 {order.client} / {order.model}：drawing={order.drawing || '-'} materials={order.materials || '-'} flag=
-                                {String(order.isDrawingReady)}/{String(order.isMaterialReady)}
+                                {String(order.isDrawingReady)}/{String(order.isMaterialReady)}；创建 {formatDateTime(order.createdAt)}；更新{' '}
+                                {formatDateTime(order.updatedAt)}
                               </p>
                             ))}
                           </div>

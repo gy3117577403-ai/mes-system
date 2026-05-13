@@ -22,8 +22,11 @@
     "check:schedule-guard": "node scripts/check-schedule-eligibility-guard.cjs",
     "check:order-pools": "node scripts/check-order-pool-classification.cjs",
     "diagnose:ready-flags": "node scripts/diagnose-ready-flag-mismatch.cjs",
+    "diagnose:ready-flags:explain": "node scripts/explain-ready-flag-mismatch.cjs",
     "check:ai-audit-schema": "node scripts/check-ai-planner-audit-schema.cjs",
     "db:ai-audit:instructions": "node scripts/print-ai-audit-deploy-instructions.cjs",
+    "db:inspect-target": "node scripts/inspect-database-target.cjs",
+    "db:ai-audit:apply-local": "node scripts/apply-ai-planner-audit-schema.cjs",
     "build-exe": "electron-builder --win",
     "prepare": "husky"
   },

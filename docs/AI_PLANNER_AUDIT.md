@@ -20,6 +20,12 @@ To print the deployment checklist without changing any database:
 pnpm db:ai-audit:instructions
 ```
 
+To inspect whether the configured database target is safe for a local-only schema deployment:
+
+```bash
+pnpm db:inspect-target
+```
+
 After backing up the target PostgreSQL database, review and execute:
 
 ```bash
@@ -27,6 +33,14 @@ psql "$DATABASE_URL" -f prisma/manual_ai_planner_audit.sql
 ```
 
 The SQL only creates `AiPlannerRun`, `AiContextSnapshot`, and `AiSuggestion` with indexes and cascading foreign keys. It does not delete or modify existing tables.
+
+For local development only, this repository also includes a guarded helper:
+
+```bash
+GG_AI_ALLOW_LOCAL_AI_AUDIT_SCHEMA_DEPLOY=YES pnpm db:ai-audit:apply-local
+```
+
+The helper refuses to run unless `DATABASE_URL` points to localhost, does not look production-like, and the explicit environment switch is set. It never runs `prisma db push`.
 
 ## Verification
 
@@ -64,3 +78,15 @@ If the audit tables are missing:
 - History and memory panels show a persistence warning instead of crashing.
 
 The audit trail never bypasses scheduling hard rules: orders with drawing not ready or material not ready cannot be forced into the schedule by AI.
+
+## Ready Flag Mismatch Diagnostics
+
+Historical imported orders can have text fields such as `drawing` or `materials` that read like "issued drawing" or "materials ready" while the scheduling booleans remain false. The scheduler and AI always trust the booleans.
+
+Use the read-only explain script to inspect the source of those mismatches:
+
+```bash
+pnpm diagnose:ready-flags:explain
+```
+
+The script writes a local JSON report to `tmp/ready-flag-mismatch-report.json`. That report is ignored by git and must not be treated as a data repair. The controlled repair remains the existing manual UI action, and it must not be executed automatically.
