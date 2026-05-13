@@ -22,6 +22,8 @@
     "check:schedule-guard": "node scripts/check-schedule-eligibility-guard.cjs",
     "check:order-pools": "node scripts/check-order-pool-classification.cjs",
     "diagnose:ready-flags": "node scripts/diagnose-ready-flag-mismatch.cjs",
+    "check:ai-audit-schema": "node scripts/check-ai-planner-audit-schema.cjs",
+    "db:ai-audit:instructions": "node scripts/print-ai-audit-deploy-instructions.cjs",
     "build-exe": "electron-builder --win",
     "prepare": "husky"
   },

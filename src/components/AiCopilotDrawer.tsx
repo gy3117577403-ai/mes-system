@@ -29,7 +29,7 @@ import {
   type AiCopilotContextSummary,
   type AiCopilotResponse,
 } from '@/actions/aiSchedulerActions';
-import { listAiPlannerRunsAction } from '@/actions/aiPlannerAuditActions';
+import { checkAiPlannerAuditWritableAction, listAiPlannerRunsAction } from '@/actions/aiPlannerAuditActions';
 import { repairMisclassifiedReadyOrdersAction } from '@/actions/mesActions';
 import type { Order } from '@/types';
 import {
@@ -65,6 +65,12 @@ type DbStatusPayload = {
   missingTables?: string[];
   optionalMissingTables?: string[];
   optionalStatus?: string;
+  aiAuditStatus?: {
+    enabled: boolean;
+    missingTables: string[];
+    deployedTables: string[];
+    message: string;
+  };
   schemaStatus?: string;
   message?: string;
 };
@@ -232,11 +238,13 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
   const [auditRef, setAuditRef] = useState<AiAuditRef | null>(null);
   const [ignoredMutationIndexes, setIgnoredMutationIndexes] = useState<number[]>([]);
   const [history, setHistory] = useState<{ ok: boolean; error?: string; data: AiRunListItem[] } | null>(null);
+  const [auditWritableResult, setAuditWritableResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [isThinking, startThinking] = useTransition();
   const [isApplying, startApplying] = useTransition();
   const [isChecking, startChecking] = useTransition();
   const [isRepairingReadyFlags, startRepairingReadyFlags] = useTransition();
   const [isLoadingHistory, startLoadingHistory] = useTransition();
+  const [isCheckingAuditWrite, startCheckingAuditWrite] = useTransition();
 
   const localSummary = useMemo(
     () => buildLocalSummary(orders, currentBaseLimit),
@@ -405,6 +413,21 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
         return;
       }
       setHistory({ ok: true, data: (res.data ?? []) as AiRunListItem[] });
+    });
+  };
+
+  const checkAuditWritable = () => {
+    setAuditWritableResult(null);
+    startCheckingAuditWrite(async () => {
+      const res = await checkAiPlannerAuditWritableAction();
+      if (res.ok) {
+        setAuditWritableResult({ ok: true, message: 'AI 记忆写入正常' });
+        toast.success('AI 记忆写入正常');
+        return;
+      }
+      const message = res.reason || 'AI 记忆写入自检失败';
+      setAuditWritableResult({ ok: false, message });
+      toast.error(message);
     });
   };
 
@@ -647,6 +670,32 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
                     <p>Provider/Model：{diagnostics.ai?.provider ?? '未知'} / {diagnostics.ai?.model ?? '未知'}</p>
                     <p>数据库：{diagnostics.db ? (diagnostics.db.connected ? '连接成功' : '连接失败') : '检测失败'}</p>
                     <p>缺失表：{diagnostics.db?.missingTables?.length ? diagnostics.db.missingTables.join(', ') : '无'}</p>
+                    {diagnostics.db?.aiAuditStatus && (
+                      <div className="mt-2 rounded-xl border border-violet-300/20 bg-violet-400/10 p-3 text-violet-50">
+                        <p className="font-bold">AI 记忆：{diagnostics.db.aiAuditStatus.enabled ? '已启用' : '未启用'}</p>
+                        <p className="mt-1">{diagnostics.db.aiAuditStatus.message}</p>
+                        {diagnostics.db.aiAuditStatus.enabled ? (
+                          <p className="mt-1 text-violet-100/80">历史任务、上下文快照、建议审批将持久化。</p>
+                        ) : (
+                          <p className="mt-1 text-amber-100">
+                            缺失表：{diagnostics.db.aiAuditStatus.missingTables.join(', ') || '未知'}。这不会影响 AI 分析订单，但历史任务和建议审批无法长期保存。
+                          </p>
+                        )}
+                        <button
+                          type="button"
+                          onClick={checkAuditWritable}
+                          disabled={!diagnostics.db.aiAuditStatus.enabled || isCheckingAuditWrite}
+                          className="mt-3 rounded-xl border border-violet-200/30 bg-violet-300/10 px-3 py-2 text-xs font-bold text-violet-100 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {isCheckingAuditWrite ? '测试中...' : '测试 AI 记忆写入'}
+                        </button>
+                        {auditWritableResult && (
+                          <p className={cn('mt-2', auditWritableResult.ok ? 'text-emerald-200' : 'text-rose-200')}>
+                            {auditWritableResult.message}
+                          </p>
+                        )}
+                      </div>
+                    )}
                     {diagnostics.db?.missingTables?.includes('MesAbnormalClaim') && (
                       <p className="mt-2 text-amber-200">MesAbnormalClaim 缺表时，异常工时上下文会降级，但订单上下文不一定失败。</p>
                     )}
@@ -690,8 +739,22 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
                       {isLoadingHistory ? '读取中...' : '刷新'}
                     </button>
                   </div>
+                  {diagnostics?.db?.aiAuditStatus && !diagnostics.db.aiAuditStatus.enabled && (
+                    <div className="mb-3 rounded-xl border border-amber-300/20 bg-amber-400/10 p-3 text-amber-100">
+                      <p className="font-bold">AI 历史任务暂不可用</p>
+                      <p>原因：AI 审计表尚未部署或数据库不可达。</p>
+                      <p>当前 AI 仍可分析订单，但分析记录不会持久化。</p>
+                    </div>
+                  )}
                   {!history && <p>点击刷新可查看最近 10 次 AI 分析记录。</p>}
-                  {history && !history.ok && <p className="text-amber-200">AI 审计表尚未部署，历史任务不可用：{history.error}</p>}
+                  {history && !history.ok && (
+                    <div className="rounded-xl border border-amber-300/20 bg-amber-400/10 p-3 text-amber-100">
+                      <p className="font-bold">AI 历史任务暂不可用</p>
+                      <p>原因：AI 审计表尚未部署或数据库不可达。</p>
+                      <p>{history.error}</p>
+                      <p>当前 AI 仍可分析订单，但分析记录不会持久化。</p>
+                    </div>
+                  )}
                   {history?.ok && history.data.length === 0 && <p>暂无历史任务。</p>}
                   {history?.ok && history.data.length > 0 && (
                     <div className="space-y-2">

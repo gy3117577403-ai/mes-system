@@ -18,6 +18,12 @@ type DbStatus = {
   optionalMissingTables: string[];
   schemaStatus: 'ok' | 'missing_tables' | 'database_url_missing' | 'connection_failed';
   optionalStatus?: 'ok' | 'degraded';
+  aiAuditStatus: {
+    enabled: boolean;
+    missingTables: string[];
+    deployedTables: string[];
+    message: string;
+  };
   message?: string;
 };
 
@@ -31,6 +37,21 @@ function json(status: DbStatus, init?: ResponseInit) {
 function safeMessage(error: unknown): string {
   if (error instanceof Error) return error.message.slice(0, 180);
   return String(error).slice(0, 180);
+}
+
+function buildAiAuditStatus(existing: Set<string>) {
+  const auditTables = ['AiPlannerRun', 'AiContextSnapshot', 'AiSuggestion'];
+  const missingTables = auditTables.filter((table) => !existing.has(table));
+  const deployedTables = auditTables.filter((table) => existing.has(table));
+  return {
+    enabled: missingTables.length === 0,
+    missingTables,
+    deployedTables,
+    message:
+      missingTables.length === 0
+        ? 'AI 审计表已部署，计划员工历史记录和建议审批可持久化'
+        : 'AI 审计表尚未完整部署，AI 分析仍可使用，但历史记录/记忆/建议审批不会完整持久化',
+  };
 }
 
 export async function GET() {
@@ -51,6 +72,7 @@ export async function GET() {
         optionalMissingTables: [...optionalTables],
         schemaStatus: 'database_url_missing',
         optionalStatus: 'degraded',
+        aiAuditStatus: buildAiAuditStatus(new Set()),
         message: 'DATABASE_URL is not configured.',
       },
       { status: 200 }
@@ -79,6 +101,7 @@ export async function GET() {
       optionalMissingTables,
       schemaStatus: missingTables.length === 0 ? 'ok' : 'missing_tables',
       optionalStatus: optionalMissingTables.length === 0 ? 'ok' : 'degraded',
+      aiAuditStatus: buildAiAuditStatus(existing),
       message:
         optionalMissingTables.length > 0
           ? 'Optional tables are missing. Core order context may still work; abnormal hours or AI audit history may degrade.'
@@ -95,6 +118,7 @@ export async function GET() {
         optionalMissingTables: [],
         schemaStatus: 'connection_failed',
         optionalStatus: 'degraded',
+        aiAuditStatus: buildAiAuditStatus(new Set()),
         message: safeMessage(error),
       },
       { status: 200 }
