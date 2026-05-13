@@ -26,6 +26,7 @@
     "check:ready-flags:delta": "node scripts/check-ready-flag-delta.cjs",
     "check:ai-ui-context": "node scripts/check-ai-ui-context-wiring.cjs",
     "check:ai-planner-todos": "node scripts/check-ai-planner-todos.cjs",
+    "check:ai-planner-daily-report": "node scripts/check-ai-planner-daily-report.cjs",
     "check:order-pools": "node scripts/check-order-pool-classification.cjs",
     "diagnose:ready-flags": "node scripts/diagnose-ready-flag-mismatch.cjs",
     "diagnose:ready-flags:explain": "node scripts/explain-ready-flag-mismatch.cjs",

@@ -31,7 +31,7 @@ import {
 } from '@/actions/aiSchedulerActions';
 import { checkAiPlannerAuditWritableAction, listAiPlannerRunsAction } from '@/actions/aiPlannerAuditActions';
 import { repairMisclassifiedReadyOrdersAction } from '@/actions/mesActions';
-import type { AiPlannerTodo, AiPlannerTodoStatus, AiPlannerUiContext, Order } from '@/types';
+import type { AiPlannerDailyReport, AiPlannerTodo, AiPlannerTodoStatus, AiPlannerUiContext, Order } from '@/types';
 import {
   canEnterSchedule,
   getScheduleBlockReasons,
@@ -48,6 +48,7 @@ import {
   buildTodoCopyText,
   mergeTodoStatuses,
 } from '@/lib/aiPlannerTodos';
+import { buildAiPlannerDailyReport } from '@/lib/aiPlannerDailyReport';
 import { isOrderCompletedStatus } from '@/lib/orderStatus';
 import { cn } from '@/lib/uiTheme';
 
@@ -160,6 +161,7 @@ const priorityTone: Record<string, string> = {
 type TodoFilter = 'ALL' | AiPlannerTodoStatus;
 
 const TODO_STORAGE_KEY = 'gg-ai.aiPlannerTodos.v1';
+const DAILY_REPORT_STORAGE_KEY = 'gg-ai.aiPlannerDailyReport.v1';
 
 const blockedGroupLabel: Record<string, string> = {
   DRAWING_NOT_READY: '图纸未发',
@@ -307,6 +309,8 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
   const [ignoredMutationIndexes, setIgnoredMutationIndexes] = useState<number[]>([]);
   const [plannerTodos, setPlannerTodos] = useState<AiPlannerTodo[]>([]);
   const [todoFilter, setTodoFilter] = useState<TodoFilter>('ALL');
+  const [dailyReport, setDailyReport] = useState<AiPlannerDailyReport | null>(null);
+  const [showDailyMarkdown, setShowDailyMarkdown] = useState(false);
   const [history, setHistory] = useState<{ ok: boolean; error?: string; data: AiRunListItem[] } | null>(null);
   const [auditWritableResult, setAuditWritableResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [isThinking, startThinking] = useTransition();
@@ -428,6 +432,31 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
     setPlannerTodos((existing) => mergeTodoStatuses(existing, newTodos));
   }, [auditRef?.aiRunId, plannerReport, selectedTask?.name]);
 
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(DAILY_REPORT_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as AiPlannerDailyReport;
+      if (parsed && typeof parsed.id === 'string' && typeof parsed.markdown === 'string') {
+        setDailyReport(parsed);
+      }
+    } catch {
+      setDailyReport(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      if (dailyReport) {
+        window.localStorage.setItem(DAILY_REPORT_STORAGE_KEY, JSON.stringify(dailyReport));
+      } else {
+        window.localStorage.removeItem(DAILY_REPORT_STORAGE_KEY);
+      }
+    } catch {
+      // Daily report drafts are local convenience data only.
+    }
+  }, [dailyReport]);
+
   const updateTodoStatus = (todoId: string, status: AiPlannerTodoStatus) => {
     setPlannerTodos((current) => current.map((todo) => (todo.id === todoId ? { ...todo, status } : todo)));
   };
@@ -439,6 +468,49 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
     } catch {
       toast.error('复制失败，请手动复制待办内容');
     }
+  };
+
+  const generateDailyReport = () => {
+    const report = buildAiPlannerDailyReport({
+      plannerReport,
+      plannerTodos,
+      contextSummary: activeSummary,
+      uiContext: mergedUiContext,
+      selectedTaskName: selectedTask?.name ?? null,
+    });
+    setDailyReport(report);
+    setShowDailyMarkdown(false);
+    toast.success('AI 计划员日报已生成');
+  };
+
+  const copyDailyReport = async () => {
+    if (!dailyReport) {
+      toast.error('请先生成 AI 计划员日报');
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(dailyReport.markdown);
+      toast.success('已复制 AI 计划员日报');
+    } catch {
+      toast.error('复制日报失败，请展开 Markdown 后手动复制');
+    }
+  };
+
+  const downloadDailyReport = () => {
+    if (!dailyReport) {
+      toast.error('请先生成 AI 计划员日报');
+      return;
+    }
+    const blob = new Blob([dailyReport.markdown], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `ai-planner-daily-report-${new Date(dailyReport.createdAt).toISOString().slice(0, 10)}.md`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    toast.success('Markdown 日报已下载');
   };
 
   const askPlanner = () => {
@@ -1327,6 +1399,139 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                     ) : (
                       <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4 text-sm leading-6 text-slate-400">
                         当前 AI 没有生成待办。你可以执行“每日排产体检”或“AI 主动问题清单”。
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="rounded-2xl border border-emerald-300/20 bg-slate-950/60 p-4 lg:col-span-2">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2 text-sm font-black text-white">
+                          <FileWarning className="h-4 w-4 text-emerald-200" />
+                          AI 计划员日报
+                        </div>
+                        <p className="mt-1 text-xs leading-5 text-slate-400">
+                          日报仅用于计划沟通与交接，不会修改订单。实际排产仍以系统排产结果和后端硬规则为准。
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={generateDailyReport}
+                          className="rounded-xl border border-emerald-200/30 bg-emerald-300/15 px-3 py-2 text-xs font-black text-emerald-100 hover:bg-emerald-300/20"
+                        >
+                          生成日报
+                        </button>
+                        <button
+                          type="button"
+                          onClick={copyDailyReport}
+                          disabled={!dailyReport}
+                          className="rounded-xl border border-cyan-200/30 bg-cyan-300/10 px-3 py-2 text-xs font-black text-cyan-100 hover:bg-cyan-300/15 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          复制日报
+                        </button>
+                        <button
+                          type="button"
+                          onClick={downloadDailyReport}
+                          disabled={!dailyReport}
+                          className="rounded-xl border border-violet-200/30 bg-violet-300/10 px-3 py-2 text-xs font-black text-violet-100 hover:bg-violet-300/15 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          下载 Markdown
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDailyReport(null)}
+                          disabled={!dailyReport}
+                          className="rounded-xl border border-slate-500/30 bg-slate-800/50 px-3 py-2 text-xs font-black text-slate-300 hover:bg-slate-800/70 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          清空日报
+                        </button>
+                      </div>
+                    </div>
+
+                    {dailyReport ? (
+                      <div className="space-y-3">
+                        <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div>
+                              <div className="text-base font-black text-white">{dailyReport.title}</div>
+                              <div className="mt-1 text-xs text-slate-400">生成时间：{formatDateTime(dailyReport.createdAt)}</div>
+                            </div>
+                            <span className="rounded-full border border-emerald-300/25 bg-emerald-300/10 px-3 py-1 text-[11px] font-bold text-emerald-100">
+                              当前报告基于系统已保存数据和页面上下文生成
+                            </span>
+                          </div>
+                          <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-200">{dailyReport.summary}</p>
+                        </div>
+
+                        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                          <div className="rounded-xl border border-cyan-300/20 bg-cyan-300/10 p-3 text-cyan-100">
+                            <div className="text-[11px] font-bold text-slate-400">今日排产概览</div>
+                            <div className="mt-2 text-xs leading-5">
+                              总订单 {dailyReport.contextOverview.totalOrders ?? '暂无数据'} / 可排产 {dailyReport.contextOverview.schedulableOrders ?? '暂无数据'} / 已排产 {dailyReport.contextOverview.scheduledOrders ?? '暂无数据'}
+                            </div>
+                          </div>
+                          <div className="rounded-xl border border-amber-300/20 bg-amber-300/10 p-3 text-amber-100">
+                            <div className="text-[11px] font-bold text-slate-400">风险订单摘要</div>
+                            <div className="mt-2 text-xs leading-5">
+                              风险 {dailyReport.contextOverview.riskOrders ?? '暂无数据'} / 图纸未发 {dailyReport.contextOverview.blockedByDrawing ?? '暂无数据'} / 物料未齐 {dailyReport.contextOverview.blockedByMaterial ?? '暂无数据'}
+                            </div>
+                          </div>
+                          <div className="rounded-xl border border-emerald-300/20 bg-emerald-300/10 p-3 text-emerald-100">
+                            <div className="text-[11px] font-bold text-slate-400">待办处理统计</div>
+                            <div className="mt-2 text-xs leading-5">
+                              待处理 {dailyReport.todoStats.pending} / 已处理 {dailyReport.todoStats.done} / 已忽略 {dailyReport.todoStats.ignored} / MUST {dailyReport.todoStats.must}
+                            </div>
+                          </div>
+                          <div className="rounded-xl border border-violet-300/20 bg-violet-300/10 p-3 text-violet-100">
+                            <div className="text-[11px] font-bold text-slate-400">待主管确认</div>
+                            <div className="mt-2 text-xs leading-5">{dailyReport.pendingQuestions.length} 项需要确认</div>
+                          </div>
+                        </div>
+
+                        <div className="grid gap-3 lg:grid-cols-3">
+                          <div className="rounded-2xl border border-rose-300/20 bg-rose-400/10 p-3">
+                            <div className="mb-2 text-xs font-black uppercase tracking-[0.14em] text-rose-100">必须处理事项</div>
+                            <ul className="space-y-2 text-xs leading-5 text-rose-50">
+                              {dailyReport.nextActions.slice(0, 6).map((item, index) => (
+                                <li key={`${item}-${index}`}>{index + 1}. {item}</li>
+                              ))}
+                            </ul>
+                          </div>
+                          <div className="rounded-2xl border border-violet-300/20 bg-violet-400/10 p-3">
+                            <div className="mb-2 text-xs font-black uppercase tracking-[0.14em] text-violet-100">待主管确认</div>
+                            <ul className="space-y-2 text-xs leading-5 text-violet-50">
+                              {dailyReport.pendingQuestions.slice(0, 6).map((item, index) => (
+                                <li key={`${item}-${index}`}>{index + 1}. {item}</li>
+                              ))}
+                            </ul>
+                          </div>
+                          <div className="rounded-2xl border border-cyan-300/20 bg-cyan-400/10 p-3">
+                            <div className="mb-2 text-xs font-black uppercase tracking-[0.14em] text-cyan-100">明日/下一步建议</div>
+                            <ul className="space-y-2 text-xs leading-5 text-cyan-50">
+                              {dailyReport.riskSummary.slice(0, 6).map((item, index) => (
+                                <li key={`${item}-${index}`}>{index + 1}. {item}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => setShowDailyMarkdown((value) => !value)}
+                          className="rounded-xl border border-white/10 bg-white/[0.035] px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/[0.06]"
+                        >
+                          {showDailyMarkdown ? '收起 Markdown 预览' : '展开 Markdown 预览'}
+                        </button>
+                        {showDailyMarkdown && (
+                          <pre className="max-h-80 overflow-auto rounded-2xl border border-white/10 bg-slate-950/80 p-4 text-xs leading-5 text-slate-300">
+                            {dailyReport.markdown}
+                          </pre>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4 text-sm leading-6 text-slate-400">
+                        暂无日报草稿。执行每日排产体检或 AI 主动问题清单后，可生成用于交接班的计划员日报；也可以先基于当前页面摘要生成简版日报。
                       </div>
                     )}
                   </div>

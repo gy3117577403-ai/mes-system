@@ -113,6 +113,33 @@ export type AiPlannerTodo = {
   taskName?: string | null;
 };
 
+export type AiPlannerDailyReport = {
+  id: string;
+  createdAt: string;
+  title: string;
+  summary: string;
+  contextOverview: {
+    totalOrders?: number;
+    schedulableOrders?: number;
+    blockedByDrawing?: number;
+    blockedByMaterial?: number;
+    scheduledOrders?: number;
+    urgentOrders?: number;
+    riskOrders?: number;
+  };
+  todoStats: {
+    total: number;
+    pending: number;
+    done: number;
+    ignored: number;
+    must: number;
+  };
+  riskSummary: string[];
+  pendingQuestions: string[];
+  nextActions: string[];
+  markdown: string;
+};
+
 export type AuditActionType =
   | 'login'
   | 'upload_sop'
