@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState, useTransition } from 'react';
+import { useEffect, useMemo, useState, useTransition } from 'react';
 import { motion } from 'framer-motion';
 import * as XLSX from 'xlsx';
 import {
@@ -31,7 +31,7 @@ import {
 } from '@/actions/aiSchedulerActions';
 import { checkAiPlannerAuditWritableAction, listAiPlannerRunsAction } from '@/actions/aiPlannerAuditActions';
 import { repairMisclassifiedReadyOrdersAction } from '@/actions/mesActions';
-import type { AiPlannerUiContext, Order } from '@/types';
+import type { AiPlannerTodo, AiPlannerTodoStatus, AiPlannerUiContext, Order } from '@/types';
 import {
   canEnterSchedule,
   getScheduleBlockReasons,
@@ -43,6 +43,11 @@ import {
   getAiPlannerTaskTemplate,
   type AiPlannerTaskTemplateId,
 } from '@/lib/aiPlannerTaskTemplates';
+import {
+  buildAiPlannerTodosFromReport,
+  buildTodoCopyText,
+  mergeTodoStatuses,
+} from '@/lib/aiPlannerTodos';
 import { isOrderCompletedStatus } from '@/lib/orderStatus';
 import { cn } from '@/lib/uiTheme';
 
@@ -152,6 +157,10 @@ const priorityTone: Record<string, string> = {
   WATCH: 'border-cyan-300/25 bg-cyan-400/10 text-cyan-50',
 };
 
+type TodoFilter = 'ALL' | AiPlannerTodoStatus;
+
+const TODO_STORAGE_KEY = 'gg-ai.aiPlannerTodos.v1';
+
 const blockedGroupLabel: Record<string, string> = {
   DRAWING_NOT_READY: '图纸未发',
   MATERIAL_NOT_READY: '物料未齐',
@@ -173,6 +182,25 @@ const stateTone: Record<WorkerState, string> = {
   confirming: 'bg-violet-300 shadow-violet-300/70 animate-pulse',
   done: 'bg-emerald-300 shadow-emerald-300/70',
   error: 'bg-rose-400 shadow-rose-400/70',
+};
+
+const todoStatusLabel: Record<AiPlannerTodoStatus, string> = {
+  PENDING: '待处理',
+  DONE: '已处理',
+  IGNORED: '已忽略',
+};
+
+const todoSourceLabel: Record<AiPlannerTodo['source'], string> = {
+  PRIORITY_ACTION: '优先动作',
+  QUESTION_FOR_HUMAN: '主动问题',
+  BLOCKED_GROUP: '阻塞归类',
+  SYSTEM_FALLBACK: '系统体检',
+};
+
+const todoStatusTone: Record<AiPlannerTodoStatus, string> = {
+  PENDING: 'border-cyan-300/25 bg-cyan-300/10 text-cyan-100',
+  DONE: 'border-emerald-300/25 bg-emerald-300/10 text-emerald-100',
+  IGNORED: 'border-slate-500/35 bg-slate-800/45 text-slate-300',
 };
 
 function formatDateTime(value?: string | Date | null): string {
@@ -277,6 +305,8 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
   const [diagnostics, setDiagnostics] = useState<ContextDiagnostics | null>(null);
   const [auditRef, setAuditRef] = useState<AiAuditRef | null>(null);
   const [ignoredMutationIndexes, setIgnoredMutationIndexes] = useState<number[]>([]);
+  const [plannerTodos, setPlannerTodos] = useState<AiPlannerTodo[]>([]);
+  const [todoFilter, setTodoFilter] = useState<TodoFilter>('ALL');
   const [history, setHistory] = useState<{ ok: boolean; error?: string; data: AiRunListItem[] } | null>(null);
   const [auditWritableResult, setAuditWritableResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [isThinking, startThinking] = useTransition();
@@ -295,6 +325,19 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
   const hasExportRows = (diagnosis?.exportDataSummary.length ?? 0) > 0;
   const selectedTask = selectedTaskId ? getAiPlannerTaskTemplate(selectedTaskId) : undefined;
   const plannerReport = diagnosis?.plannerReport;
+  const visibleTodos = useMemo(
+    () => (todoFilter === 'ALL' ? plannerTodos : plannerTodos.filter((todo) => todo.status === todoFilter)),
+    [plannerTodos, todoFilter]
+  );
+  const todoStats = useMemo(
+    () => ({
+      pending: plannerTodos.filter((todo) => todo.status === 'PENDING').length,
+      done: plannerTodos.filter((todo) => todo.status === 'DONE').length,
+      ignored: plannerTodos.filter((todo) => todo.status === 'IGNORED').length,
+      must: plannerTodos.filter((todo) => todo.level === 'MUST' && todo.status === 'PENDING').length,
+    }),
+    [plannerTodos]
+  );
   const mergedUiContext = useMemo<AiPlannerUiContext>(
     () => ({
       ...uiContext,
@@ -353,6 +396,50 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
     const exceptionLogs = diagnosis.proposedMutations.filter((m) => m.type === 'LOG_EXCEPTION_HOUR').length;
     return [`排产调整 ${orderMoves}`, `交期修改 ${deliveryChanges}`, `异常工时 ${exceptionLogs}`].join(' / ');
   }, [diagnosis]);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(TODO_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as AiPlannerTodo[];
+      if (Array.isArray(parsed)) {
+        setPlannerTodos(parsed.filter((todo) => todo && typeof todo.id === 'string').slice(0, 80));
+      }
+    } catch {
+      setPlannerTodos([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(TODO_STORAGE_KEY, JSON.stringify(plannerTodos.slice(0, 80)));
+    } catch {
+      // localStorage is a convenience cache only; ignoring failures keeps the planner usable.
+    }
+  }, [plannerTodos]);
+
+  useEffect(() => {
+    if (!plannerReport) return;
+    const newTodos = buildAiPlannerTodosFromReport({
+      plannerReport,
+      aiRunId: auditRef?.aiRunId,
+      selectedTaskName: selectedTask?.name ?? null,
+    });
+    setPlannerTodos((existing) => mergeTodoStatuses(existing, newTodos));
+  }, [auditRef?.aiRunId, plannerReport, selectedTask?.name]);
+
+  const updateTodoStatus = (todoId: string, status: AiPlannerTodoStatus) => {
+    setPlannerTodos((current) => current.map((todo) => (todo.id === todoId ? { ...todo, status } : todo)));
+  };
+
+  const copyTodoText = async (todo: AiPlannerTodo) => {
+    try {
+      await navigator.clipboard.writeText(buildTodoCopyText(todo));
+      toast.success('已复制 AI 计划员跟进话术');
+    } catch {
+      toast.error('复制失败，请手动复制待办内容');
+    }
+  };
 
   const askPlanner = () => {
     const text = selectedTaskId ? buildPromptFromTemplate(selectedTaskId, taskNote) : prompt.trim();
@@ -1121,6 +1208,128 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                       </div>
                     </div>
                   )}
+
+                  <div className="rounded-2xl border border-cyan-300/20 bg-slate-950/60 p-4 lg:col-span-2">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <div className="flex items-center gap-2 text-sm font-black text-white">
+                          <ClipboardList className="h-4 w-4 text-cyan-200" />
+                          AI 计划员待办
+                        </div>
+                        <p className="mt-1 text-xs leading-5 text-slate-400">
+                          待办状态只保存在本机 localStorage，用于计划跟进；标记已处理或忽略不会修改订单，也不会执行排产写入。
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-4 gap-2 text-center text-[11px]">
+                        <div className="rounded-xl border border-cyan-300/20 bg-cyan-300/10 px-3 py-2 text-cyan-100">
+                          <div className="text-lg font-black">{todoStats.pending}</div>
+                          <div>待处理</div>
+                        </div>
+                        <div className="rounded-xl border border-emerald-300/20 bg-emerald-300/10 px-3 py-2 text-emerald-100">
+                          <div className="text-lg font-black">{todoStats.done}</div>
+                          <div>已处理</div>
+                        </div>
+                        <div className="rounded-xl border border-slate-500/30 bg-slate-800/45 px-3 py-2 text-slate-300">
+                          <div className="text-lg font-black">{todoStats.ignored}</div>
+                          <div>已忽略</div>
+                        </div>
+                        <div className="rounded-xl border border-rose-300/25 bg-rose-400/10 px-3 py-2 text-rose-100">
+                          <div className="text-lg font-black">{todoStats.must}</div>
+                          <div>MUST</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="mb-3 flex flex-wrap gap-2">
+                      {(['ALL', 'PENDING', 'DONE', 'IGNORED'] as TodoFilter[]).map((filter) => (
+                        <button
+                          key={filter}
+                          type="button"
+                          onClick={() => setTodoFilter(filter)}
+                          className={cn(
+                            'rounded-full border px-3 py-1.5 text-xs font-bold transition',
+                            todoFilter === filter
+                              ? 'border-cyan-200 bg-cyan-300/20 text-cyan-50'
+                              : 'border-white/10 bg-white/[0.035] text-slate-400 hover:border-cyan-300/30 hover:text-cyan-100'
+                          )}
+                        >
+                          {filter === 'ALL' ? '全部' : todoStatusLabel[filter]}
+                        </button>
+                      ))}
+                    </div>
+
+                    {visibleTodos.length ? (
+                      <div className="grid gap-3 xl:grid-cols-2">
+                        {visibleTodos.map((todo) => (
+                          <div key={todo.id} className={cn('rounded-2xl border p-3', todoStatusTone[todo.status])}>
+                            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="rounded-full border border-white/15 bg-white/10 px-2 py-0.5 text-[10px] font-black">
+                                  {todoStatusLabel[todo.status]}
+                                </span>
+                                <span className="rounded-full border border-white/15 bg-white/10 px-2 py-0.5 text-[10px] font-black">
+                                  {todoSourceLabel[todo.source]}
+                                </span>
+                                {todo.level && (
+                                  <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-black', priorityTone[todo.level] ?? priorityTone.WATCH)}>
+                                    {todo.level}
+                                  </span>
+                                )}
+                              </div>
+                              <span className="text-[10px] text-slate-400">{formatDateTime(todo.createdAt)}</span>
+                            </div>
+                            <div className="text-sm font-black leading-5 text-white">{todo.title}</div>
+                            {(todo.reason || todo.detail) && <p className="mt-2 text-xs leading-5 text-slate-300">{todo.reason || todo.detail}</p>}
+                            <div className="mt-2 grid gap-1 text-[11px] leading-4 text-slate-400">
+                              <span>建议负责人：{todo.suggestedOwner || '待指定'}</span>
+                              <span>当前任务：{todo.taskName || '自由任务'}</span>
+                              <span>涉及订单：{todo.relatedOrderIds?.length ? todo.relatedOrderIds.join(', ') : '无指定订单'}</span>
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => copyTodoText(todo)}
+                                className="rounded-xl border border-cyan-200/30 bg-cyan-300/10 px-3 py-1.5 text-xs font-bold text-cyan-100 hover:bg-cyan-300/15"
+                              >
+                                复制跟进话术
+                              </button>
+                              {todo.status !== 'DONE' && (
+                                <button
+                                  type="button"
+                                  onClick={() => updateTodoStatus(todo.id, 'DONE')}
+                                  className="rounded-xl border border-emerald-200/30 bg-emerald-300/10 px-3 py-1.5 text-xs font-bold text-emerald-100 hover:bg-emerald-300/15"
+                                >
+                                  标记已处理
+                                </button>
+                              )}
+                              {todo.status !== 'PENDING' && (
+                                <button
+                                  type="button"
+                                  onClick={() => updateTodoStatus(todo.id, 'PENDING')}
+                                  className="rounded-xl border border-slate-400/30 bg-slate-700/40 px-3 py-1.5 text-xs font-bold text-slate-200 hover:bg-slate-700/60"
+                                >
+                                  标记待处理
+                                </button>
+                              )}
+                              {todo.status !== 'IGNORED' && (
+                                <button
+                                  type="button"
+                                  onClick={() => updateTodoStatus(todo.id, 'IGNORED')}
+                                  className="rounded-xl border border-slate-500/30 bg-slate-800/50 px-3 py-1.5 text-xs font-bold text-slate-300 hover:bg-slate-800/70"
+                                >
+                                  忽略
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4 text-sm leading-6 text-slate-400">
+                        当前 AI 没有生成待办。你可以执行“每日排产体检”或“AI 主动问题清单”。
+                      </div>
+                    )}
+                  </div>
 
                   <div className="rounded-2xl border border-amber-300/20 bg-amber-400/10 p-4">
                     <div className="mb-3 flex items-center gap-2 text-sm font-bold text-amber-100">

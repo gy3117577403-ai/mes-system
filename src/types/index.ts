@@ -94,6 +94,25 @@ export type AiPlannerUiContext = {
 };
 
 /** 審計 / 操作類型 */
+export type AiPlannerTodoStatus = 'PENDING' | 'DONE' | 'IGNORED';
+
+export type AiPlannerTodoSource = 'PRIORITY_ACTION' | 'QUESTION_FOR_HUMAN' | 'BLOCKED_GROUP' | 'SYSTEM_FALLBACK';
+
+export type AiPlannerTodo = {
+  id: string;
+  source: AiPlannerTodoSource;
+  status: AiPlannerTodoStatus;
+  level?: 'MUST' | 'SHOULD' | 'WATCH';
+  title: string;
+  detail?: string;
+  reason?: string;
+  suggestedOwner?: string;
+  relatedOrderIds?: string[];
+  createdAt: string;
+  aiRunId?: string;
+  taskName?: string | null;
+};
+
 export type AuditActionType =
   | 'login'
   | 'upload_sop'
