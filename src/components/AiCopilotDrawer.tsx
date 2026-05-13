@@ -456,7 +456,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
 
   const repairReadyFlags = () => {
     const confirmed = window.confirm(
-      '该操作会把历史文本中明确为已发图/料齐的订单，同步到排产布尔字段。系统仍会保留排产硬规则。是否继续？'
+      '历史数据当前可暂不处理。该可选操作会把历史文本中明确为已发图/料齐的订单，同步到排产布尔字段；不会自动排产，也不会绕过排产硬规则。是否继续？'
     );
     if (!confirmed) return;
 
@@ -627,7 +627,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
                     <div>
                       <div className="font-bold text-amber-100">数据一致性风险</div>
                       <p className="mt-1 text-amber-100/80">
-                        历史订单如果存在文本状态与布尔字段不一致，AI 和排产系统会以布尔字段为准。这是历史数据问题，不是 AI 模型问题。
+                        历史不一致数量仅展示即可；当前重点是观察最近导入/编辑的数据是否继续产生状态不一致。AI 和排产系统仍以布尔字段为准。
                       </p>
                     </div>
                     <ShieldCheck className="h-5 w-5 text-amber-100" />
@@ -649,9 +649,11 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
                         {diagnostics.readyFlags.sourceRiskLevel ?? 'LOW'}。
                       </p>
                       {(diagnostics.readyFlags.sourceRiskLevel ?? 'LOW') === 'HIGH' ? (
-                        <p className="font-bold text-rose-100">检测到近期仍在产生状态不一致订单，请优先检查导入/编辑入口。</p>
+                        <p className="font-bold text-rose-100">
+                          检测到最近仍有状态不一致订单。请确认这些更新时间是否发生在 2.7 修复之前；如果修复后仍增长，需要继续排查导入/编辑入口。
+                        </p>
                       ) : (
-                        <p className="font-bold text-emerald-100">当前问题更像历史遗留，可在备份后使用受控同步修复。</p>
+                        <p className="font-bold text-emerald-100">最近导入/编辑数据未发现新的状态不一致，写入源头基本受控。</p>
                       )}
                       {(diagnostics.readyFlags.possibleReasons ?? []).length > 0 && (
                         <div className="rounded-xl border border-amber-200/20 bg-slate-950/30 p-3">
@@ -677,19 +679,22 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
                       )}
                       <p className="font-bold text-amber-100">这不是 AI 模型问题，是订单历史字段与排产布尔字段不一致。</p>
                       {readyFlagProblems > 0 && (
-                        <button
-                          type="button"
-                          onClick={repairReadyFlags}
-                          disabled={isRepairingReadyFlags}
-                          className="mt-1 flex w-full items-center justify-center gap-2 rounded-xl border border-amber-200/40 bg-amber-200 px-3 py-2 text-xs font-black text-slate-950 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
-                        >
-                          {isRepairingReadyFlags ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
-                          同步历史图纸/物料状态
-                        </button>
+                        <div className="space-y-2">
+                          <button
+                            type="button"
+                            onClick={repairReadyFlags}
+                            disabled={isRepairingReadyFlags}
+                            className="mt-1 flex w-full items-center justify-center gap-2 rounded-xl border border-amber-200/40 bg-amber-200 px-3 py-2 text-xs font-black text-slate-950 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {isRepairingReadyFlags ? <Loader2 className="h-4 w-4 animate-spin" /> : <Zap className="h-4 w-4" />}
+                            历史数据可选修复
+                          </button>
+                          <p className="text-[11px] text-amber-100/75">当前用户已选择暂不处理历史数据；此按钮仅保留为人工可选动作。</p>
+                        </div>
                       )}
                     </div>
                   ) : (
-                    <p>点击“检查 AI 上下文”后，会读取只读诊断接口并展示历史状态不一致数量。</p>
+                    <p>点击“检查 AI 上下文”后，会读取只读诊断接口并展示历史状态不一致数量和近期新增风险。</p>
                   )}
                 </div>
 
@@ -770,9 +775,11 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
                           {diagnostics.readyFlags.sourceRiskLevel ?? 'LOW'}。
                         </p>
                         {(diagnostics.readyFlags.sourceRiskLevel ?? 'LOW') === 'HIGH' ? (
-                          <p className="mt-1 font-bold text-rose-100">检测到近期仍在产生状态不一致订单，请优先检查导入/编辑入口。</p>
+                          <p className="mt-1 font-bold text-rose-100">
+                            检测到最近仍有状态不一致订单。请确认这些更新时间是否发生在 2.7 修复之前；如果修复后仍增长，需要继续排查导入/编辑入口。
+                          </p>
                         ) : (
-                          <p className="mt-1 font-bold text-emerald-100">当前问题更像历史遗留，可在备份后使用受控同步修复。</p>
+                          <p className="mt-1 font-bold text-emerald-100">最近导入/编辑数据未发现新的状态不一致，写入源头基本受控。</p>
                         )}
                         {(diagnostics.readyFlags.possibleReasons ?? []).length > 0 && (
                           <div className="mt-2 space-y-1 text-[11px] text-amber-100/85">
