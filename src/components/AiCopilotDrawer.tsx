@@ -31,7 +31,7 @@ import {
 } from '@/actions/aiSchedulerActions';
 import { checkAiPlannerAuditWritableAction, listAiPlannerRunsAction } from '@/actions/aiPlannerAuditActions';
 import { repairMisclassifiedReadyOrdersAction } from '@/actions/mesActions';
-import type { Order } from '@/types';
+import type { AiPlannerUiContext, Order } from '@/types';
 import {
   canEnterSchedule,
   getScheduleBlockReasons,
@@ -50,6 +50,7 @@ type AiCopilotDrawerProps = {
   currentBaseLimit: number;
   orders: Order[];
   onApplied?: () => Promise<void> | void;
+  uiContext?: AiPlannerUiContext;
 };
 
 type WorkerState = 'standby' | 'thinking' | 'confirming' | 'done' | 'error';
@@ -261,7 +262,7 @@ async function fetchJson<T>(url: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }: AiCopilotDrawerProps) {
+export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, uiContext }: AiCopilotDrawerProps) {
   const [open, setOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [taskNote, setTaskNote] = useState('');
@@ -294,6 +295,37 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
   const hasExportRows = (diagnosis?.exportDataSummary.length ?? 0) > 0;
   const selectedTask = selectedTaskId ? getAiPlannerTaskTemplate(selectedTaskId) : undefined;
   const plannerReport = diagnosis?.plannerReport;
+  const mergedUiContext = useMemo<AiPlannerUiContext>(
+    () => ({
+      ...uiContext,
+      selectedTaskId,
+      selectedTaskName: selectedTask?.name ?? null,
+      visibleOrderIds: (uiContext?.visibleOrderIds ?? orders.slice(0, 200).map((order) => order.id)).slice(0, 200),
+      loadedOrderCount: uiContext?.loadedOrderCount ?? orders.length,
+      localSummary: uiContext?.localSummary ?? {
+        totalOrders: localSummary.totalOrders,
+        schedulableOrders: localSummary.schedulableOrders,
+        blockedByDrawing: localSummary.blockedByDrawing,
+        blockedByMaterial: localSummary.blockedByMaterial,
+        scheduledOrders: localSummary.scheduledOrders,
+        urgentOrders: localSummary.urgentOrders,
+        riskOrders: localSummary.riskOrders,
+      },
+      readyFlagGuard: {
+        baselineModeRecommended: true,
+        ...uiContext?.readyFlagGuard,
+        historicalMismatchCount: diagnostics?.readyFlags?.legacyTextReadyButFlagBlocked ?? uiContext?.readyFlagGuard?.historicalMismatchCount,
+        recentProblemCount: diagnostics?.readyFlags?.recent24hProblemCount ?? uiContext?.readyFlagGuard?.recentProblemCount,
+        sourceRiskLevel: diagnostics?.readyFlags?.sourceRiskLevel ?? uiContext?.readyFlagGuard?.sourceRiskLevel,
+      },
+      aiAuditStatus: {
+        ...uiContext?.aiAuditStatus,
+        enabled: diagnostics?.db?.aiAuditStatus?.enabled ?? uiContext?.aiAuditStatus?.enabled,
+        missingTables: diagnostics?.db?.aiAuditStatus?.missingTables ?? uiContext?.aiAuditStatus?.missingTables,
+      },
+    }),
+    [diagnostics?.db?.aiAuditStatus, diagnostics?.readyFlags, localSummary, orders, selectedTask?.name, selectedTaskId, uiContext]
+  );
 
   const loadSummary = useMemo(() => {
     const todayKey = new Intl.DateTimeFormat('en-US', {
@@ -333,7 +365,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
     setWorkerState('thinking');
     startThinking(async () => {
       try {
-        const res: AiCopilotActionResult = await interactWithAiCopilotAction(text, currentBaseLimit);
+        const res: AiCopilotActionResult = await interactWithAiCopilotAction(text, currentBaseLimit, mergedUiContext);
         const preview = safePreview(res.rawModelPreview);
         setModelPreview(preview);
         setAuditRef(res.audit ?? null);
@@ -596,6 +628,40 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
                   <div className="mt-3 rounded-xl border border-white/10 bg-slate-950/40 px-3 py-2 text-xs text-slate-400">
                     最近一次分析：{lastAnalysisAt || '尚未执行'}
                   </div>
+                </div>
+
+                <div className="rounded-2xl border border-sky-300/20 bg-sky-400/10 p-4 text-xs leading-5 text-sky-50">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="font-bold text-sky-100">AI 当前页面视角</div>
+                      <p className="mt-1 text-sky-100/75">AI 读取范围：数据库 + 当前页面上下文。页面上下文只辅助理解，不参与写入判定。</p>
+                    </div>
+                    <Database className="h-5 w-5 text-sky-100" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="rounded-xl border border-sky-200/15 bg-slate-950/35 p-3">
+                      <div className="text-sky-100/60">当前视图</div>
+                      <div className="mt-1 font-black text-white">{mergedUiContext.currentView ?? '未知'}</div>
+                    </div>
+                    <div className="rounded-xl border border-sky-200/15 bg-slate-950/35 p-3">
+                      <div className="text-sky-100/60">已加载订单</div>
+                      <div className="mt-1 font-black text-white">{mergedUiContext.loadedOrderCount ?? orders.length} 单</div>
+                    </div>
+                    <div className="rounded-xl border border-sky-200/15 bg-slate-950/35 p-3">
+                      <div className="text-sky-100/60">当前任务</div>
+                      <div className="mt-1 font-black text-white">{mergedUiContext.selectedTaskName ?? '自由输入'}</div>
+                    </div>
+                    <div className="rounded-xl border border-sky-200/15 bg-slate-950/35 p-3">
+                      <div className="text-sky-100/60">可见订单 ID</div>
+                      <div className="mt-1 font-black text-white">{mergedUiContext.visibleOrderIds?.length ?? 0} 条</div>
+                    </div>
+                  </div>
+                  {(uiContext?.visibleOrderIds?.length ?? 0) >= 200 && (
+                    <p className="mt-2 text-[11px] text-amber-100">仅传递前 200 条可见订单 ID，避免页面上下文过大。</p>
+                  )}
+                  <p className="mt-2 text-[11px] text-sky-100/75">
+                    导入验收建议：使用 `pnpm ready-flags:baseline` + `pnpm check:ready-flags:delta`，历史不一致仅作为背景。
+                  </p>
                 </div>
 
                 <div className="rounded-2xl border border-cyan-300/15 bg-cyan-300/[0.055] p-4">

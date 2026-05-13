@@ -24,6 +24,7 @@
     "test:ready-flag-normalization": "node scripts/test-ready-flag-normalization.cjs",
     "ready-flags:baseline": "node scripts/create-ready-flag-baseline.cjs",
     "check:ready-flags:delta": "node scripts/check-ready-flag-delta.cjs",
+    "check:ai-ui-context": "node scripts/check-ai-ui-context-wiring.cjs",
     "check:order-pools": "node scripts/check-order-pool-classification.cjs",
     "diagnose:ready-flags": "node scripts/diagnose-ready-flag-mismatch.cjs",
     "diagnose:ready-flags:explain": "node scripts/explain-ready-flag-mismatch.cjs",

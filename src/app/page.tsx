@@ -25,6 +25,7 @@ import {
   MainAppView,
   AuditActionType,
   AndonNotification,
+  AiPlannerUiContext,
 } from '@/types';
 import Header from '@/components/Header';
 import ProductionAuditOverlay from '@/components/ProductionAuditOverlay';
@@ -402,6 +403,38 @@ export default function KanbanApp() {
       return true;
     });
   }, [orders, searchQuery, statusFilter]);
+
+  const aiPlannerUiContext = useMemo<AiPlannerUiContext>(() => {
+    const visibleOrders = viewMode === 'workshop' || (user?.role === 'Boss' && mainAppView === 'dashboard') ? orders : filteredOrders;
+    const blockedByDrawing = orders.filter((order) => getScheduleBlockReasons(order).includes('DRAWING_NOT_READY')).length;
+    const blockedByMaterial = orders.filter((order) => {
+      const reasons = getScheduleBlockReasons(order);
+      return !reasons.includes('DRAWING_NOT_READY') && reasons.includes('MATERIAL_NOT_READY');
+    }).length;
+    const today = new Date().toISOString().slice(0, 10);
+
+    return {
+      currentView: viewMode === 'workshop' ? 'workshop' : mainAppView,
+      layoutMode,
+      visibleOrderIds: visibleOrders.slice(0, 200).map((order) => order.id),
+      loadedOrderCount: orders.length,
+      localSummary: {
+        totalOrders: orders.length,
+        schedulableOrders: orders.filter(canEnterSchedule).length,
+        blockedByDrawing,
+        blockedByMaterial,
+        scheduledOrders: orders.filter(isScheduleAssigned).length,
+        urgentOrders: orders.filter((order) => order.isUrgent).length,
+        riskOrders: orders.filter((order) => {
+          if (!order.deliveryDate || isOrderCompletedStatus(order.taskStatus)) return false;
+          return order.deliveryDate < today && !isScheduleAssigned(order);
+        }).length,
+      },
+      readyFlagGuard: {
+        baselineModeRecommended: true,
+      },
+    };
+  }, [filteredOrders, layoutMode, mainAppView, orders, user?.role, viewMode]);
 
   const redAlertTasks = useMemo(() => filteredOrders.filter(t => getCardStatus(t) === 'red' || t.taskStatus === 'anomaly'), [filteredOrders]);
   const invalidScheduledOrders = useMemo(
@@ -1419,7 +1452,7 @@ export default function KanbanApp() {
         onRequestHardClearBoard={triggerHardClearBoardFromWizard}
       />
 
-      <AiCopilotDrawer currentBaseLimit={dailyCapacity} orders={orders} onApplied={handleSyncRefresh} />
+      <AiCopilotDrawer currentBaseLimit={dailyCapacity} orders={orders} onApplied={handleSyncRefresh} uiContext={aiPlannerUiContext} />
 
       {/* 浮动警报拦截横幅 */}
       {(redAlertTasks.length > 0 || misclassifiedReadyOrders.length > 0) && viewMode === 'manager' && (

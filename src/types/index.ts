@@ -65,6 +65,34 @@ export type ViewMode = 'manager' | 'workshop';
 
 export type MainAppView = 'kanban' | 'dashboard';
 
+export type AiPlannerUiContext = {
+  currentView?: string;
+  layoutMode?: string;
+  selectedTaskId?: string | null;
+  selectedTaskName?: string | null;
+  visibleOrderIds?: string[];
+  loadedOrderCount?: number;
+  localSummary?: {
+    totalOrders: number;
+    schedulableOrders: number;
+    blockedByDrawing: number;
+    blockedByMaterial: number;
+    scheduledOrders: number;
+    urgentOrders: number;
+    riskOrders: number;
+  };
+  readyFlagGuard?: {
+    baselineModeRecommended?: boolean;
+    historicalMismatchCount?: number;
+    recentProblemCount?: number;
+    sourceRiskLevel?: string;
+  };
+  aiAuditStatus?: {
+    enabled?: boolean;
+    missingTables?: string[];
+  };
+};
+
 /** 審計 / 操作類型 */
 export type AuditActionType =
   | 'login'

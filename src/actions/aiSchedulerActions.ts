@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
+import type { AiPlannerUiContext } from '@/types';
 import {
   canEnterSchedule,
   formatScheduleBlockMessage,
@@ -99,13 +100,83 @@ type SchedulerContextBuildResult = {
   summary: AiCopilotContextSummary;
 };
 
+function limitString(value: unknown, max = 120): string | undefined {
+  const text = String(value ?? '').trim();
+  if (!text) return undefined;
+  return text.slice(0, max);
+}
+
+function sanitizeUiContext(input?: AiPlannerUiContext | null): AiPlannerUiContext | undefined {
+  if (!input || typeof input !== 'object') return undefined;
+  const visibleOrderIds = Array.isArray(input.visibleOrderIds)
+    ? input.visibleOrderIds.map((id) => limitString(id, 80)).filter((id): id is string => Boolean(id)).slice(0, 200)
+    : undefined;
+  const localSummary = input.localSummary
+    ? {
+        totalOrders: Math.max(0, Math.round(Number(input.localSummary.totalOrders) || 0)),
+        schedulableOrders: Math.max(0, Math.round(Number(input.localSummary.schedulableOrders) || 0)),
+        blockedByDrawing: Math.max(0, Math.round(Number(input.localSummary.blockedByDrawing) || 0)),
+        blockedByMaterial: Math.max(0, Math.round(Number(input.localSummary.blockedByMaterial) || 0)),
+        scheduledOrders: Math.max(0, Math.round(Number(input.localSummary.scheduledOrders) || 0)),
+        urgentOrders: Math.max(0, Math.round(Number(input.localSummary.urgentOrders) || 0)),
+        riskOrders: Math.max(0, Math.round(Number(input.localSummary.riskOrders) || 0)),
+      }
+    : undefined;
+
+  return {
+    currentView: limitString(input.currentView, 80),
+    layoutMode: limitString(input.layoutMode, 80),
+    selectedTaskId: input.selectedTaskId === null ? null : limitString(input.selectedTaskId, 80),
+    selectedTaskName: input.selectedTaskName === null ? null : limitString(input.selectedTaskName, 120),
+    visibleOrderIds,
+    loadedOrderCount: input.loadedOrderCount == null ? undefined : Math.max(0, Math.round(Number(input.loadedOrderCount) || 0)),
+    localSummary,
+    readyFlagGuard: input.readyFlagGuard
+      ? {
+          baselineModeRecommended: input.readyFlagGuard.baselineModeRecommended === true,
+          historicalMismatchCount:
+            input.readyFlagGuard.historicalMismatchCount == null
+              ? undefined
+              : Math.max(0, Math.round(Number(input.readyFlagGuard.historicalMismatchCount) || 0)),
+          recentProblemCount:
+            input.readyFlagGuard.recentProblemCount == null
+              ? undefined
+              : Math.max(0, Math.round(Number(input.readyFlagGuard.recentProblemCount) || 0)),
+          sourceRiskLevel: limitString(input.readyFlagGuard.sourceRiskLevel, 40),
+        }
+      : undefined,
+    aiAuditStatus: input.aiAuditStatus
+      ? {
+          enabled: input.aiAuditStatus.enabled === true,
+          missingTables: Array.isArray(input.aiAuditStatus.missingTables)
+            ? input.aiAuditStatus.missingTables.map((name) => limitString(name, 80)).filter((name): name is string => Boolean(name)).slice(0, 20)
+            : undefined,
+        }
+      : undefined,
+  };
+}
+
 function buildFallbackPlannerReport(
   summary?: AiCopilotContextSummary,
-  reason = 'AI 模型未返回结构化计划员报告'
+  reason = 'AI 模型未返回结构化计划员报告',
+  uiContext?: AiPlannerUiContext
 ): AiPlannerReport {
+  const selectedTaskId = uiContext?.selectedTaskId ?? '';
+  const taskHint =
+    selectedTaskId === 'RISK_ORDER_SCAN'
+      ? `当前任务是风险订单扫描，应优先关注交期风险 ${summary?.riskOrders ?? 0} 条和急单 ${summary?.urgentOrders ?? 0} 条。`
+      : selectedTaskId === 'BLOCKED_ORDER_ANALYSIS'
+        ? `当前任务是不可排产原因归类，应优先拆分图纸未发 ${summary?.blockedByDrawing ?? 0} 条、物料未齐 ${summary?.blockedByMaterial ?? 0} 条。`
+        : selectedTaskId === 'SCHEDULABLE_ORDER_RECOMMENDATION'
+          ? `当前任务是可排产订单推荐，应优先从 ${summary?.schedulableOrders ?? 0} 条可排产订单中按交期和工时排序。`
+          : selectedTaskId === 'PLANNER_QUESTION_LIST'
+            ? '当前任务是 AI 主动问题清单，应优先列出需要主管、技术、仓库确认的问题。'
+            : selectedTaskId === 'DAILY_PLANNING_CHECKUP'
+              ? '当前任务是每日排产体检，应同时覆盖可排产、不可排产、交期风险和处理优先级。'
+              : '当前为通用规则体检。';
   return {
     conclusion: summary
-      ? `系统规则体检：当前读取订单 ${summary.totalOrders} 条，可排产 ${summary.schedulableOrders} 条，图纸未发 ${summary.blockedByDrawing} 条，物料未齐 ${summary.blockedByMaterial} 条，交期风险 ${summary.riskOrders} 条。${reason}`
+      ? `系统规则体检：当前读取订单 ${summary.totalOrders} 条，可排产 ${summary.schedulableOrders} 条，图纸未发 ${summary.blockedByDrawing} 条，物料未齐 ${summary.blockedByMaterial} 条，交期风险 ${summary.riskOrders} 条。${taskHint}${reason}`
       : `系统规则体检：${reason}`,
     priorityActions: [
       ...(summary?.riskOrders
@@ -159,14 +230,15 @@ function buildFallbackPlannerReport(
 function fallbackAiCopilotResponse(
   reply: string,
   unreasonableAlerts: string[] = ['AI 排单执行失败，请检查模型配置、数据库连接或稍后重试'],
-  summary?: AiCopilotContextSummary
+  summary?: AiCopilotContextSummary,
+  uiContext?: AiPlannerUiContext
 ): AiCopilotResponse {
   return {
     reply,
     unreasonableAlerts,
     proposedMutations: [],
     exportDataSummary: [],
-    plannerReport: buildFallbackPlannerReport(summary, reply),
+    plannerReport: buildFallbackPlannerReport(summary, reply, uiContext),
   };
 }
 
@@ -448,15 +520,17 @@ async function buildSchedulerContext(currentBaseLimit: number): Promise<Schedule
 
 export async function interactWithAiCopilotAction(
   userPrompt: string,
-  currentBaseLimit: number
+  currentBaseLimit = 1500,
+  uiContext?: AiPlannerUiContext
 ): Promise<AiCopilotActionResult> {
   const startTime = Date.now();
   const prompt = String(userPrompt ?? '').trim();
+  const sanitizedUiContext = sanitizeUiContext(uiContext);
   if (!prompt) {
     return {
       ok: false,
       error: '请输入 AI 排单指令后再执行。',
-      data: fallbackAiCopilotResponse('请输入 AI 排单指令后再执行。', ['用户指令为空，未触发 AI 排单']),
+      data: fallbackAiCopilotResponse('请输入 AI 排单指令后再执行。', ['用户指令为空，未触发 AI 排单'], undefined, sanitizedUiContext),
     };
   }
 
@@ -471,7 +545,9 @@ export async function interactWithAiCopilotAction(
       error: '数据库连接失败或订单排产表不可用，AI 排单无法读取核心上下文。',
       data: fallbackAiCopilotResponse(
         `AI 排单执行失败：数据库连接或订单排产上下文读取异常。请检查 DATABASE_URL、Prisma 连接和 Order 表结构。详情：${message.slice(0, 180)}`,
-        ['数据库连接失败或 Order 表不可用，无法读取当前排产上下文']
+        ['数据库连接失败或 Order 表不可用，无法读取当前排产上下文'],
+        undefined,
+        sanitizedUiContext
       ),
       rawModelPreview: message.slice(0, 500),
     };
@@ -483,7 +559,7 @@ export async function interactWithAiCopilotAction(
     return {
       ok: true,
       data: withContextWarnings(
-        fallbackAiCopilotResponse(reply, ['缺少 DEEPSEEK_API_KEY，当前为系统规则体检结果'], contextResult.summary),
+        fallbackAiCopilotResponse(reply, ['缺少 DEEPSEEK_API_KEY，当前为系统规则体检结果'], contextResult.summary, sanitizedUiContext),
         contextResult.warnings
       ),
       contextSummary: contextResult.summary,
@@ -494,9 +570,12 @@ export async function interactWithAiCopilotAction(
   const contextHash = hashJson(contextResult.context);
   const compactContextJson = (() => {
     try {
-      return JSON.parse(contextResult.context) as Record<string, unknown>;
+      return {
+        ...(JSON.parse(contextResult.context) as Record<string, unknown>),
+        currentUserPageContext: sanitizedUiContext,
+      };
     } catch {
-      return { rawContextHash: contextHash };
+      return { rawContextHash: contextHash, currentUserPageContext: sanitizedUiContext };
     }
   })();
   const auditRun = await createAiPlannerRunSafe({
@@ -545,6 +624,7 @@ export async function interactWithAiCopilotAction(
     }
   };
 
+  const pageContextText = JSON.stringify(sanitizedUiContext ?? { unavailable: true });
   const system =
     '系统级硬规则：图纸未下发禁止排产，必须保留在技术攻坚池；配料未齐禁止排产，必须保留在仓库配料池；只有 scheduleEligible=true 才允许生成 UPDATE_ORDER_DATE。SOP 未上传仅作为文档提醒，不作为排产拦截条件。违反这些规则的建议会被后端拒绝执行。\n\n' +
     '你是一个严谨的生产计划员工，不是闲聊助手。当前系统时间为 2026年5月11日。请阅读系统提供的当前车间排单上下文、每日产能基准以及异常工时台账，并理解用户的自然语言任务。\n' +
@@ -553,6 +633,7 @@ export async function interactWithAiCopilotAction(
     '1. 回应用户的具体诉求，并在虚拟沙盘中推演调整后的结果。\n' +
     '2. 严格审查本周排盘合理性，指出所有不合理状态（如某日工时溢出上限、交期倒挂违约等）。\n' +
     '3. 如果用户指令包含记录异常工时，请提取相应的分钟数和原因。\n\n' +
+    '当前用户页面上下文会在 user message 中提供。页面上下文用于理解用户当前视角；真实排产资格以服务端数据库重新计算为准；不得因为前端上下文绕过图纸/物料硬规则。\n\n' +
     '务必返回严格且纯净的 JSON 对象，绝不包含任何 Markdown 标记、解释文字或思维链。JSON 结构必须严格如下：\n' +
     '{\n' +
     '  "reply": "对老板自然语言指令的专业回复与当前大盘评估摘要（直接可用作 UI 文本）",\n' +
@@ -599,7 +680,7 @@ export async function interactWithAiCopilotAction(
           { role: 'system', content: system },
           {
             role: 'user',
-            content: `当前排产上下文 JSON：${contextResult.context}\n\n用户自然语言指令：${prompt}`,
+            content: `当前排产上下文 JSON：${contextResult.context}\n\n当前用户页面上下文 JSON：${pageContextText}\n\n用户自然语言指令：${prompt}`,
           },
         ],
       }),
@@ -614,7 +695,8 @@ export async function interactWithAiCopilotAction(
           fallbackAiCopilotResponse(
             `AI 调度大脑响应异常 (HTTP ${res.status})。请检查 API 密钥、模型权限或账户余额。`,
             ['API 接口连接受阻，当前展示系统规则体检结果'],
-            contextResult.summary
+            contextResult.summary,
+            sanitizedUiContext
           ),
           contextResult.warnings
         ),
@@ -632,7 +714,7 @@ export async function interactWithAiCopilotAction(
       return {
         ok: true,
         data: withContextWarnings(
-          fallbackAiCopilotResponse('AI 接口返回格式异常，无法读取响应 JSON。', ['API 响应体不是合法 JSON'], contextResult.summary),
+          fallbackAiCopilotResponse('AI 接口返回格式异常，无法读取响应 JSON。', ['API 响应体不是合法 JSON'], contextResult.summary, sanitizedUiContext),
           contextResult.warnings
         ),
         contextSummary: contextResult.summary,
@@ -648,7 +730,8 @@ export async function interactWithAiCopilotAction(
           fallbackAiCopilotResponse(
             `AI 调度大脑返回错误：${body.error.message.slice(0, 180)}。请检查 API 密钥、模型权限或账户余额。`,
             ['API 返回业务错误，当前展示系统规则体检结果'],
-            contextResult.summary
+            contextResult.summary,
+            sanitizedUiContext
           ),
           contextResult.warnings
         ),
@@ -665,7 +748,7 @@ export async function interactWithAiCopilotAction(
         data: withContextWarnings(
           fallbackAiCopilotResponse('AI 调度大脑返回为空，未能自动渲染大盘。请稍后再试或换个说法。', [
             'AI 输出为空',
-          ], contextResult.summary),
+          ], contextResult.summary, sanitizedUiContext),
           contextResult.warnings
         ),
         contextSummary: contextResult.summary,
@@ -676,7 +759,7 @@ export async function interactWithAiCopilotAction(
       const parsedResult = JSON.parse(extractJsonObjectText(rawContent));
       const normalized = normalizeAiPayload(parsedResult);
       const data = withContextWarnings(
-        normalized.plannerReport ? normalized : { ...normalized, plannerReport: buildFallbackPlannerReport(contextResult.summary) },
+        normalized.plannerReport ? normalized : { ...normalized, plannerReport: buildFallbackPlannerReport(contextResult.summary, undefined, sanitizedUiContext) },
         contextResult.warnings
       );
       await finishAudit('COMPLETED', {
@@ -714,7 +797,8 @@ export async function interactWithAiCopilotAction(
           fallbackAiCopilotResponse(
             'AI 专家推演成功，但返回的数据结构格式异常，未能自动渲染大盘。请稍后再试或换个说法。',
             ['AI 输出格式非标准 JSON'],
-            contextResult.summary
+            contextResult.summary,
+            sanitizedUiContext
           ),
           contextResult.warnings
         ),
@@ -730,7 +814,7 @@ export async function interactWithAiCopilotAction(
       data: withContextWarnings(
         fallbackAiCopilotResponse('AI 调度大脑连接异常。请检查网络、API 密钥或账户状态。', [
           'AI 接口调用异常，无法进行大盘评估',
-        ], contextResult.summary),
+        ], contextResult.summary, sanitizedUiContext),
         contextResult.warnings
       ),
       contextSummary: contextResult.summary,
