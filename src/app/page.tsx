@@ -34,6 +34,7 @@ import KanbanBoard from '@/components/KanbanBoard';
 import WorkshopView from '@/components/WorkshopView';
 import BossDashboard from '@/components/BossDashboard';
 import AiCopilotDrawer from '@/components/AiCopilotDrawer';
+import AiPlannerPresenceCard from '@/components/AiPlannerPresenceCard';
 import { AddOrderModal } from '@/components/Modals';
 import QCReviewModal from '@/components/QCReviewModal';
 import { normalizeOrder } from '@/lib/mesOrder';
@@ -117,6 +118,7 @@ export default function KanbanApp() {
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('card');
   const [theme, setTheme] = useState<AppTheme>('dark');
   const [mainAppView, setMainAppView] = useState<MainAppView>('kanban');
+  const [aiPlannerOpenToken, setAiPlannerOpenToken] = useState(0);
   /** 手動點擊「同步/刷新」時為 true，不用於全屏遮罩 */
   const [isSyncing, setIsSyncing] = useState(false);
 
@@ -1452,7 +1454,19 @@ export default function KanbanApp() {
         onRequestHardClearBoard={triggerHardClearBoardFromWizard}
       />
 
-      <AiCopilotDrawer currentBaseLimit={dailyCapacity} orders={orders} onApplied={handleSyncRefresh} uiContext={aiPlannerUiContext} />
+      <AiCopilotDrawer
+        currentBaseLimit={dailyCapacity}
+        orders={orders}
+        onApplied={handleSyncRefresh}
+        uiContext={aiPlannerUiContext}
+        openToken={aiPlannerOpenToken}
+      />
+
+      {viewMode === 'manager' && (
+        <div className="shrink-0 px-3 pt-3">
+          <AiPlannerPresenceCard onOpenPlanner={() => setAiPlannerOpenToken((value) => value + 1)} />
+        </div>
+      )}
 
       {/* 浮动警报拦截横幅 */}
       {(redAlertTasks.length > 0 || misclassifiedReadyOrders.length > 0) && viewMode === 'manager' && (

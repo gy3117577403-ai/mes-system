@@ -57,6 +57,7 @@ type AiCopilotDrawerProps = {
   orders: Order[];
   onApplied?: () => Promise<void> | void;
   uiContext?: AiPlannerUiContext;
+  openToken?: number;
 };
 
 type WorkerState = 'standby' | 'thinking' | 'confirming' | 'done' | 'error';
@@ -292,7 +293,7 @@ async function fetchJson<T>(url: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, uiContext }: AiCopilotDrawerProps) {
+export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, uiContext, openToken }: AiCopilotDrawerProps) {
   const [open, setOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [taskNote, setTaskNote] = useState('');
@@ -417,10 +418,16 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
   useEffect(() => {
     try {
       window.localStorage.setItem(TODO_STORAGE_KEY, JSON.stringify(plannerTodos.slice(0, 80)));
+      window.dispatchEvent(new Event('gg-ai:planner-presence-updated'));
     } catch {
       // localStorage is a convenience cache only; ignoring failures keeps the planner usable.
     }
   }, [plannerTodos]);
+
+  useEffect(() => {
+    if (openToken === undefined) return;
+    setOpen(true);
+  }, [openToken]);
 
   useEffect(() => {
     if (!plannerReport) return;
@@ -452,6 +459,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
       } else {
         window.localStorage.removeItem(DAILY_REPORT_STORAGE_KEY);
       }
+      window.dispatchEvent(new Event('gg-ai:planner-presence-updated'));
     } catch {
       // Daily report drafts are local convenience data only.
     }
