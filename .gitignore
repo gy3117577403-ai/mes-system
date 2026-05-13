@@ -21,6 +21,7 @@
 /build
 /dist
 /tmp
+tmp/
 
 # misc
 .DS_Store

@@ -78,8 +78,12 @@ async function main() {
       examples,
       message:
         problemCount === 0
-          ? `最近 ${sinceHours} 小时未发现新增 ready-flags 状态不一致。`
+          ? `最近 ${sinceHours} 小时未发现新增 ready flag mismatch。`
           : `最近 ${sinceHours} 小时发现 ${problemCount} 条 ready-flags 状态不一致，请确认是否发生在写入归一化修复前。`,
+      recommendation:
+        problemCount === 0
+          ? '最近窗口内未发现新增 ready flag mismatch。'
+          : '如果这些问题属于历史更新时间窗口内的既有数据，请使用 pnpm ready-flags:baseline 后再用 pnpm check:ready-flags:delta 验证导入前后是否新增。',
     };
 
     console.log(JSON.stringify(payload, null, 2));
@@ -107,4 +111,3 @@ async function main() {
 }
 
 main();
-

@@ -22,6 +22,8 @@
     "check:schedule-guard": "node scripts/check-schedule-eligibility-guard.cjs",
     "check:ready-flag-normalization": "node scripts/check-ready-flag-write-normalization.cjs",
     "test:ready-flag-normalization": "node scripts/test-ready-flag-normalization.cjs",
+    "ready-flags:baseline": "node scripts/create-ready-flag-baseline.cjs",
+    "check:ready-flags:delta": "node scripts/check-ready-flag-delta.cjs",
     "check:order-pools": "node scripts/check-order-pool-classification.cjs",
     "diagnose:ready-flags": "node scripts/diagnose-ready-flag-mismatch.cjs",
     "diagnose:ready-flags:explain": "node scripts/explain-ready-flag-mismatch.cjs",

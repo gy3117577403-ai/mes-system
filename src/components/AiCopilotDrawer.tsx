@@ -658,7 +658,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
                     <div>
                       <div className="font-bold text-amber-100">数据一致性风险</div>
                       <p className="mt-1 text-amber-100/80">
-                        历史不一致数量仅展示即可；当前重点是观察最近导入/编辑的数据是否继续产生状态不一致。AI 和排产系统仍以布尔字段为准。
+                        历史不一致数量仅作为背景；当前用户已选择暂不处理历史数据。新导入数据验收以“导入前基线 + 导入后 delta 检查”为准。
                       </p>
                     </div>
                     <ShieldCheck className="h-5 w-5 text-amber-100" />
@@ -681,10 +681,10 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
                       </p>
                       {(diagnostics.readyFlags.sourceRiskLevel ?? 'LOW') === 'HIGH' ? (
                         <p className="font-bold text-rose-100">
-                          检测到最近仍有状态不一致订单。请确认这些更新时间是否发生在 2.7 修复之前；如果修复后仍增长，需要继续排查导入/编辑入口。
+                          最近 24 小时窗口包含已知历史更新时间问题，建议使用基线方式验收新导入数据。
                         </p>
                       ) : (
-                        <p className="font-bold text-emerald-100">最近导入/编辑数据未发现新的状态不一致，写入源头基本受控。</p>
+                        <p className="font-bold text-emerald-100">最近窗口未发现状态不一致；导入验收仍建议使用基线 delta 检查。</p>
                       )}
                       {(diagnostics.readyFlags.possibleReasons ?? []).length > 0 && (
                         <div className="rounded-xl border border-amber-200/20 bg-slate-950/30 p-3">
@@ -807,10 +807,10 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
                         </p>
                         {(diagnostics.readyFlags.sourceRiskLevel ?? 'LOW') === 'HIGH' ? (
                           <p className="mt-1 font-bold text-rose-100">
-                            检测到最近仍有状态不一致订单。请确认这些更新时间是否发生在 2.7 修复之前；如果修复后仍增长，需要继续排查导入/编辑入口。
+                            最近 24 小时窗口包含已知历史更新时间问题，建议使用基线方式验收新导入数据。
                           </p>
                         ) : (
-                          <p className="mt-1 font-bold text-emerald-100">最近导入/编辑数据未发现新的状态不一致，写入源头基本受控。</p>
+                          <p className="mt-1 font-bold text-emerald-100">最近窗口未发现状态不一致；导入验收仍建议使用基线 delta 检查。</p>
                         )}
                         {(diagnostics.readyFlags.possibleReasons ?? []).length > 0 && (
                           <div className="mt-2 space-y-1 text-[11px] text-amber-100/85">
