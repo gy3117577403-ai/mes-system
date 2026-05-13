@@ -20,6 +20,7 @@
     "db:verify:abnormal-claim": "node scripts/verify-mes-abnormal-claim-table.cjs",
     "db:patch:abnormal-claim": "node scripts/apply-mes-abnormal-claim-patch.cjs",
     "check:schedule-guard": "node scripts/check-schedule-eligibility-guard.cjs",
+    "check:ready-flag-normalization": "node scripts/check-ready-flag-write-normalization.cjs",
     "check:order-pools": "node scripts/check-order-pool-classification.cjs",
     "diagnose:ready-flags": "node scripts/diagnose-ready-flag-mismatch.cjs",
     "diagnose:ready-flags:explain": "node scripts/explain-ready-flag-mismatch.cjs",

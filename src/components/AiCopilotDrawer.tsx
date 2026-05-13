@@ -102,6 +102,9 @@ type ReadyFlagsPayload = {
   materialTextReadyButFlagFalse?: number;
   latestProblemUpdatedAt?: string | null;
   oldestProblemCreatedAt?: string | null;
+  recent24hProblemCount?: number;
+  recent7dProblemCount?: number;
+  sourceRiskLevel?: 'HIGH' | 'MEDIUM' | 'LOW';
   possibleReasons?: string[];
   examples?: Array<{
     id: string;
@@ -640,6 +643,16 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
                         最近问题更新时间：{formatDateTime(diagnostics.readyFlags.latestProblemUpdatedAt)}；最早问题创建时间：
                         {formatDateTime(diagnostics.readyFlags.oldestProblemCreatedAt)}。
                       </p>
+                      <p className="text-amber-100/85">
+                        最近 24 小时问题：{diagnostics.readyFlags.recent24hProblemCount ?? 0} 单；最近 7 天问题：
+                        {diagnostics.readyFlags.recent7dProblemCount ?? 0} 单；源头风险：
+                        {diagnostics.readyFlags.sourceRiskLevel ?? 'LOW'}。
+                      </p>
+                      {(diagnostics.readyFlags.sourceRiskLevel ?? 'LOW') === 'HIGH' ? (
+                        <p className="font-bold text-rose-100">检测到近期仍在产生状态不一致订单，请优先检查导入/编辑入口。</p>
+                      ) : (
+                        <p className="font-bold text-emerald-100">当前问题更像历史遗留，可在备份后使用受控同步修复。</p>
+                      )}
                       {(diagnostics.readyFlags.possibleReasons ?? []).length > 0 && (
                         <div className="rounded-xl border border-amber-200/20 bg-slate-950/30 p-3">
                           <div className="mb-1 font-bold text-amber-100">来源判断</div>
@@ -751,6 +764,16 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
                           最近问题更新时间：{formatDateTime(diagnostics.readyFlags.latestProblemUpdatedAt)}；最早问题创建时间：
                           {formatDateTime(diagnostics.readyFlags.oldestProblemCreatedAt)}。
                         </p>
+                        <p className="mt-1">
+                          最近 24 小时问题：{diagnostics.readyFlags.recent24hProblemCount ?? 0} 单；最近 7 天问题：
+                          {diagnostics.readyFlags.recent7dProblemCount ?? 0} 单；源头风险：
+                          {diagnostics.readyFlags.sourceRiskLevel ?? 'LOW'}。
+                        </p>
+                        {(diagnostics.readyFlags.sourceRiskLevel ?? 'LOW') === 'HIGH' ? (
+                          <p className="mt-1 font-bold text-rose-100">检测到近期仍在产生状态不一致订单，请优先检查导入/编辑入口。</p>
+                        ) : (
+                          <p className="mt-1 font-bold text-emerald-100">当前问题更像历史遗留，可在备份后使用受控同步修复。</p>
+                        )}
                         {(diagnostics.readyFlags.possibleReasons ?? []).length > 0 && (
                           <div className="mt-2 space-y-1 text-[11px] text-amber-100/85">
                             {(diagnostics.readyFlags.possibleReasons ?? []).map((reason) => (

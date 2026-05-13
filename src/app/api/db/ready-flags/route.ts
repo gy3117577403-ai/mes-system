@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { isDrawingTextReady, isMaterialTextReady } from '@/lib/readyFlagNormalization';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -27,6 +28,9 @@ type ReadyFlagsStatus = {
   materialTextReadyButFlagFalse: number;
   latestProblemUpdatedAt: string | null;
   oldestProblemCreatedAt: string | null;
+  recent24hProblemCount: number;
+  recent7dProblemCount: number;
+  sourceRiskLevel: 'HIGH' | 'MEDIUM' | 'LOW';
   possibleReasons: string[];
   examples: ReadyFlagExample[];
   message: string;
@@ -39,16 +43,6 @@ function json(payload: ReadyFlagsStatus, init?: ResponseInit) {
 function safeMessage(error: unknown): string {
   if (error instanceof Error) return error.message.slice(0, 180);
   return String(error).slice(0, 180);
-}
-
-function drawingTextReady(value: unknown): boolean {
-  const text = String(value ?? '').trim();
-  return ['已发', '已下发', '图纸已发', '已发图'].some((keyword) => text.includes(keyword));
-}
-
-function materialTextReady(value: unknown): boolean {
-  const text = String(value ?? '').trim();
-  return ['料齐', '已配料', '齐套', '料已齐'].some((keyword) => text.includes(keyword));
 }
 
 function createdAtToIso(value: number | null | undefined): string | null {
@@ -65,12 +59,17 @@ function dateToIso(value: Date | string | null | undefined): string | null {
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }
 
+function countUpdatedWithin(rows: Array<{ updatedAt: Date }>, ms: number): number {
+  const cutoff = Date.now() - ms;
+  return rows.filter((row) => new Date(row.updatedAt).getTime() >= cutoff).length;
+}
+
 function buildPossibleReasons(rows: Array<{ drawing: string; materials: string; isDrawingReady: boolean; isMaterialReady: boolean; updatedAt: Date }>) {
   const reasons: string[] = [];
-  if (rows.some((row) => drawingTextReady(row.drawing) && row.isDrawingReady !== true)) {
+  if (rows.some((row) => isDrawingTextReady(row.drawing) && row.isDrawingReady !== true)) {
     reasons.push('图纸文本字段与排产布尔字段不一致：drawing 显示已发，但 isDrawingReady=false。');
   }
-  if (rows.some((row) => materialTextReady(row.materials) && row.isMaterialReady !== true)) {
+  if (rows.some((row) => isMaterialTextReady(row.materials) && row.isMaterialReady !== true)) {
     reasons.push('物料文本字段与排产布尔字段不一致：materials 显示料齐，但 isMaterialReady=false。');
   }
   const newest = rows[0]?.updatedAt ? new Date(rows[0].updatedAt).getTime() : 0;
@@ -94,6 +93,9 @@ export async function GET() {
       materialTextReadyButFlagFalse: 0,
       latestProblemUpdatedAt: null,
       oldestProblemCreatedAt: null,
+      recent24hProblemCount: 0,
+      recent7dProblemCount: 0,
+      sourceRiskLevel: 'LOW',
       possibleReasons: ['DATABASE_URL is not configured.'],
       examples: [],
       message: 'DATABASE_URL is not configured. AI cannot compare saved order readiness flags.',
@@ -120,17 +122,20 @@ export async function GET() {
       },
     });
 
-    const drawingMismatch = orders.filter((order) => drawingTextReady(order.drawing) && order.isDrawingReady !== true);
-    const materialMismatch = orders.filter((order) => materialTextReady(order.materials) && order.isMaterialReady !== true);
+    const drawingMismatch = orders.filter((order) => isDrawingTextReady(order.drawing) && order.isDrawingReady !== true);
+    const materialMismatch = orders.filter((order) => isMaterialTextReady(order.materials) && order.isMaterialReady !== true);
     const legacyTextReadyButFlagBlocked = orders.filter(
       (order) =>
-        drawingTextReady(order.drawing) &&
-        materialTextReady(order.materials) &&
+        isDrawingTextReady(order.drawing) &&
+        isMaterialTextReady(order.materials) &&
         (order.isDrawingReady !== true || order.isMaterialReady !== true)
     );
     const problemIds = new Set([...drawingMismatch, ...materialMismatch].map((order) => order.id));
     const problemRows = orders.filter((order) => problemIds.has(order.id));
     const latestProblemUpdatedAt = dateToIso(problemRows[0]?.updatedAt);
+    const recent24hProblemCount = countUpdatedWithin(problemRows, 24 * 60 * 60 * 1000);
+    const recent7dProblemCount = countUpdatedWithin(problemRows, 7 * 24 * 60 * 60 * 1000);
+    const sourceRiskLevel = recent24hProblemCount > 0 ? 'HIGH' : recent7dProblemCount > 0 ? 'MEDIUM' : 'LOW';
     const oldestProblemCreatedAt = problemRows
       .map((order) => createdAtToIso(order.createdAt))
       .filter((value): value is string => Boolean(value))
@@ -158,6 +163,9 @@ export async function GET() {
       materialTextReadyButFlagFalse: materialMismatch.length,
       latestProblemUpdatedAt,
       oldestProblemCreatedAt,
+      recent24hProblemCount,
+      recent7dProblemCount,
+      sourceRiskLevel,
       possibleReasons: buildPossibleReasons(problemRows),
       examples,
       message:
@@ -176,6 +184,9 @@ export async function GET() {
       materialTextReadyButFlagFalse: 0,
       latestProblemUpdatedAt: null,
       oldestProblemCreatedAt: null,
+      recent24hProblemCount: 0,
+      recent7dProblemCount: 0,
+      sourceRiskLevel: 'LOW',
       possibleReasons: ['Ready flag diagnostics failed.'],
       examples: [],
       message: `Ready flag diagnostics failed: ${safeMessage(error)}`,

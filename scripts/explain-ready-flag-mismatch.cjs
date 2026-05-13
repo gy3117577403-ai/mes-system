@@ -6,12 +6,18 @@ const prisma = new PrismaClient();
 
 function drawingTextReady(value) {
   const text = String(value ?? '').trim();
-  return ['已发', '已下发', '图纸已发', '已发图'].some((keyword) => text.includes(keyword));
+  if (['未发图', '未下发', '待发图', '缺图纸', '无图纸'].some((keyword) => text.includes(keyword))) return false;
+  return ['已发', '已发图', '图纸已发', '已下发', '图纸已下发', '已提供图纸', '图纸齐全'].some((keyword) =>
+    text.includes(keyword)
+  );
 }
 
 function materialTextReady(value) {
   const text = String(value ?? '').trim();
-  return ['料齐', '已配料', '齐套', '料已齐'].some((keyword) => text.includes(keyword));
+  if (['未配料', '缺料', '待配料', '物料不足', '欠料'].some((keyword) => text.includes(keyword))) return false;
+  return ['料齐', '已配料', '已齐套', '齐套', '物料齐', '物料已齐', '配料完成'].some((keyword) =>
+    text.includes(keyword)
+  );
 }
 
 function toIso(value) {
@@ -27,6 +33,17 @@ function createdAtToIso(value) {
   const millis = numeric > 10_000_000_000 ? numeric : numeric * 1000;
   const date = new Date(millis);
   return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function countUpdatedWithin(rows, ms) {
+  const cutoff = Date.now() - ms;
+  return rows.filter((row) => new Date(row.updatedAt).getTime() >= cutoff).length;
+}
+
+function sourceRiskLevel(recent24hProblemCount, recent7dProblemCount) {
+  if (recent24hProblemCount > 0) return 'HIGH';
+  if (recent7dProblemCount > 0) return 'MEDIUM';
+  return 'LOW';
 }
 
 function buildPossibleReasons(rows) {
@@ -76,6 +93,14 @@ async function main() {
     );
     const problemIds = new Set([...drawingMismatch, ...materialMismatch].map((order) => order.id));
     const problemRows = orders.filter((order) => problemIds.has(order.id));
+    const recent24hProblemCount = countUpdatedWithin(problemRows, 24 * 60 * 60 * 1000);
+    const recent7dProblemCount = countUpdatedWithin(problemRows, 7 * 24 * 60 * 60 * 1000);
+    const latestProblemUpdatedAt = toIso(problemRows[0]?.updatedAt);
+    const oldestProblemCreatedAt =
+      problemRows
+        .map((order) => createdAtToIso(order.createdAt))
+        .filter(Boolean)
+        .sort()[0] ?? null;
     const examples = problemRows.slice(0, 100).map((order) => ({
       id: order.id,
       client: order.client,
@@ -95,6 +120,11 @@ async function main() {
         legacyTextReadyButFlagBlocked: legacyTextReadyButFlagBlocked.length,
         drawingTextReadyButFlagFalse: drawingMismatch.length,
         materialTextReadyButFlagFalse: materialMismatch.length,
+        recent24hProblemCount,
+        recent7dProblemCount,
+        latestProblemUpdatedAt,
+        oldestProblemCreatedAt,
+        sourceRiskLevel: sourceRiskLevel(recent24hProblemCount, recent7dProblemCount),
       },
       examples,
       possibleReasons: buildPossibleReasons(problemRows),

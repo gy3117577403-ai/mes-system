@@ -67,6 +67,7 @@ import {
   getShanghaiBatchImportMondayYmd,
   parseShanghaiWallClockToEpochMs,
 } from '@/lib/datetimeShanghai';
+import { normalizeOrderReadyFlags } from '@/lib/readyFlagNormalization';
 
 /** 無效或空交期排在同急迫度層級最末，避免沉底有效交期單據 */
 function deliveryDateEpochMsForKanbanSort(raw: string | null | undefined): number {
@@ -554,8 +555,8 @@ export default function KanbanApp() {
     (orderId: string, field: string, value: any) => {
       if (field === 'materials') {
         const mat = String(value);
-        const ready = ['料齐', '已配料'].includes(mat);
-        const patch: Record<string, unknown> = { materials: mat, isMaterialReady: ready };
+        const patch: Record<string, unknown> = { materials: mat, ...normalizeOrderReadyFlags({ materials: mat }) };
+        const ready = patch.isMaterialReady === true;
         if (ready) {
           patch.missingMaterialReason = null;
           patch.missingMaterialEta = null;
@@ -584,8 +585,8 @@ export default function KanbanApp() {
 
       if (field === 'drawing') {
         const drawing = String(value);
-        const ready = drawing === '已发';
-        const patch: Record<string, unknown> = { drawing, isDrawingReady: ready };
+        const patch: Record<string, unknown> = { drawing, ...normalizeOrderReadyFlags({ drawing }) };
+        const ready = patch.isDrawingReady === true;
         setOrders((prev) => {
           const o = prev.find((x) => x.id === orderId);
           if (o && user) {
@@ -1184,29 +1185,33 @@ export default function KanbanApp() {
         const newId = uuidv4();
 
         const qty = parseInt(getCol(idx.qty), 10) || 1;
+        const rawOrder = {
+          id: newId,
+          sales: getCol(idx.sales) || '系统导入',
+          client: client || '未知客户',
+          model: model || '未知型号',
+          qty,
+          totalHours: Number(getCol(idx.hours)) || 0,
+          drawing: isError ? '错误' : getCol(idx.draw) || '未发图',
+          materials: isError ? '错误' : getCol(idx.mat) || '未配料',
+          deliveryDate: formattedDate,
+          plannedDate: planMsStr || undefined,
+          assignedDay: 'Unscheduled',
+          taskStatus: 'normal',
+          cutStatus: 'pending',
+          boxNumber: null,
+          createdAt: baseTime - i,
+          isImportError: isError,
+          errorReason: errorReason,
+          totalQty: qty,
+          reportedQty: 0,
+          drawingUrl: '',
+          activeAlarm: null,
+        };
         newOrders.push(
           normalizeOrder({
-            id: newId,
-            sales: getCol(idx.sales) || '系统导入',
-            client: client || '未知客户',
-            model: model || '未知型号',
-            qty,
-            totalHours: Number(getCol(idx.hours)) || 0,
-            drawing: isError ? '错误' : getCol(idx.draw) || '未发图',
-            materials: isError ? '错误' : getCol(idx.mat) || '未配料',
-            deliveryDate: formattedDate,
-            plannedDate: planMsStr || undefined,
-            assignedDay: 'Unscheduled',
-            taskStatus: 'normal',
-            cutStatus: 'pending',
-            boxNumber: null,
-            createdAt: baseTime - i,
-            isImportError: isError,
-            errorReason: errorReason,
-            totalQty: qty,
-            reportedQty: 0,
-            drawingUrl: '',
-            activeAlarm: null,
+            ...rawOrder,
+            ...normalizeOrderReadyFlags(rawOrder),
           })
         );
       }

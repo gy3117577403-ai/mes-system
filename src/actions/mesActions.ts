@@ -39,6 +39,7 @@ import {
   isScheduleAssigned,
   type ScheduleBlockReason,
 } from '@/lib/scheduleEligibility';
+import { normalizeOrderReadyFlags } from '@/lib/readyFlagNormalization';
 
 const SETTINGS_ID = 'singleton';
 const SCHEDULED_WRITE_STATUSES = new Set(['SCHEDULED', 'IN_PROGRESS', 'PAUSED']);
@@ -234,7 +235,8 @@ async function orderUpdateOrCreateFromPatch(
   orderId: string,
   patch: Record<string, unknown>
 ): Promise<void> {
-  const data = patch as Parameters<typeof prisma.order.update>[0]['data'];
+  const normalizedPatch = { ...patch, ...normalizeOrderReadyFlags(patch) };
+  const data = normalizedPatch as Parameters<typeof prisma.order.update>[0]['data'];
   try {
     await prisma.order.update({
       where: { id: orderId },
@@ -245,7 +247,7 @@ async function orderUpdateOrCreateFromPatch(
     await prisma.order.create({
       data: {
         ...defaultOrderUncheckedCreate(orderId),
-        ...patch,
+        ...normalizedPatch,
       } as Parameters<typeof prisma.order.create>[0]['data'],
     });
   }
@@ -366,8 +368,12 @@ export async function createOrderAction(
     return { ok: false, error: '排产日期无法解析为上海时区时间戳' };
   }
   try {
-    const o = normalizeOrder({
+    const normalizedData = {
       ...(parsed.data as Partial<Order> & { id: string }),
+      ...normalizeOrderReadyFlags(parsed.data as Record<string, unknown>),
+    };
+    const o = normalizeOrder({
+      ...normalizedData,
       plannedDate: plannedMsStr,
     });
     if (!canEnterSchedule(o)) {
@@ -461,8 +467,9 @@ export async function importOrdersOverwriteWeekAction(
       const pairMap = new Map<string, { client: string; model: string }>();
       const lastRawByPair = new Map<string, (typeof list)[number]>();
       for (const raw of list) {
+        const normalizedRaw = { ...(raw as Record<string, unknown>), ...normalizeOrderReadyFlags(raw as Record<string, unknown>) };
         const o = normalizeOrder({
-          ...(raw as Partial<Order> & { id: string }),
+          ...(normalizedRaw as Partial<Order> & { id: string }),
           plannedDate: plannedMsStr,
         });
         const ck = importPairKey(o.client, o.model);
@@ -474,8 +481,9 @@ export async function importOrdersOverwriteWeekAction(
       const dedupedRaws = [...lastRawByPair.values()];
       let n = 0;
       for (const raw of dedupedRaws) {
+        const normalizedRaw = { ...(raw as Record<string, unknown>), ...normalizeOrderReadyFlags(raw as Record<string, unknown>) };
         const o = normalizeOrder({
-          ...(raw as Partial<Order> & { id: string }),
+          ...(normalizedRaw as Partial<Order> & { id: string }),
           plannedDate: plannedMsStr,
         });
         if (!canEnterSchedule(o)) {
@@ -634,7 +642,7 @@ function buildOrderPatch(updateData: Record<string, unknown>): Record<string, un
     else p.deletedAt = Number(v);
   }
 
-  return p;
+  return { ...p, ...normalizeOrderReadyFlags(p) };
 }
 
 /**
