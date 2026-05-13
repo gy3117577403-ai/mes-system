@@ -37,6 +37,12 @@ import {
   getScheduleBlockReasons,
   isScheduleAssigned,
 } from '@/lib/scheduleEligibility';
+import {
+  AI_PLANNER_TASK_TEMPLATES,
+  buildPromptFromTemplate,
+  getAiPlannerTaskTemplate,
+  type AiPlannerTaskTemplateId,
+} from '@/lib/aiPlannerTaskTemplates';
 import { isOrderCompletedStatus } from '@/lib/orderStatus';
 import { cn } from '@/lib/uiTheme';
 
@@ -138,6 +144,19 @@ const quickPrompts = [
   '检查有没有交期风险和产能风险',
   '按交期和工时给出本周排产建议',
 ];
+
+const priorityTone: Record<string, string> = {
+  MUST: 'border-rose-300/30 bg-rose-400/10 text-rose-50',
+  SHOULD: 'border-amber-300/30 bg-amber-400/10 text-amber-50',
+  WATCH: 'border-cyan-300/25 bg-cyan-400/10 text-cyan-50',
+};
+
+const blockedGroupLabel: Record<string, string> = {
+  DRAWING_NOT_READY: '图纸未发',
+  MATERIAL_NOT_READY: '物料未齐',
+  DATA_INCOMPLETE: '数据不完整',
+  OTHER: '其他',
+};
 
 const stateLabel: Record<WorkerState, string> = {
   standby: '待命',
@@ -245,6 +264,8 @@ async function fetchJson<T>(url: string): Promise<T> {
 export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }: AiCopilotDrawerProps) {
   const [open, setOpen] = useState(false);
   const [prompt, setPrompt] = useState('');
+  const [taskNote, setTaskNote] = useState('');
+  const [selectedTaskId, setSelectedTaskId] = useState<AiPlannerTaskTemplateId | null>(null);
   const [diagnosis, setDiagnosis] = useState<AiCopilotResponse | null>(null);
   const [serverSummary, setServerSummary] = useState<AiCopilotContextSummary | null>(null);
   const [summarySource, setSummarySource] = useState<'local' | 'server'>('local');
@@ -271,6 +292,8 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
   const activeSummary = serverSummary ?? localSummary;
   const hasMutations = (diagnosis?.proposedMutations.length ?? 0) > 0;
   const hasExportRows = (diagnosis?.exportDataSummary.length ?? 0) > 0;
+  const selectedTask = selectedTaskId ? getAiPlannerTaskTemplate(selectedTaskId) : undefined;
+  const plannerReport = diagnosis?.plannerReport;
 
   const loadSummary = useMemo(() => {
     const todayKey = new Intl.DateTimeFormat('en-US', {
@@ -300,7 +323,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
   }, [diagnosis]);
 
   const askPlanner = () => {
-    const text = prompt.trim();
+    const text = selectedTaskId ? buildPromptFromTemplate(selectedTaskId, taskNote) : prompt.trim();
     if (!text) {
       toast.error('请先向 AI 计划员下达任务');
       return;
@@ -342,6 +365,14 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
         toast.error('AI 计划员执行失败，请稍后重试');
       }
     });
+  };
+
+  const selectTaskTemplate = (id: AiPlannerTaskTemplateId) => {
+    const template = getAiPlannerTaskTemplate(id);
+    if (!template) return;
+    setSelectedTaskId(id);
+    setPrompt(template.prompt);
+    setTaskNote('');
   };
 
   const applyMutations = () => {
@@ -865,18 +896,57 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
                     <Sparkles className="h-5 w-5 text-cyan-200" />
                     <h3 className="font-bold text-white">向 AI 计划员下达任务</h3>
                   </div>
+                  <div className="mb-4">
+                    <div className="mb-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-500">计划员工任务区</div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {AI_PLANNER_TASK_TEMPLATES.map((template) => (
+                        <button
+                          key={template.id}
+                          type="button"
+                          onClick={() => selectTaskTemplate(template.id)}
+                          className={cn(
+                            'rounded-2xl border p-3 text-left transition hover:-translate-y-0.5',
+                            selectedTaskId === template.id
+                              ? 'border-cyan-200 bg-cyan-300/15 shadow-[0_0_24px_rgba(34,211,238,0.18)]'
+                              : 'border-white/10 bg-slate-950/45 hover:border-cyan-300/35 hover:bg-cyan-300/10'
+                          )}
+                        >
+                          <div className="text-sm font-black text-white">{template.name}</div>
+                          <div className="mt-1 line-clamp-2 text-[11px] leading-4 text-slate-400">{template.prompt}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <textarea
-                    value={prompt}
-                    onChange={(event) => setPrompt(event.target.value)}
-                    placeholder="例如：分析今天哪些订单可以排产，哪些不能排产，并说明原因"
+                    value={selectedTaskId ? taskNote : prompt}
+                    onChange={(event) => {
+                      if (selectedTaskId) setTaskNote(event.target.value);
+                      else setPrompt(event.target.value);
+                    }}
+                    placeholder={
+                      selectedTaskId
+                        ? '可选：补充本次任务的特殊要求，例如重点看某个客户或本周产能。'
+                        : '例如：分析今天哪些订单可以排产，哪些不能排产，并说明原因'
+                    }
                     className="min-h-28 w-full resize-none rounded-2xl border border-slate-700 bg-slate-950/70 p-4 text-sm leading-6 text-slate-100 outline-none transition placeholder:text-slate-500 focus:border-cyan-300 focus:ring-2 focus:ring-cyan-400/20"
                   />
+                  {selectedTask && (
+                    <div className="mt-2 flex items-center justify-between gap-2 rounded-xl border border-cyan-300/15 bg-cyan-300/10 px-3 py-2 text-xs text-cyan-100">
+                      <span>当前任务：{selectedTask.name}</span>
+                      <button type="button" onClick={() => setSelectedTaskId(null)} className="font-bold text-cyan-50 hover:text-white">
+                        切回自由输入
+                      </button>
+                    </div>
+                  )}
                   <div className="mt-3 flex flex-wrap gap-2">
                     {quickPrompts.map((item) => (
                       <button
                         key={item}
                         type="button"
-                        onClick={() => setPrompt(item)}
+                        onClick={() => {
+                          setSelectedTaskId(null);
+                          setPrompt(item);
+                        }}
                         className="rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1.5 text-xs text-cyan-100 transition hover:border-cyan-200 hover:bg-cyan-300/15"
                       >
                         {item}
@@ -890,7 +960,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
                     className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-cyan-300 px-4 py-3 text-sm font-black text-slate-950 transition hover:bg-cyan-200 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     {isThinking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                    {isThinking ? 'AI 计划员正在读取上下文并分析...' : '下达任务'}
+                    {isThinking ? 'AI 计划员正在读取上下文并分析...' : selectedTaskId ? '执行计划任务' : '下达任务'}
                   </button>
                 </div>
 
@@ -910,12 +980,81 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
                   <div className="rounded-2xl border border-cyan-300/15 bg-cyan-300/[0.055] p-4 lg:col-span-2">
                     <div className="mb-2 flex items-center gap-2 text-sm font-bold text-cyan-100">
                       <ClipboardList className="h-4 w-4" />
-                      计划员结论
+                      计划员结论{selectedTask ? ` · ${selectedTask.name}` : ''}
                     </div>
                     <p className="whitespace-pre-wrap text-sm leading-7 text-slate-100">
-                      {diagnosis?.reply ?? '等待任务。AI 计划员会读取数据库已保存订单、产能基准和可用异常工时台账，然后给出计划建议。'}
+                      {plannerReport?.conclusion ?? diagnosis?.reply ?? '等待任务。AI 计划员会读取数据库已保存订单、产能基准和可用异常工时台账，然后给出计划建议。'}
                     </p>
                   </div>
+
+                  {plannerReport && (
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4 lg:col-span-2">
+                      <div className="mb-3 flex items-center gap-2 text-sm font-bold text-white">
+                        <Gauge className="h-4 w-4 text-cyan-200" />
+                        计划员工结构化汇报
+                      </div>
+                      <div className="grid gap-3 xl:grid-cols-3">
+                        <div className="space-y-2 xl:col-span-2">
+                          <div className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">优先动作</div>
+                          {plannerReport.priorityActions.length ? (
+                            plannerReport.priorityActions.map((action, index) => (
+                              <div
+                                key={`${action.level}-${action.title}-${index}`}
+                                className={cn('rounded-xl border p-3 text-xs leading-5', priorityTone[action.level] ?? priorityTone.WATCH)}
+                              >
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-black text-white">{action.title}</span>
+                                  <span className="rounded-full border border-white/15 px-2 py-0.5 text-[10px] font-black">{action.level}</span>
+                                </div>
+                                <p className="mt-1">{action.reason}</p>
+                                {!!action.relatedOrderIds?.length && (
+                                  <p className="mt-1 text-[11px] opacity-75">订单：{action.relatedOrderIds.slice(0, 6).join(', ')}</p>
+                                )}
+                              </div>
+                            ))
+                          ) : (
+                            <p className="rounded-xl border border-white/10 bg-slate-950/35 p-3 text-xs text-slate-400">暂无优先动作。</p>
+                          )}
+                        </div>
+                        <div className="space-y-2">
+                          <div className="text-xs font-bold uppercase tracking-[0.16em] text-slate-500">不可排产归类</div>
+                          {plannerReport.blockedGroups.length ? (
+                            plannerReport.blockedGroups.map((group, index) => (
+                              <div key={`${group.reasonType}-${index}`} className="rounded-xl border border-amber-300/15 bg-amber-400/10 p-3 text-xs leading-5 text-amber-50">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-black text-white">{blockedGroupLabel[group.reasonType] ?? group.reasonType}</span>
+                                  <span>{group.count} 单</span>
+                                </div>
+                                <p className="mt-1">{group.suggestion}</p>
+                                {!!group.orderIds.length && <p className="mt-1 text-[11px] opacity-75">示例：{group.orderIds.slice(0, 5).join(', ')}</p>}
+                              </div>
+                            ))
+                          ) : (
+                            <p className="rounded-xl border border-white/10 bg-slate-950/35 p-3 text-xs text-slate-400">暂无阻塞归类。</p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="mt-4">
+                        <div className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-slate-500">AI 需要向你确认的问题</div>
+                        {plannerReport.questionsForHuman.length ? (
+                          <div className="grid gap-2 md:grid-cols-2">
+                            {plannerReport.questionsForHuman.map((question, index) => (
+                              <div key={`${question.question}-${index}`} className="rounded-xl border border-violet-300/15 bg-violet-400/10 p-3 text-xs leading-5 text-violet-50">
+                                <div className="font-black text-white">{question.question}</div>
+                                <p className="mt-1">{question.whyItMatters}</p>
+                                <p className="mt-1 text-[11px] text-violet-100/75">负责人：{question.suggestedOwner || '待确认'}</p>
+                                {!!question.relatedOrderIds?.length && (
+                                  <p className="mt-1 text-[11px] text-violet-100/75">订单：{question.relatedOrderIds.slice(0, 6).join(', ')}</p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="rounded-xl border border-white/10 bg-slate-950/35 p-3 text-xs text-slate-400">暂无需要人工确认的问题。</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
                   <div className="rounded-2xl border border-amber-300/20 bg-amber-400/10 p-4">
                     <div className="mb-3 flex items-center gap-2 text-sm font-bold text-amber-100">

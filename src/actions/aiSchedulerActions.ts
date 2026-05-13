@@ -37,11 +37,34 @@ export type AiCopilotExportRow = {
   交期风险: string;
 };
 
+export type AiPlannerReport = {
+  conclusion: string;
+  priorityActions: Array<{
+    level: 'MUST' | 'SHOULD' | 'WATCH';
+    title: string;
+    reason: string;
+    relatedOrderIds?: string[];
+  }>;
+  blockedGroups: Array<{
+    reasonType: 'DRAWING_NOT_READY' | 'MATERIAL_NOT_READY' | 'DATA_INCOMPLETE' | 'OTHER';
+    count: number;
+    orderIds: string[];
+    suggestion: string;
+  }>;
+  questionsForHuman: Array<{
+    question: string;
+    whyItMatters: string;
+    relatedOrderIds?: string[];
+    suggestedOwner?: string;
+  }>;
+};
+
 export type AiCopilotResponse = {
   reply: string;
   unreasonableAlerts: string[];
   proposedMutations: AiCopilotMutation[];
   exportDataSummary: AiCopilotExportRow[];
+  plannerReport?: AiPlannerReport;
 };
 
 export type AiCopilotContextSummary = {
@@ -76,15 +99,74 @@ type SchedulerContextBuildResult = {
   summary: AiCopilotContextSummary;
 };
 
+function buildFallbackPlannerReport(
+  summary?: AiCopilotContextSummary,
+  reason = 'AI 模型未返回结构化计划员报告'
+): AiPlannerReport {
+  return {
+    conclusion: summary
+      ? `系统规则体检：当前读取订单 ${summary.totalOrders} 条，可排产 ${summary.schedulableOrders} 条，图纸未发 ${summary.blockedByDrawing} 条，物料未齐 ${summary.blockedByMaterial} 条，交期风险 ${summary.riskOrders} 条。${reason}`
+      : `系统规则体检：${reason}`,
+    priorityActions: [
+      ...(summary?.riskOrders
+        ? [
+            {
+              level: 'MUST' as const,
+              title: '优先确认交期风险订单',
+              reason: `当前发现 ${summary.riskOrders} 条交期风险订单，需要计划员先确认是否加急、拆单或协调交期。`,
+            },
+          ]
+        : []),
+      ...(summary?.schedulableOrders
+        ? [
+            {
+              level: 'SHOULD' as const,
+              title: '从可排产池选择订单',
+              reason: `当前有 ${summary.schedulableOrders} 条订单满足图纸已发和物料齐套，可结合交期和工时进行排产。`,
+            },
+          ]
+        : []),
+      {
+        level: 'WATCH',
+        title: '继续监控阻塞订单',
+        reason: '图纸未发和物料未齐订单不能进入排产日，需由对应责任人处理后再排。',
+      },
+    ],
+    blockedGroups: [
+      {
+        reasonType: 'DRAWING_NOT_READY',
+        count: summary?.blockedByDrawing ?? 0,
+        orderIds: [],
+        suggestion: '由技术/工程负责人推动图纸下发；未下发前保留在技术攻坚池。',
+      },
+      {
+        reasonType: 'MATERIAL_NOT_READY',
+        count: summary?.blockedByMaterial ?? 0,
+        orderIds: [],
+        suggestion: '由仓库/采购确认配料齐套；未齐套前保留在仓库配料池。',
+      },
+    ],
+    questionsForHuman: [
+      {
+        question: '是否需要优先处理交期风险订单？',
+        whyItMatters: '交期风险会影响本周排产顺序和客户承诺。',
+        suggestedOwner: '生产计划主管',
+      },
+    ],
+  };
+}
+
 function fallbackAiCopilotResponse(
   reply: string,
-  unreasonableAlerts: string[] = ['AI 排单执行失败，请检查模型配置、数据库连接或稍后重试']
+  unreasonableAlerts: string[] = ['AI 排单执行失败，请检查模型配置、数据库连接或稍后重试'],
+  summary?: AiCopilotContextSummary
 ): AiCopilotResponse {
   return {
     reply,
     unreasonableAlerts,
     proposedMutations: [],
     exportDataSummary: [],
+    plannerReport: buildFallbackPlannerReport(summary, reply),
   };
 }
 
@@ -152,6 +234,10 @@ function normalizeAiPayload(raw: unknown): AiCopilotResponse {
   });
 
   const exportRows = Array.isArray(obj.exportDataSummary) ? obj.exportDataSummary : [];
+  const rawReport = obj.plannerReport && typeof obj.plannerReport === 'object' ? (obj.plannerReport as Record<string, unknown>) : null;
+  const priorityActions = Array.isArray(rawReport?.priorityActions) ? rawReport.priorityActions : [];
+  const blockedGroups = Array.isArray(rawReport?.blockedGroups) ? rawReport.blockedGroups : [];
+  const questionsForHuman = Array.isArray(rawReport?.questionsForHuman) ? rawReport.questionsForHuman : [];
 
   return {
     reply: String(obj.reply ?? 'AI 已完成推演，但返回内容缺少可展示摘要。'),
@@ -168,6 +254,50 @@ function normalizeAiPayload(raw: unknown): AiCopilotResponse {
         交期风险: String(r['交期风险'] ?? r['deliveryRisk'] ?? ''),
       };
     }),
+    plannerReport: rawReport
+      ? {
+          conclusion: String(rawReport.conclusion ?? obj.reply ?? 'AI 计划员工已完成分析。'),
+          priorityActions: priorityActions.flatMap((action) => {
+            const a = action && typeof action === 'object' ? (action as Record<string, unknown>) : {};
+            const level = String(a.level ?? 'WATCH').trim();
+            if (!['MUST', 'SHOULD', 'WATCH'].includes(level)) return [];
+            return [
+              {
+                level: level as 'MUST' | 'SHOULD' | 'WATCH',
+                title: String(a.title ?? '计划动作'),
+                reason: String(a.reason ?? ''),
+                relatedOrderIds: Array.isArray(a.relatedOrderIds) ? a.relatedOrderIds.map((id) => String(id)).filter(Boolean) : undefined,
+              },
+            ];
+          }),
+          blockedGroups: blockedGroups.flatMap((group) => {
+            const g = group && typeof group === 'object' ? (group as Record<string, unknown>) : {};
+            const reasonType = String(g.reasonType ?? 'OTHER').trim();
+            if (!['DRAWING_NOT_READY', 'MATERIAL_NOT_READY', 'DATA_INCOMPLETE', 'OTHER'].includes(reasonType)) return [];
+            return [
+              {
+                reasonType: reasonType as 'DRAWING_NOT_READY' | 'MATERIAL_NOT_READY' | 'DATA_INCOMPLETE' | 'OTHER',
+                count: Math.max(0, Math.round(Number(g.count) || 0)),
+                orderIds: Array.isArray(g.orderIds) ? g.orderIds.map((id) => String(id)).filter(Boolean) : [],
+                suggestion: String(g.suggestion ?? ''),
+              },
+            ];
+          }),
+          questionsForHuman: questionsForHuman.flatMap((question) => {
+            const q = question && typeof question === 'object' ? (question as Record<string, unknown>) : {};
+            const text = String(q.question ?? '').trim();
+            if (!text) return [];
+            return [
+              {
+                question: text,
+                whyItMatters: String(q.whyItMatters ?? ''),
+                relatedOrderIds: Array.isArray(q.relatedOrderIds) ? q.relatedOrderIds.map((id) => String(id)).filter(Boolean) : undefined,
+                suggestedOwner: q.suggestedOwner ? String(q.suggestedOwner) : undefined,
+              },
+            ];
+          }),
+        }
+      : undefined,
   };
 }
 
@@ -330,17 +460,6 @@ export async function interactWithAiCopilotAction(
     };
   }
 
-  const apiKey = (process.env.DEEPSEEK_API_KEY ?? '').trim();
-  if (!apiKey) {
-    return {
-      ok: false,
-      error: 'AI Key 未配置：请在 Sealos 环境变量中配置 DEEPSEEK_API_KEY。',
-      data: fallbackAiCopilotResponse('AI 服务未配置，请在 Sealos 环境变量中配置 API Key', [
-        '缺少 DEEPSEEK_API_KEY，无法调用 DeepSeek 官方接口',
-      ]),
-    };
-  }
-
   let contextResult: SchedulerContextBuildResult;
   try {
     contextResult = await buildSchedulerContext(currentBaseLimit);
@@ -355,6 +474,20 @@ export async function interactWithAiCopilotAction(
         ['数据库连接失败或 Order 表不可用，无法读取当前排产上下文']
       ),
       rawModelPreview: message.slice(0, 500),
+    };
+  }
+
+  const apiKey = (process.env.DEEPSEEK_API_KEY ?? '').trim();
+  if (!apiKey) {
+    const reply = 'AI 模型未配置，本次先提供系统规则体检结果：模型不会被调用，但订单上下文、排产资格和风险数量仍可用于计划员判断。';
+    return {
+      ok: true,
+      data: withContextWarnings(
+        fallbackAiCopilotResponse(reply, ['缺少 DEEPSEEK_API_KEY，当前为系统规则体检结果'], contextResult.summary),
+        contextResult.warnings
+      ),
+      contextSummary: contextResult.summary,
+      audit: { enabled: false, persistenceWarning: 'AI Key 未配置，本次未创建模型分析审计记录' },
     };
   }
 
@@ -414,7 +547,8 @@ export async function interactWithAiCopilotAction(
 
   const system =
     '系统级硬规则：图纸未下发禁止排产，必须保留在技术攻坚池；配料未齐禁止排产，必须保留在仓库配料池；只有 scheduleEligible=true 才允许生成 UPDATE_ORDER_DATE。SOP 未上传仅作为文档提醒，不作为排产拦截条件。违反这些规则的建议会被后端拒绝执行。\n\n' +
-    '你是一个顶级的工业 MES 运筹调度副驾与数据审计员。当前系统时间为 2026年5月11日。请阅读系统提供的当前车间排单上下文、每日产能基准以及异常工时台账，并理解用户的自然语言指令（如调单、改交期、记异常）。\n' +
+    '你是一个严谨的生产计划员工，不是闲聊助手。当前系统时间为 2026年5月11日。请阅读系统提供的当前车间排单上下文、每日产能基准以及异常工时台账，并理解用户的自然语言任务。\n' +
+    '工作原则：风险必须分级；建议动作必须说明原因；数据不足时提出问题，不得编造；你不能直接修改数据库，只能提出建议；涉及写入必须等待人工确认并接受后端 canEnterSchedule 二次校验。\n' +
     '请执行以下运筹推演：\n' +
     '1. 回应用户的具体诉求，并在虚拟沙盘中推演调整后的结果。\n' +
     '2. 严格审查本周排盘合理性，指出所有不合理状态（如某日工时溢出上限、交期倒挂违约等）。\n' +
@@ -430,7 +564,24 @@ export async function interactWithAiCopilotAction(
     '  ],\n' +
     '  "exportDataSummary": [\n' +
     '    { "型号": "...", "状态": "超负荷/正常", "计划工时": 1500, "交期风险": "高/低" }\n' +
-    '  ]\n' +
+    '  ],\n' +
+    '  "plannerReport": {\n' +
+    '    "conclusion": "生产计划员口吻的本轮结论",\n' +
+    '    "priorityActions": [\n' +
+    '      { "level": "MUST", "title": "必须处理的动作", "reason": "原因", "relatedOrderIds": ["订单ID"] },\n' +
+    '      { "level": "SHOULD", "title": "建议处理的动作", "reason": "原因", "relatedOrderIds": [] },\n' +
+    '      { "level": "WATCH", "title": "持续观察的动作", "reason": "原因", "relatedOrderIds": [] }\n' +
+    '    ],\n' +
+    '    "blockedGroups": [\n' +
+    '      { "reasonType": "DRAWING_NOT_READY", "count": 0, "orderIds": [], "suggestion": "技术/工程处理建议" },\n' +
+    '      { "reasonType": "MATERIAL_NOT_READY", "count": 0, "orderIds": [], "suggestion": "仓库/采购处理建议" },\n' +
+    '      { "reasonType": "DATA_INCOMPLETE", "count": 0, "orderIds": [], "suggestion": "数据补齐建议" },\n' +
+    '      { "reasonType": "OTHER", "count": 0, "orderIds": [], "suggestion": "其他处理建议" }\n' +
+    '    ],\n' +
+    '    "questionsForHuman": [\n' +
+    '      { "question": "需要主管确认的问题", "whyItMatters": "为什么重要", "relatedOrderIds": [], "suggestedOwner": "建议负责人" }\n' +
+    '    ]\n' +
+    '  }\n' +
     '}';
 
   try {
@@ -459,10 +610,11 @@ export async function interactWithAiCopilotAction(
       console.error('DeepSeek API 响应失败:', res.status, errorText);
       return {
         ok: true,
-        data: withContextWarnings(
+      data: withContextWarnings(
           fallbackAiCopilotResponse(
             `AI 调度大脑响应异常 (HTTP ${res.status})。请检查 API 密钥、模型权限或账户余额。`,
-            ['API 接口连接受阻，无法进行大盘评估']
+            ['API 接口连接受阻，当前展示系统规则体检结果'],
+            contextResult.summary
           ),
           contextResult.warnings
         ),
@@ -480,7 +632,7 @@ export async function interactWithAiCopilotAction(
       return {
         ok: true,
         data: withContextWarnings(
-          fallbackAiCopilotResponse('AI 接口返回格式异常，无法读取响应 JSON。', ['API 响应体不是合法 JSON']),
+          fallbackAiCopilotResponse('AI 接口返回格式异常，无法读取响应 JSON。', ['API 响应体不是合法 JSON'], contextResult.summary),
           contextResult.warnings
         ),
         contextSummary: contextResult.summary,
@@ -495,7 +647,8 @@ export async function interactWithAiCopilotAction(
         data: withContextWarnings(
           fallbackAiCopilotResponse(
             `AI 调度大脑返回错误：${body.error.message.slice(0, 180)}。请检查 API 密钥、模型权限或账户余额。`,
-            ['API 返回业务错误，无法进行大盘评估']
+            ['API 返回业务错误，当前展示系统规则体检结果'],
+            contextResult.summary
           ),
           contextResult.warnings
         ),
@@ -512,7 +665,7 @@ export async function interactWithAiCopilotAction(
         data: withContextWarnings(
           fallbackAiCopilotResponse('AI 调度大脑返回为空，未能自动渲染大盘。请稍后再试或换个说法。', [
             'AI 输出为空',
-          ]),
+          ], contextResult.summary),
           contextResult.warnings
         ),
         contextSummary: contextResult.summary,
@@ -521,7 +674,11 @@ export async function interactWithAiCopilotAction(
 
     try {
       const parsedResult = JSON.parse(extractJsonObjectText(rawContent));
-      const data = withContextWarnings(normalizeAiPayload(parsedResult), contextResult.warnings);
+      const normalized = normalizeAiPayload(parsedResult);
+      const data = withContextWarnings(
+        normalized.plannerReport ? normalized : { ...normalized, plannerReport: buildFallbackPlannerReport(contextResult.summary) },
+        contextResult.warnings
+      );
       await finishAudit('COMPLETED', {
         responseJson: data as unknown as Record<string, unknown>,
         replyText: data.reply,
@@ -556,7 +713,8 @@ export async function interactWithAiCopilotAction(
         data: withContextWarnings(
           fallbackAiCopilotResponse(
             'AI 专家推演成功，但返回的数据结构格式异常，未能自动渲染大盘。请稍后再试或换个说法。',
-            ['AI 输出格式非标准 JSON']
+            ['AI 输出格式非标准 JSON'],
+            contextResult.summary
           ),
           contextResult.warnings
         ),
@@ -572,7 +730,7 @@ export async function interactWithAiCopilotAction(
       data: withContextWarnings(
         fallbackAiCopilotResponse('AI 调度大脑连接异常。请检查网络、API 密钥或账户状态。', [
           'AI 接口调用异常，无法进行大盘评估',
-        ]),
+        ], contextResult.summary),
         contextResult.warnings
       ),
       contextSummary: contextResult.summary,
