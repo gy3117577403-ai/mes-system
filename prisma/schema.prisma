@@ -102,3 +102,65 @@ model MesAbnormalClaim {
   @@index([createdAt])
   @@index([orderId])
 }
+
+model AiPlannerRun {
+  id                 String              @id @default(cuid())
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  status             String              @default("CREATED")
+  source             String              @default("AI_PLANNER_WORKSPACE")
+  userPrompt         String
+  operator           String?
+  role               String?
+  provider           String?
+  model              String?
+  durationMs         Int?
+  contextSummaryJson Json?
+  contextHash        String?
+  responseJson       Json?
+  replyText          String?
+  errorCode          String?
+  errorMessage       String?
+  executedAt         DateTime?
+  contextSnapshots   AiContextSnapshot[]
+  suggestions        AiSuggestion[]
+
+  @@index([createdAt])
+  @@index([status])
+}
+
+model AiContextSnapshot {
+  id           String       @id @default(cuid())
+  createdAt    DateTime     @default(now())
+  aiRunId      String
+  aiRun        AiPlannerRun @relation(fields: [aiRunId], references: [id], onDelete: Cascade)
+  snapshotType String       @default("SCHEDULER_CONTEXT")
+  orderCount   Int          @default(0)
+  contentHash  String?
+  contentJson  Json?
+
+  @@index([aiRunId])
+  @@index([createdAt])
+}
+
+model AiSuggestion {
+  id            String       @id @default(cuid())
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  aiRunId       String
+  aiRun         AiPlannerRun @relation(fields: [aiRunId], references: [id], onDelete: Cascade)
+  type          String
+  title         String?
+  reason        String?
+  targetOrderId String?
+  status        String       @default("PENDING")
+  payloadJson   Json?
+  resultJson    Json?
+  blockedReason String?
+  executedAt    DateTime?
+
+  @@index([aiRunId])
+  @@index([status])
+  @@index([targetOrderId])
+  @@index([createdAt])
+}

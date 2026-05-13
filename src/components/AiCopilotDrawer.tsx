@@ -29,6 +29,7 @@ import {
   type AiCopilotContextSummary,
   type AiCopilotResponse,
 } from '@/actions/aiSchedulerActions';
+import { listAiPlannerRunsAction } from '@/actions/aiPlannerAuditActions';
 import { repairMisclassifiedReadyOrdersAction } from '@/actions/mesActions';
 import type { Order } from '@/types';
 import {
@@ -59,9 +60,31 @@ type DbStatusPayload = {
   connected?: boolean;
   provider?: string;
   checkedTables?: string[];
+  requiredTables?: string[];
+  optionalTables?: string[];
   missingTables?: string[];
+  optionalMissingTables?: string[];
+  optionalStatus?: string;
   schemaStatus?: string;
   message?: string;
+};
+
+type AiAuditRef = {
+  enabled: boolean;
+  aiRunId?: string;
+  persistenceWarning?: string;
+};
+
+type AiRunListItem = {
+  id: string;
+  createdAt: string | Date;
+  status: string;
+  userPrompt: string;
+  provider?: string | null;
+  model?: string | null;
+  durationMs?: number | null;
+  executedAt?: string | Date | null;
+  _count?: { suggestions?: number };
 };
 
 type ReadyFlagsPayload = {
@@ -206,10 +229,14 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
   const [lastAnalysisAt, setLastAnalysisAt] = useState('');
   const [workerState, setWorkerState] = useState<WorkerState>('standby');
   const [diagnostics, setDiagnostics] = useState<ContextDiagnostics | null>(null);
+  const [auditRef, setAuditRef] = useState<AiAuditRef | null>(null);
+  const [ignoredMutationIndexes, setIgnoredMutationIndexes] = useState<number[]>([]);
+  const [history, setHistory] = useState<{ ok: boolean; error?: string; data: AiRunListItem[] } | null>(null);
   const [isThinking, startThinking] = useTransition();
   const [isApplying, startApplying] = useTransition();
   const [isChecking, startChecking] = useTransition();
   const [isRepairingReadyFlags, startRepairingReadyFlags] = useTransition();
+  const [isLoadingHistory, startLoadingHistory] = useTransition();
 
   const localSummary = useMemo(
     () => buildLocalSummary(orders, currentBaseLimit),
@@ -260,6 +287,8 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
         const res: AiCopilotActionResult = await interactWithAiCopilotAction(text, currentBaseLimit);
         const preview = safePreview(res.rawModelPreview);
         setModelPreview(preview);
+        setAuditRef(res.audit ?? null);
+        setIgnoredMutationIndexes([]);
         if (res.contextSummary) {
           setServerSummary(res.contextSummary);
           setSummarySource('server');
@@ -278,6 +307,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
         setErrorMessage('');
         setLastAnalysisAt(new Date().toLocaleString('zh-CN', { hour12: false }));
         setWorkerState(res.data.proposedMutations.length > 0 ? 'confirming' : 'done');
+        loadAuditHistory();
         toast.success('AI 计划员已完成本轮分析');
       } catch (error) {
         const message = classifyCopilotError(error instanceof Error ? error.message : String(error));
@@ -295,7 +325,8 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
     setWorkerState('confirming');
     startApplying(async () => {
       try {
-        const res = await executeAiCopilotMutationsAction(diagnosis.proposedMutations);
+        const executableMutations = diagnosis.proposedMutations.filter((_, index) => !ignoredMutationIndexes.includes(index));
+        const res = await executeAiCopilotMutationsAction(executableMutations, auditRef?.aiRunId);
         if (res.unreasonableAlerts?.length) {
           setDiagnosis((prev) =>
             prev
@@ -366,6 +397,22 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
     });
   };
 
+  const loadAuditHistory = () => {
+    startLoadingHistory(async () => {
+      const res = await listAiPlannerRunsAction(10);
+      if (!res.ok) {
+        setHistory({ ok: false, error: res.error, data: [] });
+        return;
+      }
+      setHistory({ ok: true, data: (res.data ?? []) as AiRunListItem[] });
+    });
+  };
+
+  const rejectMutation = (index: number) => {
+    setIgnoredMutationIndexes((prev) => (prev.includes(index) ? prev : [...prev, index]));
+    if (auditRef?.aiRunId) toast('已在前端标记忽略；审计建议 ID 尚未映射，暂不写入后端拒绝状态。');
+  };
+
   const repairReadyFlags = () => {
     const confirmed = window.confirm(
       '该操作会把历史文本中明确为已发图/料齐的订单，同步到排产布尔字段。系统仍会保留排产硬规则。是否继续？'
@@ -383,6 +430,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
         }
         toast.success(`已同步 ${res.repairedCount} 单图纸/配料状态，请重新排产。`);
         await onApplied?.();
+        loadAuditHistory();
         checkContext();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -567,6 +615,20 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
                   )}
                 </div>
 
+                <div className="rounded-2xl border border-violet-300/20 bg-violet-400/10 p-4 text-xs leading-5 text-violet-50">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="font-bold text-violet-100">AI 任务编号</div>
+                      <p className="mt-1 text-violet-100/80">
+                        {auditRef?.aiRunId ? `本次任务 ID：${auditRef.aiRunId}` : '尚未产生本次 AI 审计任务'}
+                      </p>
+                    </div>
+                    <ClipboardList className="h-5 w-5 text-violet-100" />
+                  </div>
+                  <p>审计状态：{auditRef ? (auditRef.enabled ? '已记录' : '未记录') : '待分析'}</p>
+                  {auditRef?.persistenceWarning && <p className="mt-2 text-amber-100">{auditRef.persistenceWarning}</p>}
+                </div>
+
                 <button
                   type="button"
                   onClick={checkContext}
@@ -615,6 +677,39 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
                     )}
                   </div>
                 )}
+
+                <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4 text-xs leading-5 text-slate-300">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div className="font-bold text-white">历史任务</div>
+                    <button
+                      type="button"
+                      onClick={loadAuditHistory}
+                      disabled={isLoadingHistory}
+                      className="rounded-xl border border-violet-300/25 bg-violet-300/10 px-3 py-1.5 text-xs font-bold text-violet-100 disabled:opacity-60"
+                    >
+                      {isLoadingHistory ? '读取中...' : '刷新'}
+                    </button>
+                  </div>
+                  {!history && <p>点击刷新可查看最近 10 次 AI 分析记录。</p>}
+                  {history && !history.ok && <p className="text-amber-200">AI 审计表尚未部署，历史任务不可用：{history.error}</p>}
+                  {history?.ok && history.data.length === 0 && <p>暂无历史任务。</p>}
+                  {history?.ok && history.data.length > 0 && (
+                    <div className="space-y-2">
+                      {history.data.slice(0, 10).map((item) => (
+                        <div key={item.id} className="rounded-xl border border-white/10 bg-white/[0.035] p-3">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-bold text-white">{item.status}</span>
+                            <span>{new Date(item.createdAt).toLocaleString('zh-CN', { hour12: false })}</span>
+                          </div>
+                          <p className="mt-1 line-clamp-2">{item.userPrompt}</p>
+                          <p className="mt-1 text-slate-500">
+                            建议 {item._count?.suggestions ?? 0} 条 / {item.provider ?? '-'} {item.model ?? ''}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </section>
 
               <section className="space-y-4">
@@ -713,6 +808,23 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied }:
                       <p className="text-sm text-slate-400">暂无待人工确认的执行项。</p>
                     )}
                   </div>
+
+                  {hasMutations && (
+                    <div className="rounded-2xl border border-violet-300/20 bg-violet-400/10 p-4 lg:col-span-2">
+                      <div className="mb-2 text-sm font-bold text-violet-100">建议审批状态</div>
+                      <p className="text-xs leading-5 text-violet-50">
+                        当前建议 {diagnosis?.proposedMutations.length ?? 0} 条；已忽略 {ignoredMutationIndexes.length} 条；其余为待人工确认。
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => rejectMutation(0)}
+                        disabled={ignoredMutationIndexes.includes(0)}
+                        className="mt-3 rounded-xl border border-violet-200/30 px-3 py-2 text-xs font-bold text-violet-100 disabled:opacity-50"
+                      >
+                        忽略第一条建议
+                      </button>
+                    </div>
+                  )}
 
                   <div className="rounded-2xl border border-emerald-300/20 bg-emerald-400/10 p-4 lg:col-span-2">
                     <div className="mb-3 flex items-center gap-2 text-sm font-bold text-emerald-100">

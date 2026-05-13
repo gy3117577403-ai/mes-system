@@ -1,6 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import {
   canEnterSchedule,
@@ -9,6 +10,15 @@ import {
   getScheduleBlockReasons,
   isScheduleAssigned,
 } from '@/lib/scheduleEligibility';
+import {
+  completeAiPlannerRunSafe,
+  createAiPlannerRunSafe,
+  createAiSuggestionsSafe,
+  hashJson,
+  saveAiContextSnapshotSafe,
+  updateAiSuggestionStatusSafe,
+  type AiPlannerAuditRef,
+} from '@/lib/aiPlannerAudit';
 
 const DEEPSEEK_CHAT_URL = 'https://api.deepseek.com/chat/completions';
 const DEEPSEEK_MODEL = 'deepseek-chat';
@@ -52,6 +62,7 @@ export type AiCopilotActionResult = {
   data?: AiCopilotResponse;
   contextSummary?: AiCopilotContextSummary;
   rawModelPreview?: string;
+  audit?: AiPlannerAuditRef;
 };
 
 type DeepSeekChatBody = {
@@ -309,6 +320,7 @@ export async function interactWithAiCopilotAction(
   userPrompt: string,
   currentBaseLimit: number
 ): Promise<AiCopilotActionResult> {
+  const startTime = Date.now();
   const prompt = String(userPrompt ?? '').trim();
   if (!prompt) {
     return {
@@ -345,6 +357,60 @@ export async function interactWithAiCopilotAction(
       rawModelPreview: message.slice(0, 500),
     };
   }
+
+  const contextHash = hashJson(contextResult.context);
+  const compactContextJson = (() => {
+    try {
+      return JSON.parse(contextResult.context) as Record<string, unknown>;
+    } catch {
+      return { rawContextHash: contextHash };
+    }
+  })();
+  const auditRun = await createAiPlannerRunSafe({
+    status: 'ANALYZING',
+    userPrompt: prompt,
+    provider: 'DeepSeek',
+    model: DEEPSEEK_MODEL,
+    contextSummaryJson: contextResult.summary,
+    contextHash,
+  });
+  const audit: AiPlannerAuditRef = auditRun.ok
+    ? { enabled: true, aiRunId: auditRun.data.id }
+    : { enabled: false, persistenceWarning: auditRun.reason };
+  if (audit.aiRunId) {
+    await saveAiContextSnapshotSafe({
+      aiRunId: audit.aiRunId,
+      snapshotType: 'SCHEDULER_CONTEXT',
+      orderCount: contextResult.summary.totalOrders,
+      contentHash: contextHash,
+      contentJson: compactContextJson as Prisma.InputJsonValue,
+    });
+  }
+
+  const finishAudit = async (
+    status: 'COMPLETED' | 'FAILED',
+    payload: {
+      responseJson?: unknown;
+      replyText?: string | null;
+      errorCode?: string | null;
+      errorMessage?: string | null;
+    }
+  ) => {
+    if (!audit.aiRunId) return;
+    const result = await completeAiPlannerRunSafe({
+      aiRunId: audit.aiRunId,
+      status,
+      responseJson: payload.responseJson as Prisma.InputJsonValue,
+      replyText: payload.replyText ?? null,
+      durationMs: Date.now() - startTime,
+      errorCode: payload.errorCode ?? null,
+      errorMessage: payload.errorMessage ?? null,
+    });
+    if (!result.ok && audit.enabled) {
+      audit.enabled = false;
+      audit.persistenceWarning = result.reason;
+    }
+  };
 
   const system =
     '系统级硬规则：图纸未下发禁止排产，必须保留在技术攻坚池；配料未齐禁止排产，必须保留在仓库配料池；只有 scheduleEligible=true 才允许生成 UPDATE_ORDER_DATE。SOP 未上传仅作为文档提醒，不作为排产拦截条件。违反这些规则的建议会被后端拒绝执行。\n\n' +
@@ -455,11 +521,33 @@ export async function interactWithAiCopilotAction(
 
     try {
       const parsedResult = JSON.parse(extractJsonObjectText(rawContent));
+      const data = withContextWarnings(normalizeAiPayload(parsedResult), contextResult.warnings);
+      await finishAudit('COMPLETED', {
+        responseJson: data as unknown as Record<string, unknown>,
+        replyText: data.reply,
+      });
+      if (audit.aiRunId && data.proposedMutations.length > 0) {
+        const suggestionsResult = await createAiSuggestionsSafe({
+          aiRunId: audit.aiRunId,
+          suggestions: data.proposedMutations.map((mutation, mutationIndex) => ({
+            type: mutation.type,
+            title: mutation.type === 'UPDATE_ORDER_DATE' ? '调整排产日期' : mutation.type === 'UPDATE_DELIVERY_DATE' ? '调整交期' : '记录异常工时',
+            reason: mutation.type === 'LOG_EXCEPTION_HOUR' ? mutation.reason : undefined,
+            targetOrderId: 'orderId' in mutation ? mutation.orderId : undefined,
+            payloadJson: { ...mutation, mutationIndex },
+          })),
+        });
+        if (!suggestionsResult.ok && audit.enabled) {
+          audit.enabled = false;
+          audit.persistenceWarning = suggestionsResult.reason;
+        }
+      }
       return {
         ok: true,
-        data: withContextWarnings(normalizeAiPayload(parsedResult), contextResult.warnings),
+        data,
         contextSummary: contextResult.summary,
         rawModelPreview: rawContent.slice(0, 500),
+        audit,
       };
     } catch (parseError) {
       console.error('AI 返回的数据无法解析为严格 JSON:', parseError);
@@ -494,7 +582,8 @@ export async function interactWithAiCopilotAction(
 }
 
 export async function executeAiCopilotMutationsAction(
-  proposedMutations: AiCopilotMutation[]
+  proposedMutations: AiCopilotMutation[],
+  aiRunId?: string
 ): Promise<{
   ok: boolean;
   error?: string;
@@ -507,6 +596,7 @@ export async function executeAiCopilotMutationsAction(
   let updatedOrders = 0;
   let exceptionLogs = 0;
   const rejectedMutations: Array<{ mutation: AiCopilotMutation; reason: string }> = [];
+  const executionResults: Array<{ mutationIndex: number; status: 'EXECUTED' | 'BLOCKED' | 'FAILED'; reason?: string }> = [];
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -516,7 +606,7 @@ export async function executeAiCopilotMutationsAction(
         select: { id: true },
       });
 
-      for (const m of list) {
+      for (const [mutationIndex, m] of list.entries()) {
         if (m.type === 'UPDATE_ORDER_DATE') {
           if (!isIsoDate(m.newDate) || !m.orderId) continue;
           const order = await tx.order.findFirst({
@@ -537,6 +627,11 @@ export async function executeAiCopilotMutationsAction(
               ? `AI 建议已被系统拦截：${formatScheduleBlockMessage(order, reasons)}`
               : `AI 建议已被系统拦截：订单 ${m.orderId} 不存在或已归档，禁止排产。`;
             rejectedMutations.push({ mutation: m, reason });
+            executionResults.push({
+              mutationIndex,
+              status: 'BLOCKED',
+              reason: reasons[0] || 'ORDER_NOT_AVAILABLE',
+            });
             continue;
           }
           const result = await tx.order.updateMany({
@@ -548,6 +643,7 @@ export async function executeAiCopilotMutationsAction(
             },
           });
           updatedOrders += result.count;
+          executionResults.push({ mutationIndex, status: 'EXECUTED' });
           continue;
         }
 
@@ -558,6 +654,7 @@ export async function executeAiCopilotMutationsAction(
             data: { deliveryDate: m.newDate },
           });
           updatedOrders += result.count;
+          executionResults.push({ mutationIndex, status: 'EXECUTED' });
           continue;
         }
 
@@ -577,9 +674,42 @@ export async function executeAiCopilotMutationsAction(
             },
           });
           exceptionLogs += 1;
+          executionResults.push({ mutationIndex, status: 'EXECUTED' });
         }
       }
     });
+
+    if (aiRunId) {
+      for (const result of executionResults) {
+        await updateAiSuggestionStatusSafe({
+          aiRunId,
+          mutationIndex: result.mutationIndex,
+          status: result.status,
+          blockedReason: result.reason,
+          resultJson: {
+            mutationIndex: result.mutationIndex,
+            status: result.status,
+            reason: result.reason,
+          },
+          executedAt: new Date(),
+        });
+      }
+      await completeAiPlannerRunSafe({
+        aiRunId,
+        status:
+          rejectedMutations.length > 0 && executionResults.some((item) => item.status === 'EXECUTED')
+            ? 'PARTIALLY_EXECUTED'
+            : rejectedMutations.length > 0
+              ? 'FAILED'
+              : 'EXECUTED',
+        executedAt: new Date(),
+        responseJson: {
+          updatedOrders,
+          exceptionLogs,
+          rejectedMutations,
+        },
+      });
+    }
 
     revalidatePath('/');
     return {
