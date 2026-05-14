@@ -34,19 +34,11 @@ const page = read(pagePath);
 const drawer = read(drawerPath);
 const pkg = read(packagePath);
 
-const visibleDrawer = drawer.replace(/<div className="hidden grid min-h-0[\s\S]*?\n\s*<\/div>\n\s*<\/motion\.aside>/, '</motion.aside>');
-const morningSection = section(visibleDrawer, "activeTab === 'morning'", "activeTab === 'tasks'");
-const todoSection = section(visibleDrawer, "activeTab === 'todos'", "activeTab === 'report'");
-const reportSection = section(visibleDrawer, "activeTab === 'report'", "activeTab === 'execution'");
-const floatingButtonSection = section(visibleDrawer, 'onClick={() => setOpen(true)}', '</button>');
-const visibleWithoutLabelMaps = visibleDrawer
-  .replace(/const cleanBlockReasonLabel[\s\S]*?\};/, '')
-  .replace(/const cleanPriorityLabel[\s\S]*?\};/, '')
-  .replace(/const cleanMutationTypeLabel[\s\S]*?\};/, '')
-  .replace(/const cleanTodoStatusLabel[\s\S]*?\};/, '')
-  .replace(/const cleanTodoSourceLabel[\s\S]*?\};/, '')
-  .replace(/const blockedGroupLabel[\s\S]*?\};/, '');
-const visibleUi = visibleWithoutLabelMaps.slice(Math.max(0, visibleWithoutLabelMaps.indexOf('return (')));
+const visibleMain = section(drawer, '向 AI 计划员下达任务', '<nav className="hidden');
+const taskSection = section(visibleMain, 'Plan Request', 'Plan Result');
+const applySection = section(visibleMain, 'Plan Result', '更多功能与诊断');
+const advancedSection = section(visibleMain, '更多功能与诊断', '</details>');
+const floatingButtonSection = section(drawer, 'onClick={() => setOpen(true)}', '</button>');
 
 const checks = [
   check(
@@ -73,74 +65,86 @@ const checks = [
   check(
     'floating AI entry exists',
     drawerPath,
-    visibleDrawer.includes('fixed bottom-5 right-5') && visibleDrawer.includes('打开 AI 计划员工作台'),
+    drawer.includes('fixed bottom-5 right-5') && drawer.includes('打开 AI 计划员工作台'),
     'AI planner must be opened from a compact bottom-right floating entry',
-    lineOf(visibleDrawer, '打开 AI 计划员工作台')
-  ),
-  ...['晨检', '任务', '待办', '日报', '建议执行', '诊断'].map((label) =>
-    check(
-      `drawer has ${label} module`,
-      drawerPath,
-      visibleDrawer.includes(`label: '${label}'`) || visibleDrawer.includes(`>${label}<`) || visibleDrawer.includes(label),
-      `AiCopilotDrawer must expose ${label} module`,
-      lineOf(visibleDrawer, label)
-    )
+    lineOf(drawer, '打开 AI 计划员工作台')
   ),
   check(
-    'drawer has Chinese enum labels',
+    'main UI has task request section',
     drawerPath,
-    visibleDrawer.includes('cleanBlockReasonLabel') && visibleDrawer.includes('cleanMutationTypeLabel') && visibleDrawer.includes('cleanTodoStatusLabel'),
-    'Internal enum values must be mapped to Chinese product labels',
-    lineOf(visibleDrawer, 'cleanBlockReasonLabel')
+    visibleMain.includes('向 AI 计划员下达任务') && visibleMain.includes('生成计划建议'),
+    'Main AI planner UI should focus on issuing a planning task',
+    lineOf(drawer, '向 AI 计划员下达任务')
   ),
   check(
-    'visible drawer does not print raw block enum as standalone UI',
+    'main UI has apply suggestion section',
     drawerPath,
-    !/\{[^}]*\b(MATERIAL_NOT_READY|DRAWING_NOT_READY|DATA_INCOMPLETE)\b[^}]*\}/.test(visibleUi),
-    'Visible drawer UI should not print internal block enums directly',
-    lineOf(visibleDrawer, 'MATERIAL_NOT_READY')
+    visibleMain.includes('执行建议') && visibleMain.includes('确认并执行排单建议'),
+    'Main AI planner UI should focus on reviewing and confirming executable suggestions',
+    lineOf(drawer, '执行建议')
   ),
   check(
-    'visible drawer does not show raw JSON.stringify',
+    'advanced features are collapsed',
     drawerPath,
-    !/<pre[^>]*>\s*\{?\s*JSON\.stringify/.test(visibleDrawer),
-    'Visible drawer UI should not render raw JSON.stringify output',
-    lineOf(visibleDrawer, 'JSON.stringify')
+    visibleMain.includes('<details') && visibleMain.includes('更多功能与诊断'),
+    'Morning check, report, diagnostics, and secondary tools should be collapsed by default',
+    lineOf(drawer, '更多功能与诊断')
+  ),
+  check(
+    'main UI does not expose tab navigation',
+    drawerPath,
+    drawer.includes('<nav className="hidden'),
+    'Old multi-tab navigation should not be visible in the primary AI planner flow',
+    lineOf(drawer, '<nav className="hidden')
+  ),
+  check(
+    'main task section does not show raw JSON',
+    drawerPath,
+    !/JSON\.stringify|<pre/.test(taskSection),
+    'Task request section must not show raw JSON/debug output',
+    lineOf(taskSection, 'JSON.stringify')
+  ),
+  check(
+    'main apply section does not show raw block enums',
+    drawerPath,
+    !/\b(MATERIAL_NOT_READY|DRAWING_NOT_READY|DATA_INCOMPLETE|ASSIGN_ORDER_DAY)\b/.test(applySection),
+    'Primary apply section must not print internal enums directly',
+    lineOf(applySection, 'MATERIAL_NOT_READY')
   ),
   check(
     'order ids are compacted',
     drawerPath,
-    visibleDrawer.includes('compactOrderIds') && visibleDrawer.includes('shortId'),
-    'Todo/question cards should shorten IDs and cap visible order lists',
-    lineOf(visibleDrawer, 'compactOrderIds')
+    drawer.includes('shortId') && drawer.includes('compactOrderIds'),
+    'Cards should shorten IDs and cap visible order lists',
+    lineOf(drawer, 'compactOrderIds')
   ),
   check(
-    'morning check does not execute mutations',
+    'task request does not execute mutations',
     drawerPath,
-    !/executeAiCopilotMutationsAction/.test(morningSection),
-    'One-click morning check must not execute AI mutations',
-    lineOf(visibleDrawer, 'AI 计划员一键晨检')
+    !/executeAiCopilotMutationsAction|updateOrderAction|repairMisclassifiedReadyOrdersAction/.test(taskSection),
+    'Issuing a task must not mutate orders',
+    lineOf(drawer, '生成计划建议')
   ),
   check(
-    'todo buttons do not update orders',
+    'apply section is manually confirmed',
     drawerPath,
-    !/updateOrderAction|batchUpdateOrdersAction|repairMisclassifiedReadyOrdersAction|executeAiCopilotMutationsAction/.test(todoSection),
-    'Todo controls must not mutate orders',
-    lineOf(visibleDrawer, 'AI 计划员待办')
+    applySection.includes('执行前必须人工确认') && applySection.includes('后端仍会重新校验'),
+    'Suggestion apply area must tell users execution is manual and backend revalidates eligibility',
+    lineOf(drawer, '执行前必须人工确认')
   ),
   check(
-    'daily report buttons do not update orders',
+    'advanced section does not auto-mutate orders',
     drawerPath,
-    !/updateOrderAction|batchUpdateOrdersAction|repairMisclassifiedReadyOrdersAction|executeAiCopilotMutationsAction/.test(reportSection),
-    'Daily report controls must not mutate orders',
-    lineOf(visibleDrawer, 'AI 计划员日报')
+    !/updateOrderAction|batchUpdateOrdersAction|repairMisclassifiedReadyOrdersAction|executeAiCopilotMutationsAction/.test(advancedSection),
+    'Collapsed advanced controls must not auto-update orders',
+    lineOf(drawer, '更多功能与诊断')
   ),
   check(
     'floating entry only opens workspace',
     drawerPath,
     floatingButtonSection.includes('setOpen(true)') && !/executeAiCopilotMutationsAction|updateOrderAction|repairMisclassifiedReadyOrdersAction/.test(floatingButtonSection),
-    'Floating entry click should only open the AI workspace',
-    lineOf(visibleDrawer, '打开 AI 计划员工作台')
+    'Floating entry click should only open the AI planner',
+    lineOf(drawer, '打开 AI 计划员工作台')
   ),
   check(
     'package script exists',

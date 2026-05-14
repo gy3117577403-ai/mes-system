@@ -159,10 +159,10 @@ type ContextDiagnostics = {
 };
 
 const quickPrompts = [
-  '分析今天哪些订单可以排产，哪些不能排产，并说明原因',
-  '帮我找出图纸已发但还没排的订单',
-  '检查有没有交期风险和产能风险',
-  '按交期和工时给出本周排产建议',
+  '按交期生成本周排产建议',
+  '检查今天哪些订单可以排',
+  '找出无法排产的订单和原因',
+  '重新平衡本周排产负荷',
 ];
 
 const priorityTone: Record<string, string> = {
@@ -1149,7 +1149,189 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
             </header>
 
             <div className="flex min-h-0 flex-1 flex-col">
-              <nav className="shrink-0 border-b border-white/10 bg-slate-950/55 px-4 py-3">
+              <div className="min-h-0 flex-1 overflow-y-auto p-5">
+                <div className="mx-auto flex max-w-5xl flex-col gap-5">
+                  <section className="rounded-3xl border border-cyan-300/20 bg-slate-950/55 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div>
+                        <div className="text-xs font-bold uppercase tracking-[0.22em] text-cyan-200/75">Plan Request</div>
+                        <h3 className="mt-2 text-2xl font-black text-white">向 AI 计划员下达任务</h3>
+                        <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">
+                          直接描述你要完成的计划工作。AI 会先生成建议，不会自动修改订单；排产写入必须由你确认。
+                        </p>
+                      </div>
+                      <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-bold text-slate-300">
+                        状态：{stateLabel[workerState]}
+                      </span>
+                    </div>
+
+                    <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                      {quickPrompts.map((item) => (
+                        <button
+                          key={item}
+                          type="button"
+                          onClick={() => {
+                            setPrompt(item);
+                            setSelectedTaskId(null);
+                          }}
+                          className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-left text-sm font-bold leading-5 text-slate-200 transition hover:border-cyan-200/40 hover:bg-cyan-300/10 hover:text-white"
+                        >
+                          {item}
+                        </button>
+                      ))}
+                    </div>
+
+                    <textarea
+                      value={prompt}
+                      onChange={(event) => {
+                        setPrompt(event.target.value);
+                        setSelectedTaskId(null);
+                      }}
+                      rows={5}
+                      placeholder="例如：把现在能排单的计划按交期从周一排到周六，交期一定优先，同一天交期工时高的排前面，每天尽量按本周总工时平均值上下浮动500分钟。"
+                      className="mt-5 w-full resize-none rounded-3xl border border-white/10 bg-slate-950/75 p-5 text-base leading-7 text-white outline-none placeholder:text-slate-500 focus:border-cyan-200/50"
+                    />
+
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                      <p className="text-xs leading-5 text-slate-500">
+                        规则边界：只排图纸已发、物料已齐订单；交期优先；同交期工时高优先；本周负荷按日均值均衡分配。
+                      </p>
+                      <button
+                        type="button"
+                        onClick={askPlanner}
+                        disabled={isThinking}
+                        className="flex min-w-44 items-center justify-center gap-2 rounded-2xl bg-cyan-200 px-5 py-3 text-sm font-black text-slate-950 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {isThinking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                        {isThinking ? '正在生成建议' : '生成计划建议'}
+                      </button>
+                    </div>
+                  </section>
+
+                  <section className="rounded-3xl border border-emerald-300/20 bg-emerald-300/[0.055] p-5">
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div>
+                        <div className="text-xs font-bold uppercase tracking-[0.22em] text-emerald-200/75">Plan Result</div>
+                        <h3 className="mt-2 text-2xl font-black text-white">执行建议</h3>
+                        <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">
+                          这里仅展示可理解、可执行的计划信息。通过系统校验后，才允许人工确认执行。
+                        </p>
+                      </div>
+                      {schedulePlanValidation ? (
+                        <span className={cn('rounded-full border px-3 py-1.5 text-xs font-black', schedulePlanValidation.ok ? 'border-emerald-200/35 bg-emerald-300/15 text-emerald-100' : 'border-rose-200/35 bg-rose-400/15 text-rose-100')}>
+                          {schedulePlanValidation.ok ? '已通过计划校验' : '未通过计划校验'}
+                        </span>
+                      ) : (
+                        <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs font-bold text-slate-400">等待建议</span>
+                      )}
+                    </div>
+
+                    <div className="mt-5 rounded-2xl border border-white/10 bg-slate-950/45 p-4">
+                      <div className="text-sm font-black text-white">AI 计划结论</div>
+                      <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-300">
+                        {plannerReport?.conclusion ?? diagnosis?.reply ?? '尚未生成计划建议。请先在上方输入任务，点击“生成计划建议”。'}
+                      </p>
+                    </div>
+
+                    <div className="mt-5">
+                      {renderSchedulePlanPreview()}
+                      {!hasScheduleDraft ? (
+                        <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-5 text-sm leading-6 text-slate-300">
+                          当前还没有可执行排产草案。你可以直接输入排产需求，或点击下方按钮生成系统规则排产建议。
+                          <div className="mt-4">
+                            <button
+                              type="button"
+                              onClick={generateRuleScheduleDraft}
+                              disabled={isThinking}
+                              className="rounded-xl border border-cyan-200/30 bg-cyan-300/10 px-4 py-2.5 text-xs font-black text-cyan-100 hover:bg-cyan-300/15 disabled:opacity-50"
+                            >
+                              生成规则排产建议
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {diagnosis?.unreasonableAlerts.length ? (
+                      <div className="mt-4 rounded-2xl border border-amber-300/20 bg-amber-400/10 p-4">
+                        <div className="text-sm font-black text-amber-100">需要注意</div>
+                        <div className="mt-2 space-y-1 text-sm leading-6 text-amber-50">
+                          {diagnosis.unreasonableAlerts.slice(0, 5).map((alert, index) => (
+                            <div key={`${alert}-${index}`}>{alert}</div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {executionResult ? (
+                      <div className="mt-4 rounded-2xl border border-emerald-300/20 bg-emerald-400/10 p-4">
+                        <div className="text-sm font-black text-emerald-100">执行结果</div>
+                        <div className="mt-3 grid gap-2 text-sm text-slate-200 md:grid-cols-4">
+                          <span>时间：{executionResult.executedAt}</span>
+                          <span>成功：{executionResult.successCount} 单</span>
+                          <span>拦截：{executionResult.blockedCount} 单</span>
+                          <span>失败：{executionResult.failedCount} 单</span>
+                        </div>
+                        {executionResult.details.length ? (
+                          <details className="mt-3 text-xs leading-5 text-emerald-50">
+                            <summary className="cursor-pointer font-bold">查看拦截或失败原因</summary>
+                            {executionResult.details.slice(0, 8).map((item, index) => (
+                              <div key={`${item.orderId ?? item.type}-${index}`} className="mt-2 rounded-xl border border-white/10 bg-slate-950/40 p-2">
+                                {item.orderId ? `订单 ${shortId(item.orderId)}：` : ''}
+                                {item.reason}
+                              </div>
+                            ))}
+                          </details>
+                        ) : null}
+                      </div>
+                    ) : null}
+
+                    <div className="mt-5 rounded-2xl border border-emerald-300/20 bg-slate-950/60 p-4">
+                      <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+                        <div className="text-sm leading-6 text-slate-300">
+                          执行前必须人工确认。确认后才会调用后端写入；后端仍会重新校验图纸、物料和排产资格。
+                          {!schedulePlanExecutable ? ' 当前排单草案未通过计划逻辑校验，不能执行。' : ''}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={applyMutations}
+                          disabled={!hasMutations || isApplying || !schedulePlanExecutable}
+                          className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-300 px-5 py-3 text-sm font-black text-slate-950 transition hover:bg-emerald-200 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
+                        >
+                          {isApplying ? <Loader2 className="h-4 w-4 animate-spin" /> : <LockKeyhole className="h-4 w-4" />}
+                          确认并执行排单建议
+                        </button>
+                      </div>
+                    </div>
+                  </section>
+
+                  <details className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
+                    <summary className="cursor-pointer text-sm font-black text-slate-200">更多功能与诊断</summary>
+                    <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <button type="button" onClick={runMorningCheck} disabled={isMorningChecking} className="rounded-xl border border-cyan-200/25 bg-cyan-300/10 px-3 py-2 text-xs font-black text-cyan-100 hover:bg-cyan-300/15 disabled:opacity-50">一键晨检</button>
+                      <button type="button" onClick={generateDailyReport} className="rounded-xl border border-emerald-200/25 bg-emerald-300/10 px-3 py-2 text-xs font-black text-emerald-100 hover:bg-emerald-300/15">生成日报</button>
+                      <button type="button" onClick={copyDailyReport} disabled={!dailyReport} className="rounded-xl border border-violet-200/25 bg-violet-300/10 px-3 py-2 text-xs font-black text-violet-100 hover:bg-violet-300/15 disabled:opacity-50">复制日报</button>
+                      <button type="button" onClick={checkContext} disabled={isChecking} className="rounded-xl border border-slate-300/20 bg-slate-700/35 px-3 py-2 text-xs font-black text-slate-200 hover:bg-slate-700/50 disabled:opacity-50">检查配置</button>
+                    </div>
+                    <div className="mt-4 grid gap-3 text-xs leading-5 text-slate-400 md:grid-cols-3">
+                      <div className="rounded-xl border border-white/10 bg-slate-950/45 p-3">待办：{todoStats.pending} 待处理 / {todoStats.must} 必须处理</div>
+                      <div className="rounded-xl border border-white/10 bg-slate-950/45 p-3">日报：{dailyReport ? `已生成 ${formatDateTime(dailyReport.createdAt)}` : '尚未生成'}</div>
+                      <div className="rounded-xl border border-white/10 bg-slate-950/45 p-3">诊断：{diagnostics?.db?.connected ? '数据库连接正常' : '可按需检查'}</div>
+                    </div>
+                    {diagnostics?.readyFlags ? (
+                      <p className="mt-3 text-xs leading-5 text-slate-500">
+                        新导入数据验收仍以“导入前基线 + 导入后 delta 检查”为准；历史不一致数据本阶段不处理。
+                      </p>
+                    ) : null}
+                  </details>
+
+                  {errorMessage ? (
+                    <p className="rounded-2xl border border-rose-300/20 bg-rose-400/10 p-4 text-sm text-rose-100">{errorMessage}</p>
+                  ) : null}
+                </div>
+              </div>
+
+              <nav className="hidden shrink-0 border-b border-white/10 bg-slate-950/55 px-4 py-3">
                 <div className="grid grid-cols-3 gap-2 md:grid-cols-6">
                   {plannerTabs.map((tab) => (
                     <button
@@ -1170,7 +1352,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                 </div>
               </nav>
 
-              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+              <div className="hidden min-h-0 flex-1 overflow-y-auto p-4">
                 {activeTab === 'morning' && (
                   <section className="space-y-4">
                     <div className="rounded-3xl border border-cyan-300/20 bg-cyan-300/[0.06] p-5">
