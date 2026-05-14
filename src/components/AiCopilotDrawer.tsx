@@ -31,7 +31,7 @@ import {
 } from '@/actions/aiSchedulerActions';
 import { checkAiPlannerAuditWritableAction, listAiPlannerRunsAction } from '@/actions/aiPlannerAuditActions';
 import { repairMisclassifiedReadyOrdersAction } from '@/actions/mesActions';
-import type { AiPlannerDailyReport, AiPlannerTodo, AiPlannerTodoStatus, AiPlannerUiContext, Order } from '@/types';
+import type { AiPlannerDailyReport, AiPlannerMorningCheckResult, AiPlannerMorningCheckStatus, AiPlannerTodo, AiPlannerTodoStatus, AiPlannerUiContext, Order } from '@/types';
 import {
   canEnterSchedule,
   getScheduleBlockReasons,
@@ -49,6 +49,12 @@ import {
   mergeTodoStatuses,
 } from '@/lib/aiPlannerTodos';
 import { buildAiPlannerDailyReport } from '@/lib/aiPlannerDailyReport';
+import {
+  buildMorningCheckSummary,
+  createMorningCheckId,
+  loadMorningCheckResultFromStorage,
+  saveMorningCheckResultToStorage,
+} from '@/lib/aiPlannerMorningCheck';
 import { isOrderCompletedStatus } from '@/lib/orderStatus';
 import { cn } from '@/lib/uiTheme';
 
@@ -206,6 +212,15 @@ const todoStatusTone: Record<AiPlannerTodoStatus, string> = {
   IGNORED: 'border-slate-500/35 bg-slate-800/45 text-slate-300',
 };
 
+const morningCheckStatusLabel: Record<AiPlannerMorningCheckStatus, string> = {
+  IDLE: '尚未执行今日晨检',
+  ANALYZING: 'AI 正在读取订单和页面上下文',
+  BUILDING_TODOS: '正在生成计划员待办',
+  BUILDING_REPORT: '正在生成日报草稿',
+  DONE: '今日晨检已完成',
+  FAILED: '晨检失败',
+};
+
 function formatDateTime(value?: string | Date | null): string {
   if (!value) return '未知';
   const date = value instanceof Date ? value : new Date(value);
@@ -312,6 +327,8 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
   const [todoFilter, setTodoFilter] = useState<TodoFilter>('ALL');
   const [dailyReport, setDailyReport] = useState<AiPlannerDailyReport | null>(null);
   const [showDailyMarkdown, setShowDailyMarkdown] = useState(false);
+  const [morningCheckStatus, setMorningCheckStatus] = useState<AiPlannerMorningCheckStatus>('IDLE');
+  const [morningCheckResult, setMorningCheckResult] = useState<AiPlannerMorningCheckResult | null>(null);
   const [history, setHistory] = useState<{ ok: boolean; error?: string; data: AiRunListItem[] } | null>(null);
   const [auditWritableResult, setAuditWritableResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [isThinking, startThinking] = useTransition();
@@ -320,6 +337,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
   const [isRepairingReadyFlags, startRepairingReadyFlags] = useTransition();
   const [isLoadingHistory, startLoadingHistory] = useTransition();
   const [isCheckingAuditWrite, startCheckingAuditWrite] = useTransition();
+  const [isMorningChecking, startMorningChecking] = useTransition();
 
   const localSummary = useMemo(
     () => buildLocalSummary(orders, currentBaseLimit),
@@ -453,6 +471,14 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
   }, []);
 
   useEffect(() => {
+    const result = loadMorningCheckResultFromStorage();
+    if (result) {
+      setMorningCheckResult(result);
+      setMorningCheckStatus(result.status);
+    }
+  }, []);
+
+  useEffect(() => {
     try {
       if (dailyReport) {
         window.localStorage.setItem(DAILY_REPORT_STORAGE_KEY, JSON.stringify(dailyReport));
@@ -519,6 +545,114 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
     link.remove();
     URL.revokeObjectURL(url);
     toast.success('Markdown 日报已下载');
+  };
+
+  const runMorningCheck = () => {
+    const template = getAiPlannerTaskTemplate('DAILY_PLANNING_CHECKUP');
+    if (!template) {
+      toast.error('每日排产体检模板不可用');
+      return;
+    }
+
+    const checkId = createMorningCheckId();
+    const startedAt = new Date().toISOString();
+    setSelectedTaskId('DAILY_PLANNING_CHECKUP');
+    setTaskNote('');
+    setPrompt(template.prompt);
+    setErrorMessage('');
+    setModelPreview('');
+    setMorningCheckStatus('ANALYZING');
+    setWorkerState('thinking');
+
+    startMorningChecking(async () => {
+      try {
+        const checkUiContext: AiPlannerUiContext = {
+          ...mergedUiContext,
+          selectedTaskId: 'DAILY_PLANNING_CHECKUP',
+          selectedTaskName: template.name,
+        };
+        const res: AiCopilotActionResult = await interactWithAiCopilotAction(template.prompt, currentBaseLimit, checkUiContext);
+        setModelPreview(safePreview(res.rawModelPreview));
+        setAuditRef(res.audit ?? null);
+        setIgnoredMutationIndexes([]);
+
+        if (res.contextSummary) {
+          setServerSummary(res.contextSummary);
+          setSummarySource('server');
+        }
+
+        if (!res.data) {
+          throw new Error(res.error ?? 'AI 计划员晨检未返回可用报告');
+        }
+
+        setDiagnosis(res.data);
+        setLastAnalysisAt(new Date().toLocaleString('zh-CN', { hour12: false }));
+        setWorkerState(res.data.proposedMutations.length > 0 ? 'confirming' : 'done');
+        setMorningCheckStatus('BUILDING_TODOS');
+
+        const todos = buildAiPlannerTodosFromReport({
+          plannerReport: res.data.plannerReport,
+          aiRunId: res.audit?.aiRunId,
+          selectedTaskName: template.name,
+        });
+        const existingTodos = (() => {
+          try {
+            const raw = window.localStorage.getItem(TODO_STORAGE_KEY);
+            const parsed = raw ? (JSON.parse(raw) as AiPlannerTodo[]) : [];
+            return Array.isArray(parsed) ? parsed : plannerTodos;
+          } catch {
+            return plannerTodos;
+          }
+        })();
+        const mergedTodos = mergeTodoStatuses(existingTodos, todos);
+        setPlannerTodos(mergedTodos);
+
+        setMorningCheckStatus('BUILDING_REPORT');
+        const report = buildAiPlannerDailyReport({
+          plannerReport: res.data.plannerReport,
+          plannerTodos: mergedTodos,
+          contextSummary: res.contextSummary ?? activeSummary,
+          uiContext: checkUiContext,
+          selectedTaskName: template.name,
+        });
+        setDailyReport(report);
+
+        const result: AiPlannerMorningCheckResult = {
+          id: checkId,
+          createdAt: startedAt,
+          status: 'DONE',
+          taskName: template.name,
+          aiRunId: res.audit?.aiRunId,
+          todoCount: mergedTodos.filter((todo) => todo.status === 'PENDING').length,
+          reportId: report.id,
+          summary: buildMorningCheckSummary({
+            plannerReport: res.data.plannerReport,
+            todos: mergedTodos,
+            dailyReport: report,
+          }),
+        };
+        saveMorningCheckResultToStorage(result);
+        setMorningCheckResult(result);
+        setMorningCheckStatus('DONE');
+        loadAuditHistory();
+        toast.success('AI 计划员晨检已完成，待办和日报草稿已生成');
+      } catch (error) {
+        const message = classifyCopilotError(error instanceof Error ? error.message : String(error));
+        const result: AiPlannerMorningCheckResult = {
+          id: checkId,
+          createdAt: startedAt,
+          status: 'FAILED',
+          taskName: template.name,
+          errorMessage: message,
+        };
+        saveMorningCheckResultToStorage(result);
+        setMorningCheckResult(result);
+        setMorningCheckStatus('FAILED');
+        setWorkerState('error');
+        setErrorMessage(message);
+        toast.error('AI 计划员晨检失败');
+      }
+    });
   };
 
   const askPlanner = () => {
@@ -1124,6 +1258,51 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
               </section>
 
               <section className="space-y-4">
+                <div className="rounded-2xl border border-emerald-300/20 bg-emerald-400/10 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2 text-sm font-black text-white">
+                        <Sparkles className="h-5 w-5 text-emerald-200" />
+                        AI 计划员晨检
+                      </div>
+                      <p className="mt-1 text-xs leading-5 text-emerald-50/80">
+                        一键执行“每日排产体检”，只生成分析、待办和日报草稿；不会修改订单，也不会执行 AI 建议动作。
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={runMorningCheck}
+                      disabled={isMorningChecking}
+                      className="rounded-2xl bg-emerald-300 px-4 py-3 text-sm font-black text-slate-950 transition hover:bg-emerald-200 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isMorningChecking ? '晨检执行中...' : 'AI 计划员一键晨检'}
+                    </button>
+                  </div>
+                  <div className="mt-3 grid gap-2 md:grid-cols-4">
+                    <div className="rounded-xl border border-white/10 bg-slate-950/35 p-3 text-xs text-emerald-50">
+                      <div className="text-slate-400">当前状态</div>
+                      <div className="mt-1 font-black text-white">{morningCheckStatusLabel[morningCheckStatus]}</div>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-slate-950/35 p-3 text-xs text-emerald-50">
+                      <div className="text-slate-400">最近晨检</div>
+                      <div className="mt-1 font-black text-white">{morningCheckResult ? formatDateTime(morningCheckResult.createdAt) : '暂无'}</div>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-slate-950/35 p-3 text-xs text-emerald-50">
+                      <div className="text-slate-400">生成待办</div>
+                      <div className="mt-1 font-black text-white">{morningCheckResult?.todoCount ?? 0} 项</div>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-slate-950/35 p-3 text-xs text-emerald-50">
+                      <div className="text-slate-400">日报草稿</div>
+                      <div className="mt-1 font-black text-white">{morningCheckResult?.reportId ? '已生成' : '未生成'}</div>
+                    </div>
+                  </div>
+                  {(morningCheckResult?.summary || morningCheckResult?.errorMessage) && (
+                    <p className="mt-3 rounded-xl border border-white/10 bg-slate-950/35 p-3 text-xs leading-5 text-emerald-50">
+                      {morningCheckResult.errorMessage ?? morningCheckResult.summary}
+                    </p>
+                  )}
+                </div>
+
                 <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-4">
                   <div className="mb-3 flex items-center gap-2">
                     <Sparkles className="h-5 w-5 text-cyan-200" />

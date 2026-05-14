@@ -140,6 +140,26 @@ export type AiPlannerDailyReport = {
   markdown: string;
 };
 
+export type AiPlannerMorningCheckStatus =
+  | 'IDLE'
+  | 'ANALYZING'
+  | 'BUILDING_TODOS'
+  | 'BUILDING_REPORT'
+  | 'DONE'
+  | 'FAILED';
+
+export type AiPlannerMorningCheckResult = {
+  id: string;
+  createdAt: string;
+  status: AiPlannerMorningCheckStatus;
+  taskName: string;
+  aiRunId?: string;
+  todoCount?: number;
+  reportId?: string;
+  summary?: string;
+  errorMessage?: string;
+};
+
 export type AuditActionType =
   | 'login'
   | 'upload_sop'

@@ -69,8 +69,16 @@ export default function AiPlannerPresenceCard({ onOpenPlanner, compact = false }
               <span className="rounded-full border border-white/10 bg-white/10 px-2 py-0.5 text-[11px] font-bold text-cyan-100">
                 {presence.statusText}
               </span>
+              <span className="rounded-full border border-white/10 bg-white/10 px-2 py-0.5 text-[11px] font-bold text-emerald-100">
+                {presence.morningCheckDone ? '今日晨检已完成' : '建议执行今日晨检'}
+              </span>
             </div>
             <p className="mt-1 line-clamp-2 text-xs leading-5 text-slate-300">{hint}</p>
+            {presence.latestMorningCheckAt && (
+              <p className="mt-0.5 text-[11px] text-slate-500">
+                最近晨检：{new Date(presence.latestMorningCheckAt).toLocaleString('zh-CN', { hour12: false })}
+              </p>
+            )}
           </div>
         </div>
 

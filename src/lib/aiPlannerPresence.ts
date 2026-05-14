@@ -1,4 +1,4 @@
-import type { AiPlannerDailyReport, AiPlannerTodo } from '@/types';
+import type { AiPlannerDailyReport, AiPlannerMorningCheckResult, AiPlannerTodo } from '@/types';
 
 export type AiPlannerPresenceStatus = 'IDLE' | 'HAS_TODOS' | 'HAS_MUST' | 'REPORT_READY';
 
@@ -11,12 +11,16 @@ export type AiPlannerPresence = {
   hasDailyReport: boolean;
   latestReportTitle?: string;
   latestReportCreatedAt?: string;
+  morningCheckDone: boolean;
+  latestMorningCheckAt?: string;
+  latestMorningCheckSummary?: string;
   status: AiPlannerPresenceStatus;
   statusText: string;
 };
 
 const TODO_STORAGE_KEY = 'gg-ai.aiPlannerTodos.v1';
 const DAILY_REPORT_STORAGE_KEY = 'gg-ai.aiPlannerDailyReport.v1';
+const MORNING_CHECK_STORAGE_KEY = 'gg-ai.aiPlannerMorningCheck.v1';
 
 const idlePresence: AiPlannerPresence = {
   todoTotal: 0,
@@ -25,6 +29,7 @@ const idlePresence: AiPlannerPresence = {
   ignoredCount: 0,
   mustCount: 0,
   hasDailyReport: false,
+  morningCheckDone: false,
   status: 'IDLE',
   statusText: 'AI计划员待命',
 };
@@ -51,10 +56,12 @@ export function readAiPlannerPresenceFromStorage(): AiPlannerPresence {
   try {
     const todos = safeParse<AiPlannerTodo[]>(window.localStorage.getItem(TODO_STORAGE_KEY));
     const report = safeParse<AiPlannerDailyReport>(window.localStorage.getItem(DAILY_REPORT_STORAGE_KEY));
+    const morningCheck = safeParse<AiPlannerMorningCheckResult>(window.localStorage.getItem(MORNING_CHECK_STORAGE_KEY));
     const safeTodos = Array.isArray(todos) ? todos : [];
     const pendingCount = safeTodos.filter((todo) => todo.status === 'PENDING').length;
     const mustCount = safeTodos.filter((todo) => todo.status === 'PENDING' && todo.level === 'MUST').length;
     const hasDailyReport = Boolean(report?.id && report.markdown);
+    const morningCheckDone = Boolean(morningCheck?.status === 'DONE');
     const status: AiPlannerPresenceStatus = mustCount > 0 ? 'HAS_MUST' : pendingCount > 0 ? 'HAS_TODOS' : hasDailyReport ? 'REPORT_READY' : 'IDLE';
 
     return {
@@ -66,6 +73,9 @@ export function readAiPlannerPresenceFromStorage(): AiPlannerPresence {
       hasDailyReport,
       latestReportTitle: report?.title,
       latestReportCreatedAt: report?.createdAt,
+      morningCheckDone,
+      latestMorningCheckAt: morningCheck?.createdAt,
+      latestMorningCheckSummary: morningCheck?.summary,
       status,
       statusText: getAiPlannerPresenceLabel(status),
     };
@@ -82,7 +92,7 @@ export function getAiPlannerPresenceHint(presence: AiPlannerPresence): string {
     return `当前有 ${presence.pendingCount} 条待办等待计划员跟进。`;
   }
   if (presence.hasDailyReport) {
-    return '今日日报已生成，可打开 AI 工作台查看。';
+    return presence.morningCheckDone ? '今日晨检已完成，日报已生成。' : '今日日报已生成，可打开 AI 工作台查看。';
   }
-  return '暂无待办，建议执行每日排产体检。';
+  return presence.morningCheckDone ? '今日晨检已完成，暂无待处理事项。' : '暂无待办，建议执行今日晨检。';
 }
