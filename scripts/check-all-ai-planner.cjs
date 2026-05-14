@@ -7,6 +7,7 @@ const commands = [
   'pnpm check:ai-planner-presence',
   'pnpm check:ai-morning-check',
   'pnpm check:ai-planner-mvp',
+  'pnpm check:ai-ui-cleanup',
 ];
 
 const results = [];

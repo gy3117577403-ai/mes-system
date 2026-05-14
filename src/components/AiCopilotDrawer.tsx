@@ -55,6 +55,11 @@ import {
   loadMorningCheckResultFromStorage,
   saveMorningCheckResultToStorage,
 } from '@/lib/aiPlannerMorningCheck';
+import {
+  getAiPlannerPresenceHint,
+  readAiPlannerPresenceFromStorage,
+  type AiPlannerPresence,
+} from '@/lib/aiPlannerPresence';
 import { isOrderCompletedStatus } from '@/lib/orderStatus';
 import { cn } from '@/lib/uiTheme';
 
@@ -165,10 +170,58 @@ const priorityTone: Record<string, string> = {
   WATCH: 'border-cyan-300/25 bg-cyan-400/10 text-cyan-50',
 };
 
+const cleanPriorityLabel: Record<string, string> = {
+  MUST: '必须处理',
+  SHOULD: '建议处理',
+  WATCH: '持续观察',
+};
+
+const cleanBlockReasonLabel: Record<string, string> = {
+  DRAWING_NOT_READY: '图纸未发',
+  MATERIAL_NOT_READY: '物料未齐',
+  DATA_INCOMPLETE: '数据不完整',
+  OTHER: '其他原因',
+};
+
+const cleanTodoStatusLabel: Record<AiPlannerTodoStatus, string> = {
+  PENDING: '待处理',
+  DONE: '已处理',
+  IGNORED: '已忽略',
+};
+
+const cleanMutationTypeLabel: Record<string, string> = {
+  UPDATE_ORDER_DATE: '调整排产日期',
+  UPDATE_DELIVERY_DATE: '修改交期',
+  LOG_EXCEPTION_HOUR: '记录异常工时',
+};
+
+const cleanTodoSourceLabel: Record<AiPlannerTodo['source'], string> = {
+  PRIORITY_ACTION: '优先动作',
+  QUESTION_FOR_HUMAN: '主动问题',
+  BLOCKED_GROUP: '阻塞归类',
+  SYSTEM_FALLBACK: '系统体检',
+};
+
+const cleanSourceRiskLabel: Record<string, string> = {
+  HIGH: '近期窗口包含问题，建议用基线验收',
+  MEDIUM: '近 7 天存在问题，导入后请做 delta 检查',
+  LOW: '当前更像历史遗留',
+};
+
 type TodoFilter = 'ALL' | AiPlannerTodoStatus;
+type PlannerTab = 'morning' | 'tasks' | 'todos' | 'report' | 'execution' | 'diagnostics';
 
 const TODO_STORAGE_KEY = 'gg-ai.aiPlannerTodos.v1';
 const DAILY_REPORT_STORAGE_KEY = 'gg-ai.aiPlannerDailyReport.v1';
+
+const plannerTabs: Array<{ id: PlannerTab; label: string; description: string }> = [
+  { id: 'morning', label: '晨检', description: '一键体检和今日概览' },
+  { id: 'tasks', label: '任务', description: '计划任务与分析结果' },
+  { id: 'todos', label: '待办', description: '跟进事项闭环' },
+  { id: 'report', label: '日报', description: '交接班报告' },
+  { id: 'execution', label: '建议执行', description: '人工确认写入' },
+  { id: 'diagnostics', label: '诊断', description: '配置和上下文' },
+];
 
 const blockedGroupLabel: Record<string, string> = {
   DRAWING_NOT_READY: '图纸未发',
@@ -255,6 +308,23 @@ function safePreview(preview?: string): string {
   return preview.slice(0, 180);
 }
 
+function shortId(value?: string | null): string {
+  if (!value) return '';
+  return value.length > 10 ? `${value.slice(0, 8)}…` : value;
+}
+
+function compactOrderIds(ids?: string[]): string {
+  const list = (ids ?? []).filter(Boolean);
+  if (list.length === 0) return '未指定订单';
+  const shown = list.slice(0, 3).map(shortId).join('、');
+  return list.length > 3 ? `${shown} 等 ${list.length} 单` : shown;
+}
+
+function cleanLabel(map: Record<string, string>, value?: string | null): string {
+  if (!value) return '未分类';
+  return map[value] ?? value.replace(/_/g, ' ').toLowerCase();
+}
+
 function isRiskOrder(order: Order): boolean {
   if (!order.deliveryDate || isOrderCompletedStatus(order.taskStatus)) return false;
   const today = new Date().toISOString().slice(0, 10);
@@ -329,6 +399,8 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
   const [showDailyMarkdown, setShowDailyMarkdown] = useState(false);
   const [morningCheckStatus, setMorningCheckStatus] = useState<AiPlannerMorningCheckStatus>('IDLE');
   const [morningCheckResult, setMorningCheckResult] = useState<AiPlannerMorningCheckResult | null>(null);
+  const [activeTab, setActiveTab] = useState<PlannerTab>('morning');
+  const [presence, setPresence] = useState<AiPlannerPresence>(() => readAiPlannerPresenceFromStorage());
   const [history, setHistory] = useState<{ ok: boolean; error?: string; data: AiRunListItem[] } | null>(null);
   const [auditWritableResult, setAuditWritableResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [isThinking, startThinking] = useTransition();
@@ -446,6 +518,17 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
     if (openToken === undefined) return;
     setOpen(true);
   }, [openToken]);
+
+  useEffect(() => {
+    const refreshPresence = () => setPresence(readAiPlannerPresenceFromStorage());
+    refreshPresence();
+    window.addEventListener('gg-ai:planner-presence-updated', refreshPresence);
+    window.addEventListener('storage', refreshPresence);
+    return () => {
+      window.removeEventListener('gg-ai:planner-presence-updated', refreshPresence);
+      window.removeEventListener('storage', refreshPresence);
+    };
+  }, []);
 
   useEffect(() => {
     if (!plannerReport) return;
@@ -853,11 +936,26 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-5 right-5 z-50 flex h-16 w-16 items-center justify-center rounded-2xl border border-cyan-300/40 bg-slate-950/90 text-cyan-200 shadow-[0_0_36px_rgba(34,211,238,0.35)] backdrop-blur transition hover:-translate-y-0.5 hover:border-cyan-200 hover:text-white"
-        title="AI 计划员工工作台"
+        className="fixed bottom-5 right-5 z-50 flex h-14 w-14 items-center justify-center rounded-2xl border border-cyan-300/35 bg-slate-950/90 text-cyan-100 shadow-[0_0_30px_rgba(34,211,238,0.28)] backdrop-blur transition hover:-translate-y-0.5 hover:border-cyan-200 hover:text-white"
+        title={`打开 AI 计划员工作台：${getAiPlannerPresenceHint(presence)}`}
       >
         <span className="absolute -right-1 -top-1 h-3 w-3 rounded-full bg-emerald-300 shadow-[0_0_14px_rgba(110,231,183,0.9)]" />
-        <Bot className="h-8 w-8" />
+        <Bot className="h-7 w-7" />
+        {presence.pendingCount > 0 && (
+          <span className="absolute -left-2 -top-2 rounded-full border border-cyan-100/40 bg-cyan-300 px-1.5 py-0.5 text-[10px] font-black text-slate-950">
+            {presence.pendingCount}
+          </span>
+        )}
+        {presence.mustCount > 0 && (
+          <span className="absolute -right-2 bottom-0 rounded-full border border-rose-100/40 bg-rose-400 px-1.5 py-0.5 text-[10px] font-black text-white">
+            必
+          </span>
+        )}
+        {presence.morningCheckDone && (
+          <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full border border-emerald-200/30 bg-emerald-300 px-2 py-0.5 text-[10px] font-black text-slate-950">
+            晨检
+          </span>
+        )}
       </button>
 
       {open && (
@@ -899,7 +997,168 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
               </div>
             </header>
 
-            <div className="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto p-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+            <div className="flex min-h-0 flex-1 flex-col">
+              <nav className="shrink-0 border-b border-white/10 bg-slate-950/55 px-4 py-3">
+                <div className="grid grid-cols-3 gap-2 md:grid-cols-6">
+                  {plannerTabs.map((tab) => (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      onClick={() => setActiveTab(tab.id)}
+                      className={cn(
+                        'rounded-2xl border px-3 py-2 text-left transition',
+                        activeTab === tab.id
+                          ? 'border-cyan-200/50 bg-cyan-300/15 text-white shadow-[0_0_24px_rgba(34,211,238,0.14)]'
+                          : 'border-white/10 bg-white/[0.035] text-slate-300 hover:bg-white/[0.06]'
+                      )}
+                    >
+                      <div className="text-sm font-black">{tab.label}</div>
+                      <div className="mt-0.5 hidden text-[11px] text-slate-400 lg:block">{tab.description}</div>
+                    </button>
+                  ))}
+                </div>
+              </nav>
+
+              <div className="min-h-0 flex-1 overflow-y-auto p-4">
+                {activeTab === 'morning' && (
+                  <section className="space-y-4">
+                    <div className="rounded-3xl border border-cyan-300/20 bg-cyan-300/[0.06] p-5">
+                      <div className="flex flex-wrap items-center justify-between gap-4">
+                        <div>
+                          <div className="text-xs font-bold uppercase tracking-[0.18em] text-cyan-200/80">Morning Check</div>
+                          <h3 className="mt-2 text-2xl font-black text-white">AI 计划员一键晨检</h3>
+                          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">只做分析、待办和日报草稿；不会修改订单，也不会执行 AI 建议动作。</p>
+                        </div>
+                        <button type="button" onClick={runMorningCheck} disabled={isMorningChecking} className="flex items-center gap-2 rounded-2xl bg-cyan-200 px-5 py-3 text-sm font-black text-slate-950 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60">
+                          {isMorningChecking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                          {isMorningChecking ? '晨检执行中' : '开始今日晨检'}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="grid gap-3 md:grid-cols-4">
+                      {metricCard('总订单', activeSummary.totalOrders, '系统已保存')}
+                      {metricCard('可排产', activeSummary.schedulableOrders, '图纸和物料就绪', 'emerald')}
+                      {metricCard('图纸未发', activeSummary.blockedByDrawing, '技术攻坚池', 'red')}
+                      {metricCard('物料未齐', activeSummary.blockedByMaterial, '仓库配料池', 'amber')}
+                      {metricCard('今日负荷', `${loadSummary.todayMinutes}/${currentBaseLimit}`, '分钟')}
+                      {metricCard('本周负荷', loadSummary.weekMinutes, '分钟')}
+                      {metricCard('交期风险', activeSummary.riskOrders, '需关注', activeSummary.riskOrders > 0 ? 'red' : 'emerald')}
+                      {metricCard('异常/安灯', abnormalCount, '车间反馈', abnormalCount > 0 ? 'red' : 'emerald')}
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                      <div className="text-sm font-black text-white">晨检状态</div>
+                      <p className="mt-1 text-sm text-slate-400">{morningCheckStatusLabel[morningCheckStatus]}</p>
+                      {morningCheckResult?.summary && <p className="mt-3 rounded-xl border border-cyan-200/15 bg-slate-950/40 p-3 text-sm leading-6 text-slate-200">{morningCheckResult.summary}</p>}
+                      {morningCheckResult?.errorMessage && <p className="mt-3 rounded-xl border border-rose-300/20 bg-rose-400/10 p-3 text-sm text-rose-100">{morningCheckResult.errorMessage}</p>}
+                    </div>
+                  </section>
+                )}
+
+                {activeTab === 'tasks' && (
+                  <section className="space-y-4">
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                      {AI_PLANNER_TASK_TEMPLATES.map((item) => (
+                        <button key={item.id} type="button" onClick={() => { setSelectedTaskId(item.id); setPrompt(buildPromptFromTemplate(item.id, taskNote)); }} className={cn('rounded-2xl border p-4 text-left transition', selectedTaskId === item.id ? 'border-cyan-200/50 bg-cyan-300/15 text-white' : 'border-white/10 bg-white/[0.035] text-slate-300 hover:bg-white/[0.06]')}>
+                          <div className="text-sm font-black">{item.name}</div>
+                          <p className="mt-2 line-clamp-3 text-xs leading-5 text-slate-400">{item.prompt}</p>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="rounded-2xl border border-white/10 bg-slate-950/55 p-4">
+                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                        <h3 className="font-black text-white">向 AI 计划员下达任务</h3>
+                        {selectedTask && <span className="rounded-full border border-cyan-200/25 bg-cyan-300/10 px-3 py-1 text-xs font-bold text-cyan-100">当前任务：{selectedTask.name}</span>}
+                      </div>
+                      <textarea value={prompt} onChange={(event) => { setPrompt(event.target.value); setSelectedTaskId(null); }} rows={4} placeholder="例如：检查今天哪些订单可以排产，哪些不能排产，并说明原因。" className="w-full resize-none rounded-2xl border border-white/10 bg-slate-950/70 p-4 text-sm leading-6 text-white outline-none placeholder:text-slate-500 focus:border-cyan-200/50" />
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {quickPrompts.map((item) => <button key={item} type="button" onClick={() => { setPrompt(item); setSelectedTaskId(null); }} className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-xs text-slate-300 hover:bg-white/[0.08]">{item}</button>)}
+                      </div>
+                      <button type="button" onClick={askPlanner} disabled={isThinking} className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-cyan-200 px-4 py-3 text-sm font-black text-slate-950 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60">
+                        {isThinking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                        {isThinking ? 'AI 正在分析' : selectedTaskId ? '执行计划任务' : '下达任务'}
+                      </button>
+                    </div>
+                    <div className="rounded-2xl border border-cyan-300/20 bg-cyan-300/[0.06] p-4">
+                      <div className="mb-2 text-sm font-black text-cyan-100">计划员结论</div>
+                      <p className="text-sm leading-6 text-slate-200">{plannerReport?.conclusion ?? diagnosis?.reply ?? '等待任务。运行晨检或计划任务后，这里会显示 AI 计划员的业务结论。'}</p>
+                    </div>
+                    <div className="grid gap-4 lg:grid-cols-3">
+                      <div className="rounded-2xl border border-rose-300/20 bg-rose-400/10 p-4">
+                        <div className="mb-3 text-sm font-black text-rose-100">优先动作</div>
+                        {(plannerReport?.priorityActions ?? []).slice(0, 6).map((action, index) => <div key={`${action.title}-${index}`} className={cn('mb-2 rounded-xl border p-3 text-xs leading-5', priorityTone[action.level] ?? priorityTone.SHOULD)}><div className="font-black">{cleanLabel(cleanPriorityLabel, action.level)}：{action.title}</div><div className="mt-1 opacity-85">{action.reason}</div><div className="mt-1 text-[11px] opacity-70">涉及订单：{compactOrderIds(action.relatedOrderIds)}</div></div>)}
+                        {!(plannerReport?.priorityActions ?? []).length && <p className="text-sm text-slate-400">暂无优先动作。</p>}
+                      </div>
+                      <div className="rounded-2xl border border-amber-300/20 bg-amber-400/10 p-4">
+                        <div className="mb-3 text-sm font-black text-amber-100">不可排产归类</div>
+                        {(plannerReport?.blockedGroups ?? []).filter((group) => group.count > 0).slice(0, 6).map((group, index) => <div key={`${group.reasonType}-${index}`} className="mb-2 rounded-xl border border-amber-200/20 bg-slate-950/35 p-3 text-xs leading-5 text-amber-50"><div className="font-black">{cleanLabel(cleanBlockReasonLabel, group.reasonType)}：{group.count} 单</div><div className="mt-1">{group.suggestion}</div><div className="mt-1 text-[11px] text-amber-100/70">涉及订单：{compactOrderIds(group.orderIds)}</div></div>)}
+                        {!((plannerReport?.blockedGroups ?? []).filter((group) => group.count > 0).length) && <p className="text-sm text-slate-400">暂无阻塞归类。</p>}
+                      </div>
+                      <div className="rounded-2xl border border-violet-300/20 bg-violet-400/10 p-4">
+                        <div className="mb-3 text-sm font-black text-violet-100">AI 需要确认的问题</div>
+                        {(plannerReport?.questionsForHuman ?? []).slice(0, 6).map((question, index) => <div key={`${question.question}-${index}`} className="mb-2 rounded-xl border border-violet-200/20 bg-slate-950/35 p-3 text-xs leading-5 text-violet-50"><div className="font-black">{question.question}</div><div className="mt-1 opacity-85">{question.whyItMatters}</div><div className="mt-1 text-[11px] opacity-70">负责人：{question.suggestedOwner || '计划员确认'}；订单：{compactOrderIds(question.relatedOrderIds)}</div></div>)}
+                        {!(plannerReport?.questionsForHuman ?? []).length && <p className="text-sm text-slate-400">暂无需要主管确认的问题。</p>}
+                      </div>
+                    </div>
+                  </section>
+                )}
+
+                {activeTab === 'todos' && (
+                  <section className="space-y-4">
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div><h3 className="text-lg font-black text-white">AI 计划员待办</h3><p className="mt-1 text-xs text-slate-400">待办只保存在本机；标记状态不会修改订单。</p></div>
+                        <div className="flex flex-wrap gap-2 text-xs"><span className="rounded-full bg-cyan-300/15 px-3 py-1 text-cyan-100">待处理 {todoStats.pending}</span><span className="rounded-full bg-rose-300/15 px-3 py-1 text-rose-100">必须 {todoStats.must}</span><span className="rounded-full bg-emerald-300/15 px-3 py-1 text-emerald-100">已处理 {todoStats.done}</span></div>
+                      </div>
+                      <div className="mt-4 flex flex-wrap gap-2">{(['ALL', 'PENDING', 'DONE', 'IGNORED'] as TodoFilter[]).map((filter) => <button key={filter} type="button" onClick={() => setTodoFilter(filter)} className={cn('rounded-full border px-3 py-1.5 text-xs font-bold', todoFilter === filter ? 'border-cyan-200/50 bg-cyan-300/15 text-cyan-100' : 'border-white/10 bg-white/[0.035] text-slate-300')}>{filter === 'ALL' ? '全部' : cleanTodoStatusLabel[filter]}</button>)}</div>
+                    </div>
+                    <div className="grid gap-3 lg:grid-cols-2">
+                      {visibleTodos.length ? visibleTodos.map((todo) => (
+                        <div key={todo.id} className="rounded-2xl border border-white/10 bg-slate-950/55 p-4">
+                          <div className="flex flex-wrap items-center gap-2"><span className={cn('rounded-full border px-2 py-0.5 text-[11px] font-bold', todoStatusTone[todo.status])}>{cleanTodoStatusLabel[todo.status]}</span>{todo.level && <span className={cn('rounded-full border px-2 py-0.5 text-[11px] font-bold', priorityTone[todo.level])}>{cleanLabel(cleanPriorityLabel, todo.level)}</span>}<span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[11px] text-slate-300">{cleanTodoSourceLabel[todo.source]}</span></div>
+                          <div className="mt-3 text-sm font-black text-white">{todo.title}</div>
+                          {todo.reason && <p className="mt-2 text-xs leading-5 text-slate-300">{todo.reason}</p>}
+                          {todo.detail && <p className="mt-2 text-xs leading-5 text-slate-400">{todo.detail}</p>}
+                          <div className="mt-3 grid gap-2 text-[11px] text-slate-400 sm:grid-cols-2"><span>负责人：{todo.suggestedOwner || '计划员确认'}</span><span title={(todo.relatedOrderIds ?? []).join(', ')}>订单：{compactOrderIds(todo.relatedOrderIds)}</span><span>任务：{todo.taskName || '自由任务'}</span><span>创建：{formatDateTime(todo.createdAt)}</span></div>
+                          <div className="mt-3 flex flex-wrap gap-2"><button type="button" onClick={() => copyTodoText(todo)} className="rounded-xl border border-cyan-200/30 bg-cyan-300/10 px-3 py-1.5 text-xs font-bold text-cyan-100 hover:bg-cyan-300/15">复制跟进话术</button>{todo.status !== 'DONE' && <button type="button" onClick={() => updateTodoStatus(todo.id, 'DONE')} className="rounded-xl border border-emerald-200/30 bg-emerald-300/10 px-3 py-1.5 text-xs font-bold text-emerald-100 hover:bg-emerald-300/15">标记已处理</button>}{todo.status !== 'PENDING' && <button type="button" onClick={() => updateTodoStatus(todo.id, 'PENDING')} className="rounded-xl border border-slate-400/30 bg-slate-700/40 px-3 py-1.5 text-xs font-bold text-slate-200 hover:bg-slate-700/60">标记待处理</button>}{todo.status !== 'IGNORED' && <button type="button" onClick={() => updateTodoStatus(todo.id, 'IGNORED')} className="rounded-xl border border-slate-500/30 bg-slate-800/50 px-3 py-1.5 text-xs font-bold text-slate-300 hover:bg-slate-800/70">忽略</button>}</div>
+                        </div>
+                      )) : <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-5 text-sm text-slate-400 lg:col-span-2">当前 AI 没有生成待办。可以执行“每日排产体检”或“AI 主动问题清单”。</div>}
+                    </div>
+                  </section>
+                )}
+
+                {activeTab === 'report' && (
+                  <section className="space-y-4">
+                    <div className="rounded-2xl border border-emerald-300/20 bg-emerald-300/[0.06] p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-lg font-black text-white">AI 计划员日报</h3><p className="mt-1 text-xs leading-5 text-slate-400">日报仅用于计划沟通与交接，不会修改订单。</p></div><div className="flex flex-wrap gap-2"><button type="button" onClick={generateDailyReport} className="rounded-xl border border-emerald-200/30 bg-emerald-300/15 px-3 py-2 text-xs font-black text-emerald-100 hover:bg-emerald-300/20">生成日报</button><button type="button" onClick={copyDailyReport} disabled={!dailyReport} className="rounded-xl border border-cyan-200/30 bg-cyan-300/10 px-3 py-2 text-xs font-black text-cyan-100 hover:bg-cyan-300/15 disabled:opacity-50">复制日报</button><button type="button" onClick={downloadDailyReport} disabled={!dailyReport} className="rounded-xl border border-violet-200/30 bg-violet-300/10 px-3 py-2 text-xs font-black text-violet-100 hover:bg-violet-300/15 disabled:opacity-50">下载 Markdown</button><button type="button" onClick={() => setDailyReport(null)} disabled={!dailyReport} className="rounded-xl border border-slate-500/30 bg-slate-800/50 px-3 py-2 text-xs font-black text-slate-300 hover:bg-slate-800/70 disabled:opacity-50">清空日报</button></div></div>
+                    </div>
+                    {dailyReport ? <div className="space-y-3"><div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4"><div className="text-base font-black text-white">{dailyReport.title}</div><div className="mt-1 text-xs text-slate-400">生成时间：{formatDateTime(dailyReport.createdAt)}</div><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-200">{dailyReport.summary}</p></div><div className="grid gap-3 md:grid-cols-4">{metricCard('总订单', dailyReport.contextOverview.totalOrders ?? '暂无', '日报摘要')}{metricCard('可排产', dailyReport.contextOverview.schedulableOrders ?? '暂无', '就绪订单', 'emerald')}{metricCard('待处理', dailyReport.todoStats.pending, 'AI 待办', 'amber')}{metricCard('必须处理', dailyReport.todoStats.must, '高优先级', 'red')}</div><button type="button" onClick={() => setShowDailyMarkdown((value) => !value)} className="rounded-xl border border-white/10 bg-white/[0.035] px-3 py-2 text-xs font-bold text-slate-200 hover:bg-white/[0.06]">{showDailyMarkdown ? '收起 Markdown 预览' : '展开 Markdown 预览'}</button>{showDailyMarkdown && <pre className="max-h-80 overflow-auto rounded-2xl border border-white/10 bg-slate-950/80 p-4 text-xs leading-5 text-slate-300">{dailyReport.markdown}</pre>}</div> : <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-5 text-sm text-slate-400">暂无日报草稿。可以先执行晨检，也可以基于当前页面摘要生成简版日报。</div>}
+                  </section>
+                )}
+
+                {activeTab === 'execution' && (
+                  <section className="space-y-4">
+                    <div className="rounded-2xl border border-emerald-300/20 bg-emerald-300/[0.06] p-4"><div className="mb-2 text-lg font-black text-white">建议执行</div><p className="text-sm leading-6 text-slate-300">AI 只提出建议。涉及排产写入必须人工确认，后端仍会校验图纸和物料状态。</p><div className="mt-2 text-xs text-slate-500">{mutationSummary}</div></div>
+                    <div className="grid gap-3 lg:grid-cols-2">{diagnosis?.proposedMutations.length ? diagnosis.proposedMutations.map((mutation, index) => <div key={`${mutation.type}-${index}`} className="rounded-2xl border border-violet-300/20 bg-violet-400/10 p-4 text-sm leading-6 text-violet-50"><div className="font-black">{cleanLabel(cleanMutationTypeLabel, mutation.type)}</div>{'orderId' in mutation && mutation.orderId && <div className="text-xs text-violet-100/75">订单：<span title={mutation.orderId}>{shortId(mutation.orderId)}</span></div>}{'newDate' in mutation && <div className="text-xs text-violet-100/75">目标日期：{mutation.newDate}</div>}{'minutes' in mutation && <div className="text-xs text-violet-100/75">异常工时：{mutation.minutes} 分钟；原因：{mutation.reason}</div>}<button type="button" onClick={() => rejectMutation(index)} disabled={ignoredMutationIndexes.includes(index)} className="mt-3 rounded-xl border border-violet-200/30 px-3 py-2 text-xs font-bold text-violet-100 disabled:opacity-50">{ignoredMutationIndexes.includes(index) ? '已忽略' : '忽略此建议'}</button></div>) : <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-5 text-sm text-slate-400 lg:col-span-2">暂无待人工确认的执行建议。</div>}</div>
+                    <div className="rounded-2xl border border-emerald-300/20 bg-slate-950/60 p-4"><div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"><div className="text-sm leading-6 text-slate-300">确认后才会调用后端执行建议；执行层仍受排产资格硬规则保护。</div><button type="button" onClick={applyMutations} disabled={!hasMutations || isApplying} className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-300 px-4 py-3 text-sm font-black text-slate-950 transition hover:bg-emerald-200 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500">{isApplying ? <Loader2 className="h-4 w-4 animate-spin" /> : <LockKeyhole className="h-4 w-4" />}确认执行建议</button></div></div>
+                    <div className="rounded-2xl border border-slate-600/40 bg-slate-950/55 p-4"><div className="mb-3 flex items-center justify-between gap-3"><div className="text-sm font-bold text-slate-100">可导出的汇总数据</div><button type="button" onClick={exportExcel} disabled={!hasExportRows} className="flex items-center gap-2 rounded-xl border border-cyan-300/25 bg-cyan-300/10 px-3 py-2 text-xs font-bold text-cyan-100 transition hover:bg-cyan-300/15 disabled:cursor-not-allowed disabled:opacity-50"><Download className="h-4 w-4" />导出 Excel</button></div><p className="text-sm text-slate-400">{hasExportRows ? `当前可导出 ${diagnosis?.exportDataSummary.length ?? 0} 条 AI 汇总。` : 'AI 返回汇总数据后可导出 Excel。'}</p></div>
+                  </section>
+                )}
+
+                {activeTab === 'diagnostics' && (
+                  <section className="space-y-4">
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-lg font-black text-white">诊断</h3><p className="mt-1 text-xs text-slate-400">仅显示业务化诊断，不展示原始 JSON、密钥或数据库连接串。</p></div><div className="flex flex-wrap gap-2"><button type="button" onClick={checkContext} disabled={isChecking} className="rounded-xl border border-cyan-200/30 bg-cyan-300/10 px-3 py-2 text-xs font-black text-cyan-100 hover:bg-cyan-300/15 disabled:opacity-50">{isChecking ? '检查中' : '检查 AI 上下文'}</button>{diagnostics?.db?.aiAuditStatus?.enabled ? <button type="button" onClick={checkAuditWritable} disabled={isCheckingAuditWrite} className="rounded-xl border border-emerald-200/30 bg-emerald-300/10 px-3 py-2 text-xs font-black text-emerald-100 hover:bg-emerald-300/15 disabled:opacity-50">{isCheckingAuditWrite ? '测试中' : '测试 AI 记忆写入'}</button> : null}</div></div></div>
+                    <div className="grid gap-3 md:grid-cols-3"><div className="rounded-2xl border border-cyan-300/20 bg-cyan-300/10 p-4"><div className="text-sm font-black text-cyan-100">模型配置</div><p className="mt-2 text-sm text-slate-300">{diagnostics?.ai ? (diagnostics.ai.configured ? `已配置 ${diagnostics.ai.provider ?? ''} ${diagnostics.ai.model ?? ''}` : '未配置 AI Key') : '尚未检查'}</p></div><div className="rounded-2xl border border-emerald-300/20 bg-emerald-300/10 p-4"><div className="text-sm font-black text-emerald-100">数据库</div><p className="mt-2 text-sm text-slate-300">{diagnostics?.db ? (diagnostics.db.connected ? '连接正常' : '连接异常') : '尚未检查'}</p></div><div className="rounded-2xl border border-violet-300/20 bg-violet-300/10 p-4"><div className="text-sm font-black text-violet-100">AI 记忆</div><p className="mt-2 text-sm text-slate-300">{diagnostics?.db?.aiAuditStatus?.enabled ? '已启用，历史和建议可持久化' : '未启用，AI 分析仍可使用'}</p></div></div>
+                    <div className="rounded-2xl border border-sky-300/20 bg-sky-400/10 p-4 text-sm leading-6 text-sky-50"><div className="font-black">AI 当前页面视角</div><div className="mt-3 grid gap-2 md:grid-cols-4"><span>当前视图：{mergedUiContext.currentView ?? '未知'}</span><span>已加载订单：{mergedUiContext.loadedOrderCount ?? orders.length} 单</span><span>当前任务：{mergedUiContext.selectedTaskName ?? '自由输入'}</span><span>可见范围：{mergedUiContext.visibleOrderIds?.length ?? 0} 个订单 ID</span></div></div>
+                    <div className="rounded-2xl border border-amber-300/20 bg-amber-400/10 p-4 text-sm leading-6 text-amber-50"><div className="font-black">数据一致性风险</div><p className="mt-2">历史数据当前选择暂不处理；新导入数据验收以“导入前基线 + 导入后 delta 检查”为准。</p>{diagnostics?.readyFlags ? <div className="mt-3 space-y-1 text-xs text-amber-100/90"><p>历史不一致：{diagnostics.readyFlags.legacyTextReadyButFlagBlocked ?? 0} 单</p><p>最近 24 小时：{diagnostics.readyFlags.recent24hProblemCount ?? 0} 单；最近 7 天：{diagnostics.readyFlags.recent7dProblemCount ?? 0} 单</p><p>源头判断：{cleanSourceRiskLabel[diagnostics.readyFlags.sourceRiskLevel ?? 'LOW']}</p></div> : <p className="mt-2 text-xs">点击“检查 AI 上下文”后读取 ready-flags 诊断。</p>}</div>
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-4"><div className="font-black text-white">历史任务</div>{!history || !history.ok ? <p className="mt-2 text-sm text-slate-400">AI 历史任务暂不可用。若 AI 审计表未部署，分析仍可使用，但历史不会持久化。</p> : history.data.length === 0 ? <p className="mt-2 text-sm text-slate-400">暂无历史任务。</p> : <div className="mt-3 grid gap-2">{history.data.slice(0, 5).map((run) => <div key={run.id} className="rounded-xl border border-white/10 bg-slate-950/45 p-3 text-xs text-slate-300"><div className="font-bold text-white">{run.userPrompt.slice(0, 80)}</div><div className="mt-1">时间：{formatDateTime(run.createdAt)}；状态：{run.status}; 建议：{run._count?.suggestions ?? 0}</div></div>)}</div>}{auditWritableResult && <p className={cn('mt-3 rounded-xl border p-3 text-xs', auditWritableResult.ok ? 'border-emerald-300/20 bg-emerald-300/10 text-emerald-100' : 'border-rose-300/20 bg-rose-400/10 text-rose-100')}>{auditWritableResult.message}</p>}</div>
+                    {errorMessage && <p className="rounded-2xl border border-rose-300/20 bg-rose-400/10 p-4 text-sm text-rose-100">{errorMessage}</p>}
+                    {safePreview(modelPreview) && <p className="rounded-2xl border border-slate-600/40 bg-slate-950/55 p-4 text-xs text-slate-400">模型预览：{safePreview(modelPreview)}</p>}
+                  </section>
+                )}
+              </div>
+            </div>
+
+            <div className="hidden grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto p-4 xl:grid-cols-[360px_minmax(0,1fr)]">
               <section className="space-y-4">
                 <div className="rounded-2xl border border-white/10 bg-white/[0.045] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
                   <div className="flex items-center justify-between gap-3">

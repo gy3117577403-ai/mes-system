@@ -45,11 +45,11 @@ const checks = [
     lineOf(card, 'AiPlannerPresenceCard')
   ),
   check(
-    'page imports AiPlannerPresenceCard',
-    pagePath,
-    page.includes('AiPlannerPresenceCard') && page.includes('@/components/AiPlannerPresenceCard'),
-    'src/app/page.tsx must import and render AiPlannerPresenceCard',
-    lineOf(page, '@/components/AiPlannerPresenceCard')
+    'AI planner has floating entry',
+    drawerPath,
+    drawer.includes('fixed bottom-5 right-5') && drawer.includes('打开 AI 计划员工作台'),
+    'AI planner should be opened from a compact floating entry instead of a large page card',
+    lineOf(drawer, '打开 AI 计划员工作台')
   ),
   check(
     'drawer dispatches presence update event',

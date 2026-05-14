@@ -31,6 +31,7 @@
     "check:ai-morning-check": "node scripts/check-ai-morning-check.cjs",
     "check:ai-planner-mvp": "node scripts/check-ai-planner-mvp.cjs",
     "check:ai-planner": "node scripts/check-all-ai-planner.cjs",
+    "check:ai-ui-cleanup": "node scripts/check-ai-ui-cleanup.cjs",
     "check:order-pools": "node scripts/check-order-pool-classification.cjs",
     "diagnose:ready-flags": "node scripts/diagnose-ready-flag-mismatch.cjs",
     "diagnose:ready-flags:explain": "node scripts/explain-ready-flag-mismatch.cjs",

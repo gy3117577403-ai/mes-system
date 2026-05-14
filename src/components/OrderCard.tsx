@@ -228,7 +228,10 @@ export default function EnhancedOrderCard({
   const scheduleEligible = canEnterSchedule(task);
   const drawingDisplayValue = drawingLooksReady ? '已发' : '未发图';
   const materialDisplayValue = materialsLooksKit ? '料齐' : '未配料';
-  const isAdminDebug = boss;
+  const showReadyDebug =
+    process.env.NEXT_PUBLIC_SHOW_READY_DEBUG === 'true' &&
+    process.env.NODE_ENV !== 'production' &&
+    boss;
 
   useEffect(() => {
     if (task.isMaterialReady !== false || ['料齐', '已配料'].includes(task.materials)) {
@@ -619,7 +622,7 @@ export default function EnhancedOrderCard({
           </div>
         )}
 
-        {isAdminDebug && (
+        {showReadyDebug && (
           <div
             className="mb-2 rounded-lg border border-slate-700/70 bg-slate-950/70 px-2 py-1 text-[10px] font-mono text-slate-400"
             title={`isDrawingReady=${String(task.isDrawingReady)}; isMaterialReady=${String(task.isMaterialReady)}; canEnterSchedule=${String(scheduleEligible)}; blockReasons=${blockReasons.join(',') || 'none'}`}
