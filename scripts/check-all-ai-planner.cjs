@@ -9,6 +9,7 @@ const commands = [
   'pnpm check:ai-planner-mvp',
   'pnpm check:ai-ui-cleanup',
   'pnpm check:ai-schedule-apply',
+  'pnpm check:ai-schedule-quality',
 ];
 
 const results = [];

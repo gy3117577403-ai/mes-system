@@ -33,6 +33,7 @@
     "check:ai-planner": "node scripts/check-all-ai-planner.cjs",
     "check:ai-ui-cleanup": "node scripts/check-ai-ui-cleanup.cjs",
     "check:ai-schedule-apply": "node scripts/check-ai-schedule-apply.cjs",
+    "check:ai-schedule-quality": "node scripts/check-ai-schedule-quality.cjs",
     "check:order-pools": "node scripts/check-order-pool-classification.cjs",
     "diagnose:ready-flags": "node scripts/diagnose-ready-flag-mismatch.cjs",
     "diagnose:ready-flags:explain": "node scripts/explain-ready-flag-mismatch.cjs",

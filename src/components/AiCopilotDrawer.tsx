@@ -431,6 +431,8 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
     [diagnosis?.proposedMutations]
   );
   const hasScheduleDraft = scheduleMutations.length > 0 || (diagnosis?.schedulePlan?.items.length ?? 0) > 0;
+  const schedulePlanValidation = diagnosis?.schedulePlanValidation;
+  const schedulePlanExecutable = schedulePlanValidation ? schedulePlanValidation.ok : true;
   const hasExportRows = (diagnosis?.exportDataSummary.length ?? 0) > 0;
   const orderById = useMemo(() => new Map(orders.map((order) => [order.id, order])), [orders]);
   const selectedTask = selectedTaskId ? getAiPlannerTaskTemplate(selectedTaskId) : undefined;
@@ -1050,6 +1052,32 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
             {diagnosis.schedulePlan.warnings.slice(0, 3).map((warning, index) => <div key={`${warning}-${index}`}>{warning}</div>)}
           </div>
         ) : null}
+        {schedulePlanValidation ? (
+          <div className={cn('mt-3 rounded-xl border p-3 text-xs leading-5', schedulePlanValidation.ok ? 'border-emerald-300/25 bg-emerald-400/10 text-emerald-100' : 'border-rose-300/25 bg-rose-400/10 text-rose-100')}>
+            <div className="font-black">{schedulePlanValidation.ok ? '排产质量校验通过' : '当前排单草案未通过计划逻辑校验，不能执行。'}</div>
+            <div className="mt-1">{schedulePlanValidation.summary}</div>
+            <div className="mt-3 grid gap-2 md:grid-cols-3">
+              {schedulePlanValidation.dayLoads.map((row) => (
+                <div key={row.day} className="rounded-lg border border-white/10 bg-slate-950/35 p-2">
+                  <div className="font-bold text-white">{row.day}</div>
+                  <div>{row.orderCount} 单 / {row.minutes} 分钟</div>
+                  <div>偏差：{row.deltaFromAverage >= 0 ? '+' : ''}{row.deltaFromAverage} 分钟</div>
+                  <div>{row.withinTolerance ? '在 ±500 合理区间' : '超出 ±500，需关注'}</div>
+                </div>
+              ))}
+            </div>
+            {schedulePlanValidation.errors.length ? (
+              <div className="mt-3 space-y-1">
+                {schedulePlanValidation.errors.slice(0, 5).map((item, index) => <div key={`${item.code}-${index}`}>错误：{item.message}</div>)}
+              </div>
+            ) : null}
+            {schedulePlanValidation.warnings.length ? (
+              <div className="mt-3 space-y-1">
+                {schedulePlanValidation.warnings.slice(0, 5).map((item, index) => <div key={`${item.code}-${index}`}>提醒：{item.message}</div>)}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     );
   };
@@ -1281,7 +1309,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                       </div>
                     ) : null}
                     <div className="grid gap-3 lg:grid-cols-2">{diagnosis?.proposedMutations.length ? diagnosis.proposedMutations.map((mutation, index) => <div key={`${mutation.type}-${index}`} className="rounded-2xl border border-violet-300/20 bg-violet-400/10 p-4 text-sm leading-6 text-violet-50"><div className="font-black">{cleanLabel(cleanMutationTypeLabel, mutation.type)}</div>{'orderId' in mutation && mutation.orderId && <div className="text-xs text-violet-100/75">订单：<span title={mutation.orderId}>{shortId(mutation.orderId)}</span></div>}{'newDate' in mutation && <div className="text-xs text-violet-100/75">目标日期：{mutation.newDate}</div>}{'minutes' in mutation && <div className="text-xs text-violet-100/75">异常工时：{mutation.minutes} 分钟；原因：{mutation.reason}</div>}<button type="button" onClick={() => rejectMutation(index)} disabled={ignoredMutationIndexes.includes(index)} className="mt-3 rounded-xl border border-violet-200/30 px-3 py-2 text-xs font-bold text-violet-100 disabled:opacity-50">{ignoredMutationIndexes.includes(index) ? '已忽略' : '忽略此建议'}</button></div>) : <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-5 text-sm text-slate-400 lg:col-span-2">暂无待人工确认的执行建议。</div>}</div>
-                    <div className="rounded-2xl border border-emerald-300/20 bg-slate-950/60 p-4"><div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"><div className="text-sm leading-6 text-slate-300">确认后才会调用后端执行建议；后端仍会校验图纸/物料状态，执行层仍受排产资格硬规则保护。</div><button type="button" onClick={applyMutations} disabled={!hasMutations || isApplying} className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-300 px-4 py-3 text-sm font-black text-slate-950 transition hover:bg-emerald-200 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500">{isApplying ? <Loader2 className="h-4 w-4 animate-spin" /> : <LockKeyhole className="h-4 w-4" />}{scheduleMutations.length ? '一键执行排单建议' : '确认执行建议'}</button></div></div>
+                    <div className="rounded-2xl border border-emerald-300/20 bg-slate-950/60 p-4"><div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"><div className="text-sm leading-6 text-slate-300">确认后才会调用后端执行建议；后端仍会校验图纸/物料状态，执行层仍受排产资格硬规则保护。{!schedulePlanExecutable ? ' 当前排单草案未通过计划逻辑校验，不能执行。' : ''}</div><button type="button" onClick={applyMutations} disabled={!hasMutations || isApplying || !schedulePlanExecutable} className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-300 px-4 py-3 text-sm font-black text-slate-950 transition hover:bg-emerald-200 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500">{isApplying ? <Loader2 className="h-4 w-4 animate-spin" /> : <LockKeyhole className="h-4 w-4" />}{scheduleMutations.length ? '一键执行排单建议' : '确认执行建议'}</button></div></div>
                     <div className="rounded-2xl border border-slate-600/40 bg-slate-950/55 p-4"><div className="mb-3 flex items-center justify-between gap-3"><div className="text-sm font-bold text-slate-100">可导出的汇总数据</div><button type="button" onClick={exportExcel} disabled={!hasExportRows} className="flex items-center gap-2 rounded-xl border border-cyan-300/25 bg-cyan-300/10 px-3 py-2 text-xs font-bold text-cyan-100 transition hover:bg-cyan-300/15 disabled:cursor-not-allowed disabled:opacity-50"><Download className="h-4 w-4" />导出 Excel</button></div><p className="text-sm text-slate-400">{hasExportRows ? `当前可导出 ${diagnosis?.exportDataSummary.length ?? 0} 条 AI 汇总。` : 'AI 返回汇总数据后可导出 Excel。'}</p></div>
                   </section>
                 )}
