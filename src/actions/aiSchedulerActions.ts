@@ -27,6 +27,7 @@ const ABNORMAL_CLAIM_CONTEXT_WARNING =
   '异常工时台账表 MesAbnormalClaim 不可用，本次 AI 仅基于订单、交期、产能、缺料和图纸状态进行分析。';
 
 export type AiCopilotMutation =
+  | { type: 'ASSIGN_ORDER_DAY'; orderId: string; assignedDay: string; plannedDate?: string; reason?: string }
   | { type: 'UPDATE_ORDER_DATE'; orderId: string; newDate: string }
   | { type: 'UPDATE_DELIVERY_DATE'; orderId: string; newDate: string }
   | { type: 'LOG_EXCEPTION_HOUR'; orderId?: string; minutes: number; reason: string };
@@ -60,12 +61,29 @@ export type AiPlannerReport = {
   }>;
 };
 
+export type AiSchedulePlanItem = {
+  orderId: string;
+  targetDay: '周一' | '周二' | '周三' | '周四' | '周五' | '周六';
+  targetDate?: string;
+  reason: string;
+  estimatedMinutes?: number;
+  priorityRank?: number;
+};
+
+export type AiSchedulePlan = {
+  title: string;
+  summary: string;
+  items: AiSchedulePlanItem[];
+  warnings: string[];
+};
+
 export type AiCopilotResponse = {
   reply: string;
   unreasonableAlerts: string[];
   proposedMutations: AiCopilotMutation[];
   exportDataSummary: AiCopilotExportRow[];
   plannerReport?: AiPlannerReport;
+  schedulePlan?: AiSchedulePlan;
 };
 
 export type AiCopilotContextSummary = {
@@ -242,6 +260,184 @@ function fallbackAiCopilotResponse(
   };
 }
 
+type CompactSchedulerOrder = {
+  id: string;
+  partNumber?: string;
+  client?: string;
+  plannedDate?: string | null;
+  assignedDay?: string;
+  deliveryDate?: string;
+  planMinutes?: number;
+  totalHours?: number;
+  taskStatus?: string;
+  isUrgent?: boolean;
+  scheduleEligible?: boolean;
+};
+
+function parseCompactOrders(context: string): CompactSchedulerOrder[] {
+  try {
+    const parsed = JSON.parse(context) as { orders?: unknown };
+    if (!Array.isArray(parsed.orders)) return [];
+    return parsed.orders.flatMap((item) => {
+      if (!item || typeof item !== 'object') return [];
+      const row = item as Record<string, unknown>;
+      const id = String(row.id ?? '').trim();
+      if (!id) return [];
+      return [
+        {
+          id,
+          partNumber: String(row.partNumber ?? '').trim(),
+          client: String(row.client ?? '').trim(),
+          plannedDate: typeof row.plannedDate === 'string' ? row.plannedDate : null,
+          assignedDay: String(row.assignedDay ?? '').trim(),
+          deliveryDate: String(row.deliveryDate ?? '').trim(),
+          planMinutes: Number(row.planMinutes ?? row.totalHours ?? 0) || 0,
+          totalHours: Number(row.totalHours ?? row.planMinutes ?? 0) || 0,
+          taskStatus: String(row.taskStatus ?? '').trim(),
+          isUrgent: row.isUrgent === true,
+          scheduleEligible: row.scheduleEligible === true,
+        },
+      ];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function buildWeekDates(): Record<ChineseScheduleDay, string> {
+  const now = new Date();
+  const local = new Date(now.toLocaleString('en-US', { timeZone: 'Asia/Shanghai' }));
+  const day = local.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  const monday = new Date(local);
+  monday.setHours(0, 0, 0, 0);
+  monday.setDate(local.getDate() + mondayOffset);
+  return CHINESE_SCHEDULE_DAYS.reduce(
+    (acc, label, index) => {
+      const d = new Date(monday);
+      d.setDate(monday.getDate() + index);
+      acc[label] = d.toISOString().slice(0, 10);
+      return acc;
+    },
+    {} as Record<ChineseScheduleDay, string>
+  );
+}
+
+function buildRuleSchedulePlan(
+  orders: CompactSchedulerOrder[],
+  currentBaseLimit: number,
+  reasonPrefix = '系统规则草案'
+): { schedulePlan: AiSchedulePlan; proposedMutations: AiCopilotMutation[]; plannerReport: AiPlannerReport } {
+  const capacity = Math.max(1, Math.round(Number(currentBaseLimit) || 1500));
+  const weekDates = buildWeekDates();
+  const dayLoads = new Map<ChineseScheduleDay, number>(CHINESE_SCHEDULE_DAYS.map((day) => [day, 0]));
+  const warnings: string[] = [];
+  const eligible = orders
+    .filter((order) => order.scheduleEligible === true)
+    .filter((order) => !['COMPLETED', 'completed', 'DONE', 'done'].includes(String(order.taskStatus ?? '')))
+    .sort((a, b) => {
+      const delivery = String(a.deliveryDate ?? '').localeCompare(String(b.deliveryDate ?? ''));
+      if (delivery !== 0) return delivery;
+      if (a.isUrgent !== b.isUrgent) return a.isUrgent ? -1 : 1;
+      return (Number(b.planMinutes) || 0) - (Number(a.planMinutes) || 0);
+    });
+
+  const items: AiSchedulePlanItem[] = [];
+  let dayIndex = 0;
+  for (const [index, order] of eligible.entries()) {
+    const minutes = Math.max(0, Math.round(Number(order.planMinutes ?? order.totalHours ?? 0) || 0));
+    let targetDay = CHINESE_SCHEDULE_DAYS[Math.min(dayIndex, CHINESE_SCHEDULE_DAYS.length - 1)];
+    const currentLoad = dayLoads.get(targetDay) ?? 0;
+    if (currentLoad > 0 && currentLoad + minutes > capacity && dayIndex < CHINESE_SCHEDULE_DAYS.length - 1) {
+      dayIndex += 1;
+      targetDay = CHINESE_SCHEDULE_DAYS[dayIndex];
+    }
+    const nextLoad = (dayLoads.get(targetDay) ?? 0) + minutes;
+    dayLoads.set(targetDay, nextLoad);
+    if (nextLoad > capacity) {
+      warnings.push(`${targetDay} 计划工时 ${nextLoad} 分钟，可能超过日基准 ${capacity} 分钟，请人工确认。`);
+    }
+    items.push({
+      orderId: order.id,
+      targetDay,
+      targetDate: weekDates[targetDay],
+      estimatedMinutes: minutes,
+      priorityRank: index + 1,
+      reason: `${reasonPrefix}：按交期优先排序${order.isUrgent ? '，该订单为急单' : ''}，预计 ${minutes} 分钟。`,
+    });
+  }
+
+  const proposedMutations: AiCopilotMutation[] = items.map((item) => ({
+    type: 'ASSIGN_ORDER_DAY',
+    orderId: item.orderId,
+    assignedDay: item.targetDay,
+    plannedDate: item.targetDate,
+    reason: item.reason,
+  }));
+
+  const schedulePlan: AiSchedulePlan = {
+    title: '本周排产草案',
+    summary: items.length
+      ? `已按交期优先生成 ${items.length} 条排产建议，范围为周一到周六。`
+      : '当前没有满足图纸已发且物料齐套的可排产订单，未生成排产建议。',
+    items,
+    warnings,
+  };
+
+  const plannerReport: AiPlannerReport = {
+    conclusion: `当前为系统规则生成的排产草案，不是模型智能分析。${schedulePlan.summary}`,
+    priorityActions: [
+      {
+        level: items.length ? 'MUST' : 'WATCH',
+        title: items.length ? '人工确认排产草案后执行' : '先补齐可排产订单条件',
+        reason: items.length
+          ? '排产草案只会在人工确认后写入；后端仍会校验图纸/物料状态。'
+          : '没有可排产订单时，AI 只能给出分析，不能生成有效写入动作。',
+        relatedOrderIds: items.slice(0, 20).map((item) => item.orderId),
+      },
+    ],
+    blockedGroups: [
+      {
+        reasonType: 'OTHER',
+        count: Math.max(0, orders.length - eligible.length),
+        orderIds: [],
+        suggestion: '图纸未发或物料未齐的订单不会进入本次排产草案。',
+      },
+    ],
+    questionsForHuman: [
+      {
+        question: '是否确认按该草案把可排产订单写入周一到周六？',
+        whyItMatters: '写入排产会改变看板排产日，必须由计划员人工确认。',
+        relatedOrderIds: items.slice(0, 20).map((item) => item.orderId),
+        suggestedOwner: '生产计划员',
+      },
+    ],
+  };
+
+  return { schedulePlan, proposedMutations, plannerReport };
+}
+
+function withRuleSchedulePlan(
+  result: AiCopilotResponse,
+  context: string,
+  currentBaseLimit: number,
+  shouldBuild: boolean,
+  reasonPrefix?: string
+): AiCopilotResponse {
+  if (!shouldBuild || result.schedulePlan?.items?.length || result.proposedMutations.some((m) => m.type === 'ASSIGN_ORDER_DAY' || m.type === 'UPDATE_ORDER_DATE')) {
+    return result;
+  }
+  const rule = buildRuleSchedulePlan(parseCompactOrders(context), currentBaseLimit, reasonPrefix);
+  return {
+    ...result,
+    reply: `${result.reply}\n\n${rule.schedulePlan.summary}`,
+    proposedMutations: [...result.proposedMutations, ...rule.proposedMutations],
+    plannerReport: result.plannerReport ?? rule.plannerReport,
+    schedulePlan: rule.schedulePlan,
+    unreasonableAlerts: uniqueNonEmpty([...result.unreasonableAlerts, ...rule.schedulePlan.warnings]),
+  };
+}
+
 function safeErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -271,6 +467,57 @@ function isIsoDate(value: unknown): value is string {
   return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.trim());
 }
 
+const CHINESE_SCHEDULE_DAYS = ['周一', '周二', '周三', '周四', '周五', '周六'] as const;
+const ENGLISH_SCHEDULE_DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
+
+type ChineseScheduleDay = (typeof CHINESE_SCHEDULE_DAYS)[number];
+
+function normalizeScheduleDay(value: unknown): { chinese: ChineseScheduleDay; assignedDay: string } | null {
+  const text = String(value ?? '').trim();
+  const aliases: Record<string, ChineseScheduleDay> = {
+    周一: '周一',
+    星期一: '周一',
+    Monday: '周一',
+    monday: '周一',
+    Mon: '周一',
+    mon: '周一',
+    周二: '周二',
+    星期二: '周二',
+    Tuesday: '周二',
+    tuesday: '周二',
+    Tue: '周二',
+    tue: '周二',
+    周三: '周三',
+    星期三: '周三',
+    Wednesday: '周三',
+    wednesday: '周三',
+    Wed: '周三',
+    wed: '周三',
+    周四: '周四',
+    星期四: '周四',
+    Thursday: '周四',
+    thursday: '周四',
+    Thu: '周四',
+    thu: '周四',
+    周五: '周五',
+    星期五: '周五',
+    Friday: '周五',
+    friday: '周五',
+    Fri: '周五',
+    fri: '周五',
+    周六: '周六',
+    星期六: '周六',
+    Saturday: '周六',
+    saturday: '周六',
+    Sat: '周六',
+    sat: '周六',
+  };
+  const chinese = aliases[text];
+  if (!chinese) return null;
+  const index = CHINESE_SCHEDULE_DAYS.indexOf(chinese);
+  return { chinese, assignedDay: ENGLISH_SCHEDULE_DAYS[index] };
+}
+
 function assignedDayFromYmd(ymd: string): string {
   const weekday = new Intl.DateTimeFormat('en-US', {
     weekday: 'long',
@@ -278,6 +525,10 @@ function assignedDayFromYmd(ymd: string): string {
   }).format(new Date(`${ymd}T00:00:00+08:00`));
   const allowed = new Set(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']);
   return allowed.has(weekday) ? weekday : 'Unscheduled';
+}
+
+function isSchedulePlanningPrompt(prompt: string): boolean {
+  return /排单|排产|周一|周二|周三|周四|周五|周六|按交期排|按工时排|一键排|帮我排产|生成本周排产建议|排到周/.test(prompt);
 }
 
 function normalizeAiPayload(raw: unknown): AiCopilotResponse {
@@ -294,6 +545,23 @@ function normalizeAiPayload(raw: unknown): AiCopilotResponse {
       return [{ type, orderId, newDate: item.newDate.trim() } as AiCopilotMutation];
     }
 
+    if (type === 'ASSIGN_ORDER_DAY') {
+      const orderId = String(item.orderId ?? '').trim();
+      const day = normalizeScheduleDay(item.assignedDay ?? item.targetDay);
+      const plannedDate = isIsoDate(item.plannedDate ?? item.targetDate) ? String(item.plannedDate ?? item.targetDate).trim() : undefined;
+      const reason = String(item.reason ?? '').trim();
+      if (!orderId || !day) return [];
+      return [
+        {
+          type: 'ASSIGN_ORDER_DAY',
+          orderId,
+          assignedDay: day.chinese,
+          ...(plannedDate ? { plannedDate } : {}),
+          ...(reason ? { reason } : {}),
+        },
+      ];
+    }
+
     if (type === 'LOG_EXCEPTION_HOUR') {
       const minutes = Math.max(1, Math.round(Number(item.minutes) || 0));
       const reason = String(item.reason ?? '').trim();
@@ -307,6 +575,37 @@ function normalizeAiPayload(raw: unknown): AiCopilotResponse {
 
   const exportRows = Array.isArray(obj.exportDataSummary) ? obj.exportDataSummary : [];
   const rawReport = obj.plannerReport && typeof obj.plannerReport === 'object' ? (obj.plannerReport as Record<string, unknown>) : null;
+  const rawSchedulePlan = obj.schedulePlan && typeof obj.schedulePlan === 'object' ? (obj.schedulePlan as Record<string, unknown>) : null;
+  const rawScheduleItems = Array.isArray(rawSchedulePlan?.items) ? rawSchedulePlan.items : [];
+  const scheduleItems: AiSchedulePlanItem[] = rawScheduleItems.flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const row = item as Record<string, unknown>;
+    const orderId = String(row.orderId ?? '').trim();
+    const day = normalizeScheduleDay(row.targetDay ?? row.assignedDay);
+    if (!orderId || !day) return [];
+    const targetDate = isIsoDate(row.targetDate ?? row.plannedDate) ? String(row.targetDate ?? row.plannedDate).trim() : undefined;
+    return [
+      {
+        orderId,
+        targetDay: day.chinese,
+        ...(targetDate ? { targetDate } : {}),
+        reason: String(row.reason ?? '按交期和产能建议排产').trim(),
+        estimatedMinutes: row.estimatedMinutes == null ? undefined : Math.max(0, Math.round(Number(row.estimatedMinutes) || 0)),
+        priorityRank: row.priorityRank == null ? undefined : Math.max(1, Math.round(Number(row.priorityRank) || 1)),
+      },
+    ];
+  });
+  if (scheduleItems.length && !safeMutations.some((m) => m.type === 'ASSIGN_ORDER_DAY' || m.type === 'UPDATE_ORDER_DATE')) {
+    safeMutations.push(
+      ...scheduleItems.map((item) => ({
+        type: 'ASSIGN_ORDER_DAY' as const,
+        orderId: item.orderId,
+        assignedDay: item.targetDay,
+        ...(item.targetDate ? { plannedDate: item.targetDate } : {}),
+        reason: item.reason,
+      }))
+    );
+  }
   const priorityActions = Array.isArray(rawReport?.priorityActions) ? rawReport.priorityActions : [];
   const blockedGroups = Array.isArray(rawReport?.blockedGroups) ? rawReport.blockedGroups : [];
   const questionsForHuman = Array.isArray(rawReport?.questionsForHuman) ? rawReport.questionsForHuman : [];
@@ -368,6 +667,14 @@ function normalizeAiPayload(raw: unknown): AiCopilotResponse {
               },
             ];
           }),
+        }
+      : undefined,
+    schedulePlan: rawSchedulePlan
+      ? {
+          title: String(rawSchedulePlan.title ?? '本周排产草案'),
+          summary: String(rawSchedulePlan.summary ?? `已生成 ${scheduleItems.length} 条排产建议。`),
+          items: scheduleItems,
+          warnings: Array.isArray(rawSchedulePlan.warnings) ? rawSchedulePlan.warnings.map((item) => String(item)).filter(Boolean) : [],
         }
       : undefined,
   };
@@ -553,17 +860,22 @@ export async function interactWithAiCopilotAction(
     };
   }
 
+  const shouldBuildSchedulePlan = isSchedulePlanningPrompt(prompt);
   const apiKey = (process.env.DEEPSEEK_API_KEY ?? '').trim();
   if (!apiKey) {
-    const reply = 'AI 模型未配置，本次先提供系统规则体检结果：模型不会被调用，但订单上下文、排产资格和风险数量仍可用于计划员判断。';
+    const reply = 'AI ?????????????????????????????????????????????????????';
+    const data = withRuleSchedulePlan(
+      fallbackAiCopilotResponse(reply, ['?? DEEPSEEK_API_KEY????????????'], contextResult.summary, sanitizedUiContext),
+      contextResult.context,
+      currentBaseLimit,
+      shouldBuildSchedulePlan,
+      'AI Key ?????????'
+    );
     return {
       ok: true,
-      data: withContextWarnings(
-        fallbackAiCopilotResponse(reply, ['缺少 DEEPSEEK_API_KEY，当前为系统规则体检结果'], contextResult.summary, sanitizedUiContext),
-        contextResult.warnings
-      ),
+      data: withContextWarnings(data, contextResult.warnings),
       contextSummary: contextResult.summary,
-      audit: { enabled: false, persistenceWarning: 'AI Key 未配置，本次未创建模型分析审计记录' },
+      audit: { enabled: false, persistenceWarning: 'AI Key ?????????????????' },
     };
   }
 
@@ -625,6 +937,8 @@ export async function interactWithAiCopilotAction(
   };
 
   const pageContextText = JSON.stringify(sanitizedUiContext ?? { unavailable: true });
+  const scheduleInstruction =
+    '排产任务硬要求：当用户要求排单、排产、按交期排、安排到周一到周六或生成本周排产建议时，必须返回 schedulePlan 和 proposedMutations。schedulePlan.items 的 targetDay 只能是周一、周二、周三、周四、周五、周六。对应 proposedMutations 请使用 { "type": "ASSIGN_ORDER_DAY", "orderId": "...", "assignedDay": "周一", "plannedDate": "YYYY-MM-DD", "reason": "..." }。只允许选择 scheduleEligible=true 的订单；图纸未下发不得排产；物料未齐不得排产；SOP 缺失只提醒，不拦截；不能编造不存在的订单 ID；每条建议必须说明原因；所有写入都必须等待人工确认，后端仍会重新校验 canEnterSchedule。schedulePlan JSON 结构为 { "title": "本周排产草案", "summary": "...", "items": [{ "orderId": "...", "targetDay": "周一", "targetDate": "YYYY-MM-DD", "reason": "...", "estimatedMinutes": 120, "priorityRank": 1 }], "warnings": [] }。';
   const system =
     '系统级硬规则：图纸未下发禁止排产，必须保留在技术攻坚池；配料未齐禁止排产，必须保留在仓库配料池；只有 scheduleEligible=true 才允许生成 UPDATE_ORDER_DATE。SOP 未上传仅作为文档提醒，不作为排产拦截条件。违反这些规则的建议会被后端拒绝执行。\n\n' +
     '你是一个严谨的生产计划员工，不是闲聊助手。当前系统时间为 2026年5月11日。请阅读系统提供的当前车间排单上下文、每日产能基准以及异常工时台账，并理解用户的自然语言任务。\n' +
@@ -677,7 +991,7 @@ export async function interactWithAiCopilotAction(
         temperature: 0.1,
         response_format: { type: 'json_object' },
         messages: [
-          { role: 'system', content: system },
+          { role: 'system', content: `${system}\n\n${scheduleInstruction}` },
           {
             role: 'user',
             content: `当前排产上下文 JSON：${contextResult.context}\n\n当前用户页面上下文 JSON：${pageContextText}\n\n用户自然语言指令：${prompt}`,
@@ -757,7 +1071,13 @@ export async function interactWithAiCopilotAction(
 
     try {
       const parsedResult = JSON.parse(extractJsonObjectText(rawContent));
-      const normalized = normalizeAiPayload(parsedResult);
+      const normalized = withRuleSchedulePlan(
+        normalizeAiPayload(parsedResult),
+        contextResult.context,
+        currentBaseLimit,
+        shouldBuildSchedulePlan,
+        '模型未返回可执行草案，使用系统规则补充'
+      );
       const data = withContextWarnings(
         normalized.plannerReport ? normalized : { ...normalized, plannerReport: buildFallbackPlannerReport(contextResult.summary, undefined, sanitizedUiContext) },
         contextResult.warnings
@@ -823,6 +1143,46 @@ export async function interactWithAiCopilotAction(
   }
 }
 
+export async function generateRuleSchedulePlanAction(
+  currentBaseLimit = 1500,
+  uiContext?: AiPlannerUiContext
+): Promise<AiCopilotActionResult> {
+  const sanitizedUiContext = sanitizeUiContext(uiContext);
+  try {
+    const contextResult = await buildSchedulerContext(currentBaseLimit);
+    const rule = buildRuleSchedulePlan(parseCompactOrders(contextResult.context), currentBaseLimit, '手动触发规则草案');
+    const data: AiCopilotResponse = withContextWarnings(
+      {
+        reply: `已生成规则排产草案。${rule.schedulePlan.summary}`,
+        unreasonableAlerts: rule.schedulePlan.warnings,
+        proposedMutations: rule.proposedMutations,
+        exportDataSummary: [],
+        plannerReport: rule.plannerReport,
+        schedulePlan: rule.schedulePlan,
+      },
+      contextResult.warnings
+    );
+    return {
+      ok: true,
+      data,
+      contextSummary: contextResult.summary,
+      audit: { enabled: false, persistenceWarning: '规则草案未调用模型，也不会创建 AI 审计记录' },
+    };
+  } catch (error) {
+    const message = safeErrorMessage(error);
+    return {
+      ok: false,
+      error: `生成规则排产草案失败：${message}`,
+      data: fallbackAiCopilotResponse(
+        `生成规则排产草案失败：${message.slice(0, 180)}`,
+        ['规则排产草案生成失败，请检查数据库连接和订单表状态'],
+        undefined,
+        sanitizedUiContext
+      ),
+    };
+  }
+}
+
 export async function executeAiCopilotMutationsAction(
   proposedMutations: AiCopilotMutation[],
   aiRunId?: string
@@ -849,6 +1209,66 @@ export async function executeAiCopilotMutationsAction(
       });
 
       for (const [mutationIndex, m] of list.entries()) {
+        if (m.type === 'ASSIGN_ORDER_DAY') {
+          const day = normalizeScheduleDay(m.assignedDay);
+          if (!day || !m.orderId) {
+            rejectedMutations.push({ mutation: m, reason: '目标排产日无效，系统只允许周一到周六。' });
+            executionResults.push({ mutationIndex, status: 'FAILED', reason: 'INVALID_TARGET_DAY' });
+            continue;
+          }
+          const order = await tx.order.findFirst({
+            where: { id: m.orderId, deletedAt: null, isArchived: false },
+            select: {
+              id: true,
+              model: true,
+              assignedDay: true,
+              plannedDate: true,
+              taskStatus: true,
+              isDrawingReady: true,
+              isMaterialReady: true,
+            },
+          });
+          if (!order) {
+            rejectedMutations.push({ mutation: m, reason: `订单 ${m.orderId} 不存在或已归档，无法排产。` });
+            executionResults.push({ mutationIndex, status: 'FAILED', reason: 'ORDER_NOT_FOUND' });
+            continue;
+          }
+          if (!canEnterSchedule(order)) {
+            const reasons = getScheduleBlockReasons(order);
+            const reason = `AI 建议已被系统拦截：${formatScheduleBlockMessage(order, reasons)}`;
+            rejectedMutations.push({ mutation: m, reason });
+            executionResults.push({
+              mutationIndex,
+              status: 'BLOCKED',
+              reason: reasons[0] || 'SCHEDULE_NOT_ALLOWED',
+            });
+            continue;
+          }
+          const updateData: Prisma.OrderUpdateManyMutationInput = {
+            assignedDay: day.assignedDay,
+            taskStatus: 'SCHEDULED',
+          };
+          if (m.plannedDate && isIsoDate(m.plannedDate)) updateData.plannedDate = m.plannedDate;
+          const result = await tx.order.updateMany({
+            where: { id: m.orderId, deletedAt: null, isArchived: false },
+            data: updateData,
+          });
+          if (result.count > 0) {
+            await tx.mesActivityLog.create({
+              data: {
+                ts: Date.now(),
+                text: `AI计划员建议经人工确认后执行排产：订单 ${order.model} 安排到 ${day.chinese}${m.reason ? `；原因：${m.reason}` : ''}`,
+                operator: 'AI Planner',
+                role: 'planner',
+                actionType: 'ai_schedule_apply',
+              },
+            });
+          }
+          updatedOrders += result.count;
+          executionResults.push({ mutationIndex, status: 'EXECUTED' });
+          continue;
+        }
+
         if (m.type === 'UPDATE_ORDER_DATE') {
           if (!isIsoDate(m.newDate) || !m.orderId) continue;
           const order = await tx.order.findFirst({

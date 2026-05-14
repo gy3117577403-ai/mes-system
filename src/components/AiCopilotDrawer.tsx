@@ -24,6 +24,7 @@ import {
 import { toast } from 'react-hot-toast';
 import {
   executeAiCopilotMutationsAction,
+  generateRuleSchedulePlanAction,
   interactWithAiCopilotAction,
   type AiCopilotActionResult,
   type AiCopilotContextSummary,
@@ -190,6 +191,7 @@ const cleanTodoStatusLabel: Record<AiPlannerTodoStatus, string> = {
 };
 
 const cleanMutationTypeLabel: Record<string, string> = {
+  ASSIGN_ORDER_DAY: '安排排产日',
   UPDATE_ORDER_DATE: '调整排产日期',
   UPDATE_DELIVERY_DATE: '修改交期',
   LOG_EXCEPTION_HOUR: '记录异常工时',
@@ -393,6 +395,13 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
   const [diagnostics, setDiagnostics] = useState<ContextDiagnostics | null>(null);
   const [auditRef, setAuditRef] = useState<AiAuditRef | null>(null);
   const [ignoredMutationIndexes, setIgnoredMutationIndexes] = useState<number[]>([]);
+  const [executionResult, setExecutionResult] = useState<{
+    executedAt: string;
+    successCount: number;
+    blockedCount: number;
+    failedCount: number;
+    details: Array<{ reason: string; orderId?: string; type?: string }>;
+  } | null>(null);
   const [plannerTodos, setPlannerTodos] = useState<AiPlannerTodo[]>([]);
   const [todoFilter, setTodoFilter] = useState<TodoFilter>('ALL');
   const [dailyReport, setDailyReport] = useState<AiPlannerDailyReport | null>(null);
@@ -417,7 +426,13 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
   );
   const activeSummary = serverSummary ?? localSummary;
   const hasMutations = (diagnosis?.proposedMutations.length ?? 0) > 0;
+  const scheduleMutations = useMemo(
+    () => (diagnosis?.proposedMutations ?? []).filter((m) => m.type === 'ASSIGN_ORDER_DAY' || m.type === 'UPDATE_ORDER_DATE'),
+    [diagnosis?.proposedMutations]
+  );
+  const hasScheduleDraft = scheduleMutations.length > 0 || (diagnosis?.schedulePlan?.items.length ?? 0) > 0;
   const hasExportRows = (diagnosis?.exportDataSummary.length ?? 0) > 0;
+  const orderById = useMemo(() => new Map(orders.map((order) => [order.id, order])), [orders]);
   const selectedTask = selectedTaskId ? getAiPlannerTaskTemplate(selectedTaskId) : undefined;
   const plannerReport = diagnosis?.plannerReport;
   const visibleTodos = useMemo(
@@ -486,7 +501,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
 
   const mutationSummary = useMemo(() => {
     if (!diagnosis?.proposedMutations.length) return '暂无待执行动作';
-    const orderMoves = diagnosis.proposedMutations.filter((m) => m.type === 'UPDATE_ORDER_DATE').length;
+    const orderMoves = diagnosis.proposedMutations.filter((m) => m.type === 'UPDATE_ORDER_DATE' || m.type === 'ASSIGN_ORDER_DAY').length;
     const deliveryChanges = diagnosis.proposedMutations.filter((m) => m.type === 'UPDATE_DELIVERY_DATE').length;
     const exceptionLogs = diagnosis.proposedMutations.filter((m) => m.type === 'LOG_EXCEPTION_HOUR').length;
     return [`排产调整 ${orderMoves}`, `交期修改 ${deliveryChanges}`, `异常工时 ${exceptionLogs}`].join(' / ');
@@ -796,10 +811,32 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
     setErrorMessage('');
     setModelPreview('');
     setWorkerState('confirming');
+    const executableMutations = diagnosis.proposedMutations.filter((_, index) => !ignoredMutationIndexes.includes(index));
+    const scheduleCount = executableMutations.filter((m) => m.type === 'ASSIGN_ORDER_DAY' || m.type === 'UPDATE_ORDER_DATE').length;
+    const confirmed = window.confirm(
+      scheduleCount > 0
+        ? `将执行 ${scheduleCount} 条排产建议，目标范围为周一到周六。系统会再次校验图纸/物料状态，不符合条件的订单会被拦截。是否继续？`
+        : `将执行 ${executableMutations.length} 条 AI 建议。系统会在后端再次校验权限和业务规则。是否继续？`
+    );
+    if (!confirmed) {
+      toast('已取消执行，未写入订单。');
+      return;
+    }
     startApplying(async () => {
       try {
-        const executableMutations = diagnosis.proposedMutations.filter((_, index) => !ignoredMutationIndexes.includes(index));
         const res = await executeAiCopilotMutationsAction(executableMutations, auditRef?.aiRunId);
+        const rejected = res.rejectedMutations ?? [];
+        setExecutionResult({
+          executedAt: new Date().toLocaleString('zh-CN', { hour12: false }),
+          successCount: Math.max(0, res.updatedOrders + res.exceptionLogs),
+          blockedCount: rejected.filter((item) => /拦截|禁止|图纸|物料|DRAWING|MATERIAL/.test(item.reason)).length,
+          failedCount: rejected.filter((item) => !/拦截|禁止|图纸|物料|DRAWING|MATERIAL/.test(item.reason)).length,
+          details: rejected.map((item) => ({
+            reason: item.reason,
+            type: item.mutation.type,
+            orderId: 'orderId' in item.mutation ? item.mutation.orderId : undefined,
+          })),
+        });
         if (res.unreasonableAlerts?.length) {
           setDiagnosis((prev) =>
             prev
@@ -822,6 +859,39 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
         setWorkerState('done');
         toast.success(`已执行：订单更新 ${res.updatedOrders} 条，异常工时 ${res.exceptionLogs} 条`);
         await onApplied?.();
+      } catch (error) {
+        const message = classifyCopilotError(error instanceof Error ? error.message : String(error));
+        setErrorMessage(message);
+        setWorkerState('error');
+        toast.error(message);
+      }
+    });
+  };
+
+  const generateRuleScheduleDraft = () => {
+    setErrorMessage('');
+    setWorkerState('thinking');
+    startThinking(async () => {
+      try {
+        const res = await generateRuleSchedulePlanAction(currentBaseLimit, {
+          ...mergedUiContext,
+          selectedTaskId: 'DAILY_PLANNING_CHECKUP',
+          selectedTaskName: '规则排产草案',
+        });
+        if (!res.ok || !res.data) {
+          const message = classifyCopilotError(res.error ?? '生成规则排产草案失败');
+          setErrorMessage(message);
+          setWorkerState('error');
+          toast.error(message);
+          return;
+        }
+        setDiagnosis(res.data);
+        setServerSummary(res.contextSummary ?? null);
+        setSummarySource(res.contextSummary ? 'server' : 'local');
+        setAuditRef(res.audit ?? null);
+        setActiveTab('execution');
+        setWorkerState(res.data.proposedMutations.length > 0 ? 'confirming' : 'done');
+        toast.success('已生成规则排产草案，等待人工确认执行');
       } catch (error) {
         const message = classifyCopilotError(error instanceof Error ? error.message : String(error));
         setErrorMessage(message);
@@ -930,6 +1000,59 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
 
   const contextWarnings = activeSummary.contextWarnings ?? [];
   const readyFlagProblems = diagnostics?.readyFlags?.legacyTextReadyButFlagBlocked ?? 0;
+
+  const renderSchedulePlanPreview = () => {
+    if (!diagnosis?.schedulePlan) return null;
+    return (
+      <div className="rounded-2xl border border-cyan-300/20 bg-cyan-400/10 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="text-lg font-black text-white">{diagnosis.schedulePlan.title || '排产草案'}</div>
+            <p className="mt-1 text-sm leading-6 text-cyan-50/85">{diagnosis.schedulePlan.summary}</p>
+          </div>
+          <div className="rounded-xl border border-cyan-200/25 bg-cyan-300/10 px-3 py-2 text-xs font-black text-cyan-100">
+            共 {diagnosis.schedulePlan.items.length} 条建议
+          </div>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {['周一', '周二', '周三', '周四', '周五', '周六'].map((day) => {
+            const items = diagnosis.schedulePlan?.items.filter((item) => item.targetDay === day) ?? [];
+            const minutes = items.reduce((sum, item) => sum + (Number(item.estimatedMinutes) || 0), 0);
+            const overloaded = minutes > currentBaseLimit;
+            return (
+              <div key={day} className={cn('rounded-2xl border p-3', overloaded ? 'border-amber-300/30 bg-amber-400/10' : 'border-white/10 bg-slate-950/45')}>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="font-black text-white">{day}</div>
+                  <div className={cn('text-xs font-bold', overloaded ? 'text-amber-100' : 'text-slate-400')}>
+                    {items.length} 单 / {minutes} 分钟
+                  </div>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {items.slice(0, 4).map((item) => {
+                    const order = orderById.get(item.orderId);
+                    return (
+                      <div key={`${day}-${item.orderId}`} className="rounded-xl border border-white/10 bg-white/[0.035] p-2 text-xs leading-5 text-slate-300">
+                        <div className="font-bold text-white">{order ? `${order.client || '客户'} · ${order.model || '型号'}` : shortId(item.orderId)}</div>
+                        <div>订单：<span title={item.orderId}>{shortId(item.orderId)}</span></div>
+                        <div>原因：{item.reason || '按交期和工时建议排产'}</div>
+                      </div>
+                    );
+                  })}
+                  {items.length > 4 ? <div className="text-xs text-slate-500">等 {items.length - 4} 单</div> : null}
+                  {!items.length ? <div className="text-xs text-slate-500">暂无安排</div> : null}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {diagnosis.schedulePlan.warnings.length ? (
+          <div className="mt-3 rounded-xl border border-amber-300/25 bg-amber-400/10 p-3 text-xs leading-5 text-amber-100">
+            {diagnosis.schedulePlan.warnings.slice(0, 3).map((warning, index) => <div key={`${warning}-${index}`}>{warning}</div>)}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
 
   return (
     <>
@@ -1138,8 +1261,27 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                 {activeTab === 'execution' && (
                   <section className="space-y-4">
                     <div className="rounded-2xl border border-emerald-300/20 bg-emerald-300/[0.06] p-4"><div className="mb-2 text-lg font-black text-white">建议执行</div><p className="text-sm leading-6 text-slate-300">AI 只提出建议。涉及排产写入必须人工确认，后端仍会校验图纸和物料状态。</p><div className="mt-2 text-xs text-slate-500">{mutationSummary}</div></div>
+                    {renderSchedulePlanPreview()}
+                    {!hasScheduleDraft ? (
+                      <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-5 text-sm leading-6 text-slate-300">
+                        ?? AI ??????????????????????????????????????????????????????????
+                    {executionResult ? (
+                      <div className="rounded-2xl border border-emerald-300/20 bg-emerald-400/10 p-4">
+                        <div className="text-sm font-black text-emerald-100">????</div>
+                        <div className="mt-2 grid gap-2 text-sm text-slate-200 md:grid-cols-4">
+                          <span>???{executionResult.executedAt}</span>
+                          <span>???{executionResult.successCount}</span>
+                          <span>???{executionResult.blockedCount}</span>
+                          <span>???{executionResult.failedCount}</span>
+                        </div>
+                        {executionResult.details.length ? <details className="mt-3 text-xs leading-5 text-emerald-50"><summary className="cursor-pointer font-bold">????/????</summary>{executionResult.details.slice(0, 8).map((item, index) => <div key={`${item.orderId ?? item.type}-${index}`} className="mt-2 rounded-xl border border-white/10 bg-slate-950/40 p-2">{item.orderId ? `?? ${shortId(item.orderId)}?` : ""}{item.reason}</div>)}</details> : null}
+                      </div>
+                    ) : null}
+                        <div className="mt-3"><button type="button" onClick={generateRuleScheduleDraft} disabled={isThinking} className="rounded-xl border border-cyan-200/30 bg-cyan-300/10 px-3 py-2 text-xs font-black text-cyan-100 hover:bg-cyan-300/15 disabled:opacity-50">????????</button></div>
+                      </div>
+                    ) : null}
                     <div className="grid gap-3 lg:grid-cols-2">{diagnosis?.proposedMutations.length ? diagnosis.proposedMutations.map((mutation, index) => <div key={`${mutation.type}-${index}`} className="rounded-2xl border border-violet-300/20 bg-violet-400/10 p-4 text-sm leading-6 text-violet-50"><div className="font-black">{cleanLabel(cleanMutationTypeLabel, mutation.type)}</div>{'orderId' in mutation && mutation.orderId && <div className="text-xs text-violet-100/75">订单：<span title={mutation.orderId}>{shortId(mutation.orderId)}</span></div>}{'newDate' in mutation && <div className="text-xs text-violet-100/75">目标日期：{mutation.newDate}</div>}{'minutes' in mutation && <div className="text-xs text-violet-100/75">异常工时：{mutation.minutes} 分钟；原因：{mutation.reason}</div>}<button type="button" onClick={() => rejectMutation(index)} disabled={ignoredMutationIndexes.includes(index)} className="mt-3 rounded-xl border border-violet-200/30 px-3 py-2 text-xs font-bold text-violet-100 disabled:opacity-50">{ignoredMutationIndexes.includes(index) ? '已忽略' : '忽略此建议'}</button></div>) : <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-5 text-sm text-slate-400 lg:col-span-2">暂无待人工确认的执行建议。</div>}</div>
-                    <div className="rounded-2xl border border-emerald-300/20 bg-slate-950/60 p-4"><div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"><div className="text-sm leading-6 text-slate-300">确认后才会调用后端执行建议；执行层仍受排产资格硬规则保护。</div><button type="button" onClick={applyMutations} disabled={!hasMutations || isApplying} className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-300 px-4 py-3 text-sm font-black text-slate-950 transition hover:bg-emerald-200 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500">{isApplying ? <Loader2 className="h-4 w-4 animate-spin" /> : <LockKeyhole className="h-4 w-4" />}确认执行建议</button></div></div>
+                    <div className="rounded-2xl border border-emerald-300/20 bg-slate-950/60 p-4"><div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center"><div className="text-sm leading-6 text-slate-300">确认后才会调用后端执行建议；后端仍会校验图纸/物料状态，执行层仍受排产资格硬规则保护。</div><button type="button" onClick={applyMutations} disabled={!hasMutations || isApplying} className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-300 px-4 py-3 text-sm font-black text-slate-950 transition hover:bg-emerald-200 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500">{isApplying ? <Loader2 className="h-4 w-4 animate-spin" /> : <LockKeyhole className="h-4 w-4" />}{scheduleMutations.length ? '一键执行排单建议' : '确认执行建议'}</button></div></div>
                     <div className="rounded-2xl border border-slate-600/40 bg-slate-950/55 p-4"><div className="mb-3 flex items-center justify-between gap-3"><div className="text-sm font-bold text-slate-100">可导出的汇总数据</div><button type="button" onClick={exportExcel} disabled={!hasExportRows} className="flex items-center gap-2 rounded-xl border border-cyan-300/25 bg-cyan-300/10 px-3 py-2 text-xs font-bold text-cyan-100 transition hover:bg-cyan-300/15 disabled:cursor-not-allowed disabled:opacity-50"><Download className="h-4 w-4" />导出 Excel</button></div><p className="text-sm text-slate-400">{hasExportRows ? `当前可导出 ${diagnosis?.exportDataSummary.length ?? 0} 条 AI 汇总。` : 'AI 返回汇总数据后可导出 Excel。'}</p></div>
                   </section>
                 )}
