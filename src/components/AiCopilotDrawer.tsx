@@ -393,22 +393,26 @@ function buildLocalSummary(orders: Order[], dailyCapacity: number): AiCopilotCon
 function metricCard(label: string, value: number | string, detail: string, tone = 'cyan') {
   const toneClass =
     tone === 'red'
-      ? 'border-rose-400/25 bg-rose-500/10 text-rose-100'
+      ? 'border-rose-300/25 bg-gradient-to-br from-rose-400/12 to-slate-950/20 text-rose-100'
       : tone === 'amber'
-        ? 'border-amber-300/25 bg-amber-400/10 text-amber-100'
+        ? 'border-amber-300/25 bg-gradient-to-br from-amber-400/12 to-slate-950/20 text-amber-100'
         : tone === 'emerald'
-          ? 'border-emerald-300/25 bg-emerald-400/10 text-emerald-100'
-          : 'border-cyan-300/20 bg-cyan-400/10 text-cyan-100';
+          ? 'border-emerald-300/25 bg-gradient-to-br from-emerald-400/12 to-slate-950/20 text-emerald-100'
+          : 'border-cyan-300/20 bg-gradient-to-br from-cyan-400/12 to-slate-950/20 text-cyan-100';
   return (
-    <div className={cn('rounded-xl border p-3', toneClass)}>
-      <div className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">{label}</div>
-      <div className="mt-1 text-2xl font-black tabular-nums text-white">{value}</div>
-      <div className="mt-1 text-[11px] leading-4 text-slate-400">{detail}</div>
+    <div className={cn('rounded-2xl border p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]', toneClass)}>
+      <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">{label}</div>
+      <div className="mt-1.5 text-2xl font-black tabular-nums text-white">{value}</div>
+      <div className="mt-1.5 text-[11px] leading-4 text-slate-400">{detail}</div>
     </div>
   );
 }
 
 const workbenchDays = ['周一', '周二', '周三', '周四', '周五', '周六'];
+const workbenchPanelClass =
+  'rounded-[28px] border border-white/10 bg-slate-950/60 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]';
+const workbenchSubPanelClass =
+  'rounded-2xl border border-white/10 bg-white/[0.035] shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]';
 
 function formatSignedMinutes(value?: number): string {
   const minutes = Math.round(Number(value) || 0);
@@ -1348,8 +1352,8 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
     ].filter(Boolean);
 
     return (
-      <div className="space-y-5">
-        <section className="rounded-3xl border border-cyan-300/20 bg-gradient-to-br from-cyan-400/10 via-slate-950/70 to-slate-950/95 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+      <div className="space-y-6">
+        <section className="rounded-[28px] border border-cyan-200/15 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.16),transparent_36%),linear-gradient(135deg,rgba(15,23,42,0.96),rgba(2,8,23,0.96))] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
               <div className="text-xs font-bold uppercase tracking-[0.22em] text-cyan-200/75">Schedule Draft</div>
@@ -1371,7 +1375,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
         </section>
 
         {diagnosis.schedulePlan.candidateSummary ? (
-          <section className="rounded-3xl border border-white/10 bg-slate-950/55 p-4">
+          <section className={cn(workbenchPanelClass, 'p-4 md:p-5')}>
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-black text-white">候选订单识别</div>
@@ -1390,7 +1394,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                 ['交期需确认', diagnosis.schedulePlan.candidateSummary.excludedByInvalidDelivery ?? 0],
                 ['完成/归档/删除', diagnosis.schedulePlan.candidateSummary.excludedByDoneArchivedDeleted],
               ].map(([label, value]) => (
-                <div key={String(label)} className="rounded-2xl border border-white/10 bg-white/[0.035] p-3">
+                <div key={String(label)} className={cn(workbenchSubPanelClass, 'p-3.5')}>
                   <div className="text-[11px] text-slate-500">{label}</div>
                   <div className="mt-1 text-lg font-black tabular-nums text-white">{value} 单</div>
                 </div>
@@ -1399,8 +1403,8 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
           </section>
         ) : null}
 
-        <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-          <div className="rounded-3xl border border-white/10 bg-slate-950/55 p-4">
+        <section className="grid gap-4">
+          <div className={cn(workbenchPanelClass, 'p-4 md:p-5')}>
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
               <div>
                 <div className="text-sm font-black text-white">周一到周六排产看板</div>
@@ -1411,7 +1415,8 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
               </span>
             </div>
 
-            <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-6">
+            <div className="-mx-2 overflow-x-auto px-2 pb-2 [scrollbar-color:rgba(125,211,252,0.45)_rgba(15,23,42,0.9)]">
+            <div className="grid min-w-[1180px] grid-cols-6 gap-3">
               {workbenchDays.map((day) => {
                 const items = diagnosis.schedulePlan?.items.filter((item) => item.targetDay === day) ?? [];
                 const minutes = items.reduce((sum, item) => sum + (Number(item.estimatedMinutes) || 0), 0);
@@ -1423,7 +1428,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                 const dateLabel = items.find((item) => item.targetDate)?.targetDate;
 
                 return (
-                  <div key={day} className="flex min-h-[330px] flex-col rounded-2xl border border-cyan-200/15 bg-[#071522]/85 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+                  <div key={day} className="flex min-h-[420px] flex-col rounded-2xl border border-cyan-200/14 bg-[#071522]/90 p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.055)] transition hover:border-cyan-200/28 hover:bg-[#091b2b]/95">
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <div className="text-base font-black text-white">{day}</div>
@@ -1434,11 +1439,11 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                       </span>
                     </div>
                     <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-                      <div className="rounded-xl border border-white/10 bg-white/[0.035] p-2">
+                      <div className={cn(workbenchSubPanelClass, 'p-2.5')}>
                         <div className="text-slate-500">订单数</div>
                         <div className="mt-1 font-black text-white">{items.length} 单</div>
                       </div>
-                      <div className="rounded-xl border border-white/10 bg-white/[0.035] p-2">
+                      <div className={cn(workbenchSubPanelClass, 'p-2.5')}>
                         <div className="text-slate-500">总工时</div>
                         <div className="mt-1 font-black text-white">{minutes} 分钟</div>
                       </div>
@@ -1463,7 +1468,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                           order?.deliveryDate ||
                           '待确认';
                         return (
-                          <div key={`${day}-${item.orderId}`} className="rounded-2xl border border-white/10 bg-white/[0.045] p-3 text-xs leading-5 text-slate-300">
+                          <div key={`${day}-${item.orderId}`} className="rounded-2xl border border-white/10 bg-slate-950/45 p-3 text-xs leading-5 text-slate-300 transition hover:border-cyan-200/24 hover:bg-slate-900/60">
                             <div className="flex items-start justify-between gap-2">
                               <div className="min-w-0">
                                 <div className="truncate font-black text-white" title={getOrderDisplayName(order)}>
@@ -1477,16 +1482,16 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                                 {minutesForOrder} 分钟
                               </span>
                             </div>
-                            <div className="mt-2 grid grid-cols-2 gap-1 text-[11px] text-slate-400">
-                              <span>交期：{displayDeliveryDate}</span>
-                              <span>状态：已发图 / 料齐</span>
+                            <div className="mt-2 grid gap-1 text-[11px] text-slate-400">
+                              <span className="truncate">交期：{displayDeliveryDate}</span>
+                              <span className="truncate">状态：已发图 / 料齐</span>
                             </div>
                             <div className="mt-2 flex flex-wrap gap-1">
                               {order?.isUrgent ? <span className="rounded-full bg-rose-400/15 px-2 py-0.5 text-[10px] font-bold text-rose-100">急单</span> : null}
                               {order && isRiskOrder(order) ? <span className="rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-bold text-amber-100">交期风险</span> : null}
                               {order && isScheduleAssigned(order) ? <span className="rounded-full bg-violet-400/15 px-2 py-0.5 text-[10px] font-bold text-violet-100">已排重平衡</span> : null}
                             </div>
-                            <p className="mt-2 text-[11px] leading-5 text-slate-400">{cleanScheduleReason(item, order)}</p>
+                            <p className="mt-2 line-clamp-5 break-words text-[11px] leading-5 text-slate-400">{cleanScheduleReason(item, order)}</p>
                           </div>
                         );
                       })}
@@ -1497,10 +1502,11 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                 );
               })}
             </div>
+            </div>
           </div>
 
-          <div className="space-y-4">
-            <div className={cn('rounded-3xl border p-4', dueOrderOk === false ? 'border-rose-300/25 bg-rose-400/10' : 'border-emerald-300/25 bg-emerald-400/10')}>
+          <div className="grid gap-4 xl:grid-cols-2">
+            <div className={cn('rounded-[28px] border p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]', dueOrderOk === false ? 'border-rose-300/25 bg-gradient-to-br from-rose-400/12 to-slate-950/60' : 'border-emerald-300/25 bg-gradient-to-br from-emerald-400/12 to-slate-950/60')}>
               <div className="flex items-center gap-2">
                 {dueOrderOk === false ? <AlertTriangle className="h-5 w-5 text-rose-100" /> : <ShieldCheck className="h-5 w-5 text-emerald-100" />}
                 <div className="font-black text-white">交期顺序校验</div>
@@ -1512,7 +1518,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
               </p>
               <div className="mt-3 space-y-2 text-xs leading-5 text-slate-300">
                 {validation?.dayLoads.map((row) => (
-                  <div key={`due-${row.day}`} className="rounded-xl border border-white/10 bg-slate-950/35 p-2">
+                  <div key={`due-${row.day}`} className="rounded-2xl border border-white/10 bg-slate-950/40 p-2.5">
                     <div className="font-bold text-white">{row.day}</div>
                     <div>最早交期：{row.earliestDueDate || '暂无'}</div>
                     <div>最晚交期：{row.latestDueDate || '暂无'}</div>
@@ -1530,13 +1536,13 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
               ) : null}
             </div>
 
-            <div className="rounded-3xl border border-white/10 bg-slate-950/55 p-4">
+            <div className={cn(workbenchPanelClass, 'p-4')}>
               <div className="font-black text-white">校验结果与影响范围</div>
               <div className="mt-3 grid gap-2 text-xs leading-5 text-slate-300">
-                <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">计划状态：{validation ? (validation.ok ? '可人工确认执行' : '不可执行，请重新生成') : '等待校验'}</div>
-                <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">受影响订单：{scheduleTotals.affectedOrders} 单</div>
-                <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">受影响客户：{scheduleTotals.customerCount} 个</div>
-                <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">冲突项：{validation?.errors.length ?? 0} 项需处理</div>
+                <div className={cn(workbenchSubPanelClass, 'p-3')}>计划状态：{validation ? (validation.ok ? '可人工确认执行' : '不可执行，请重新生成') : '等待校验'}</div>
+                <div className={cn(workbenchSubPanelClass, 'p-3')}>受影响订单：{scheduleTotals.affectedOrders} 单</div>
+                <div className={cn(workbenchSubPanelClass, 'p-3')}>受影响客户：{scheduleTotals.customerCount} 个</div>
+                <div className={cn(workbenchSubPanelClass, 'p-3')}>冲突项：{validation?.errors.length ?? 0} 项需处理</div>
               </div>
               <p className="mt-3 text-xs leading-5 text-slate-500">AI 只生成建议草案；系统校验通过后，仍必须人工确认才会写入订单。</p>
             </div>
@@ -1544,14 +1550,14 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
         </section>
 
         {blockedOrderGroups.length ? (
-          <section className="rounded-3xl border border-white/10 bg-slate-950/55 p-4">
+          <section className={cn(workbenchPanelClass, 'p-4 md:p-5')}>
             <div className="mb-3">
               <div className="font-black text-white">不可排订单与原因</div>
               <p className="mt-1 text-xs leading-5 text-slate-500">这些订单不会进入可执行草案，需技术、仓库或计划员先补齐条件。</p>
             </div>
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
               {blockedOrderGroups.map((group) => (
-                <div key={group.key} className={cn('rounded-2xl border p-3', group.tone)}>
+                <div key={group.key} className={cn('rounded-2xl border p-3.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]', group.tone)}>
                   <div className="flex items-center justify-between gap-2">
                     <div className="font-black text-white">{group.label}</div>
                     <span className="rounded-full bg-slate-950/40 px-2 py-0.5 text-xs font-black">{group.orders.length} 单</span>
@@ -1559,7 +1565,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                   <p className="mt-1 text-[11px] leading-5 text-slate-300">{group.hint}</p>
                   <div className="mt-3 space-y-2">
                     {group.orders.slice(0, 4).map((order) => (
-                      <div key={`${group.key}-${order.id}`} className="rounded-xl border border-white/10 bg-slate-950/35 p-2 text-xs leading-5 text-slate-300">
+                      <div key={`${group.key}-${order.id}`} className="rounded-xl border border-white/10 bg-slate-950/45 p-2.5 text-xs leading-5 text-slate-300">
                         <div className="truncate font-bold text-white" title={getOrderDisplayName(order)}>{getOrderDisplayName(order)}</div>
                         <div>订单 <span title={order.id}>{shortId(order.id)}</span> · 交期 {order.deliveryDate || '待确认'}</div>
                       </div>
@@ -1655,7 +1661,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
             <div className="flex min-h-0 flex-1 flex-col">
               <div className="min-h-0 flex-1 overflow-y-auto p-5">
                 <div className="mx-auto flex max-w-7xl flex-col gap-5">
-                  <section className="rounded-3xl border border-cyan-300/20 bg-gradient-to-r from-slate-950 via-[#07192a] to-slate-950 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+                  <section className="rounded-[30px] border border-cyan-200/15 bg-[radial-gradient(circle_at_top_left,rgba(34,211,238,0.18),transparent_32%),linear-gradient(120deg,#020617,#071827_48%,#020617)] p-5 shadow-[0_24px_80px_rgba(0,0,0,0.22),inset_0_1px_0_rgba(255,255,255,0.06)]">
                     <div className="flex flex-wrap items-start justify-between gap-4">
                       <div>
                         <div className="text-xs font-bold uppercase tracking-[0.24em] text-cyan-200/75">AI Scheduling Console</div>
@@ -1664,7 +1670,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                           AI 计划员读取订单、交期、图纸物料状态与工时负荷，先生成建议草案，再由系统校验，最后由人工确认写入。
                         </p>
                       </div>
-                      <div className={cn('rounded-2xl border px-4 py-3', stateTone[workerState].includes('rose') ? 'border-rose-300/25 bg-rose-400/10' : 'border-cyan-300/20 bg-cyan-400/10')}>
+                      <div className={cn('rounded-2xl border px-4 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]', stateTone[workerState].includes('rose') ? 'border-rose-300/25 bg-rose-400/10' : 'border-cyan-300/20 bg-cyan-400/10')}>
                         <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">当前状态</div>
                         <div className="mt-1 flex items-center gap-2 text-sm font-black text-white">
                           <span className={cn('h-2.5 w-2.5 rounded-full shadow-[0_0_14px_currentColor]', stateTone[workerState])} />
@@ -1683,7 +1689,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                   </section>
 
                   <div className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_420px]">
-                  <section className="rounded-3xl border border-cyan-300/20 bg-slate-950/55 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+                  <section className={cn(workbenchPanelClass, 'border-cyan-300/18 p-5')}>
                     <div className="flex flex-wrap items-start justify-between gap-4">
                       <div>
                         <div className="text-xs font-bold uppercase tracking-[0.22em] text-cyan-200/75">Plan Request</div>
@@ -1706,7 +1712,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                             setPrompt(item);
                             setSelectedTaskId(null);
                           }}
-                          className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-left text-sm font-bold leading-5 text-slate-200 transition hover:border-cyan-200/40 hover:bg-cyan-300/10 hover:text-white"
+                          className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3 text-left text-sm font-bold leading-5 text-slate-200 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)] transition hover:-translate-y-0.5 hover:border-cyan-200/40 hover:bg-cyan-300/10 hover:text-white"
                         >
                           {item}
                         </button>
@@ -1721,7 +1727,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                       }}
                       rows={5}
                       placeholder="例如：把现在能排单的计划按交期从周一排到周六，交期一定优先，同一天交期工时高的排前面，每天尽量按本周总工时平均值上下浮动500分钟。"
-                      className="mt-5 w-full resize-none rounded-3xl border border-white/10 bg-slate-950/75 p-5 text-base leading-7 text-white outline-none placeholder:text-slate-500 focus:border-cyan-200/50"
+                      className="mt-5 w-full resize-none rounded-3xl border border-white/10 bg-slate-950/80 p-5 text-base leading-7 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] outline-none placeholder:text-slate-500 focus:border-cyan-200/55 focus:bg-slate-950"
                     />
 
                     <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
@@ -1732,7 +1738,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                         type="button"
                         onClick={askPlanner}
                         disabled={isThinking}
-                        className="flex min-w-44 items-center justify-center gap-2 rounded-2xl bg-cyan-200 px-5 py-3 text-sm font-black text-slate-950 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="flex min-w-44 items-center justify-center gap-2 rounded-2xl bg-cyan-200 px-5 py-3 text-sm font-black text-slate-950 shadow-[0_14px_34px_rgba(103,232,249,0.16)] transition hover:-translate-y-0.5 hover:bg-cyan-100 disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-60"
                       >
                         {isThinking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                         {isThinking ? '正在生成建议' : '生成计划建议'}
@@ -1741,7 +1747,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                   </section>
 
                   <aside className="space-y-5">
-                    <section className="rounded-3xl border border-white/10 bg-slate-950/55 p-5">
+                    <section className={cn(workbenchPanelClass, 'p-5')}>
                       <div className="flex items-center gap-2">
                         <ShieldCheck className="h-5 w-5 text-cyan-200" />
                         <h3 className="font-black text-white">计划规则与边界</h3>
@@ -1754,7 +1760,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                           ['可移动范围', '图纸已发、物料齐、未完成、未归档、未删除'],
                           ['写入边界', 'AI 只给建议，确认后后端仍做资格校验'],
                         ].map(([label, value]) => (
-                          <div key={label} className="rounded-2xl border border-white/10 bg-white/[0.035] p-3">
+                          <div key={label} className={cn(workbenchSubPanelClass, 'p-3.5')}>
                             <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">{label}</div>
                             <div className="mt-1 text-slate-200">{value}</div>
                           </div>
@@ -1762,7 +1768,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                       </div>
                     </section>
 
-                    <section className="rounded-3xl border border-white/10 bg-slate-950/55 p-5">
+                    <section className={cn(workbenchPanelClass, 'p-5')}>
                       <div className="flex items-center gap-2">
                         <Radio className="h-5 w-5 text-emerald-200" />
                         <h3 className="font-black text-white">AI 执行进度</h3>
@@ -1784,7 +1790,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                   </div>
 
                   <section className="grid gap-5 xl:grid-cols-[420px_minmax(0,1fr)]">
-                    <div className={cn('rounded-3xl border p-5', healthTone(planHealthScore))}>
+                    <div className={cn('rounded-[28px] border p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]', healthTone(planHealthScore))}>
                       <div className="flex items-center justify-between gap-3">
                         <div>
                           <div className="text-xs font-bold uppercase tracking-[0.2em] text-slate-400">Plan Health</div>
@@ -1793,14 +1799,14 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                         <div className="text-4xl font-black tabular-nums text-white">{planHealthScore}</div>
                       </div>
                       <div className="mt-4 grid gap-2 text-xs leading-5 text-slate-300">
-                        <div className="rounded-xl border border-white/10 bg-slate-950/35 p-3">数据完整性：{activeSummary.totalOrders ? '已读取订单上下文' : '等待订单上下文'}</div>
-                        <div className="rounded-xl border border-white/10 bg-slate-950/35 p-3">产能可行性：{schedulePlanValidation ? (schedulePlanValidation.ok ? '草案通过校验' : '存在冲突需重算') : '等待草案'}</div>
-                        <div className="rounded-xl border border-white/10 bg-slate-950/35 p-3">规则合规性：图纸/物料硬规则由后端执行层二次校验</div>
-                        <div className="rounded-xl border border-white/10 bg-slate-950/35 p-3">交期风险：{activeSummary.riskOrders} 单需关注</div>
+                        <div className={cn(workbenchSubPanelClass, 'bg-slate-950/35 p-3')}>数据完整性：{activeSummary.totalOrders ? '已读取订单上下文' : '等待订单上下文'}</div>
+                        <div className={cn(workbenchSubPanelClass, 'bg-slate-950/35 p-3')}>产能可行性：{schedulePlanValidation ? (schedulePlanValidation.ok ? '草案通过校验' : '存在冲突需重算') : '等待草案'}</div>
+                        <div className={cn(workbenchSubPanelClass, 'bg-slate-950/35 p-3')}>规则合规性：图纸/物料硬规则由后端执行层二次校验</div>
+                        <div className={cn(workbenchSubPanelClass, 'bg-slate-950/35 p-3')}>交期风险：{activeSummary.riskOrders} 单需关注</div>
                       </div>
                     </div>
 
-                    <div className="rounded-3xl border border-white/10 bg-slate-950/55 p-5">
+                    <div className={cn(workbenchPanelClass, 'p-5')}>
                       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                         <div>
                           <div className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">Draft Overview</div>
@@ -1819,7 +1825,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                     </div>
                   </section>
 
-                  <section className="rounded-3xl border border-emerald-300/20 bg-emerald-300/[0.055] p-5">
+                  <section className="rounded-[30px] border border-emerald-300/18 bg-[radial-gradient(circle_at_top_left,rgba(52,211,153,0.12),transparent_32%),linear-gradient(145deg,rgba(2,6,23,0.92),rgba(6,78,59,0.14))] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
                     <div className="flex flex-wrap items-start justify-between gap-4">
                       <div>
                         <div className="text-xs font-bold uppercase tracking-[0.22em] text-emerald-200/75">Plan Result</div>
@@ -1837,7 +1843,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                       )}
                     </div>
 
-                    <div className="mt-5 rounded-2xl border border-white/10 bg-slate-950/45 p-4">
+                    <div className={cn(workbenchSubPanelClass, 'mt-5 bg-slate-950/45 p-4')}>
                       <div className="text-sm font-black text-white">AI 计划结论</div>
                       <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-300">
                         {plannerReport?.conclusion ?? diagnosis?.reply ?? '尚未生成计划建议。请先在上方输入任务，点击“生成计划建议”。'}
@@ -1897,7 +1903,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                       </div>
                     ) : null}
 
-                    <div className="mt-5 rounded-2xl border border-emerald-300/20 bg-slate-950/60 p-4">
+                    <div className="mt-5 rounded-2xl border border-emerald-300/20 bg-slate-950/65 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
                       <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
                         <div className="text-sm leading-6 text-slate-300">
                           执行前必须人工确认。确认后才会调用后端写入；后端仍会重新校验图纸、物料和排产资格。
@@ -1907,7 +1913,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                           type="button"
                           onClick={applyMutations}
                           disabled={!hasMutations || isApplying || !schedulePlanExecutable}
-                          className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-300 px-5 py-3 text-sm font-black text-slate-950 transition hover:bg-emerald-200 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
+                          className="flex items-center justify-center gap-2 rounded-2xl bg-emerald-300 px-5 py-3 text-sm font-black text-slate-950 shadow-[0_16px_38px_rgba(52,211,153,0.16)] transition hover:-translate-y-0.5 hover:bg-emerald-200 disabled:cursor-not-allowed disabled:translate-y-0 disabled:bg-slate-800 disabled:text-slate-500 disabled:shadow-none"
                         >
                           {isApplying ? <Loader2 className="h-4 w-4 animate-spin" /> : <LockKeyhole className="h-4 w-4" />}
                           确认并执行排单建议
@@ -1916,13 +1922,13 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                     </div>
                   </section>
 
-                  <details className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
+                  <details className="rounded-2xl border border-white/10 bg-white/[0.035] p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
                     <summary className="cursor-pointer text-sm font-black text-slate-200">更多功能与诊断</summary>
                     <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                      <button type="button" onClick={runMorningCheck} disabled={isMorningChecking} className="rounded-xl border border-cyan-200/25 bg-cyan-300/10 px-3 py-2 text-xs font-black text-cyan-100 hover:bg-cyan-300/15 disabled:opacity-50">一键晨检</button>
-                      <button type="button" onClick={generateDailyReport} className="rounded-xl border border-emerald-200/25 bg-emerald-300/10 px-3 py-2 text-xs font-black text-emerald-100 hover:bg-emerald-300/15">生成日报</button>
-                      <button type="button" onClick={copyDailyReport} disabled={!dailyReport} className="rounded-xl border border-violet-200/25 bg-violet-300/10 px-3 py-2 text-xs font-black text-violet-100 hover:bg-violet-300/15 disabled:opacity-50">复制日报</button>
-                      <button type="button" onClick={checkContext} disabled={isChecking} className="rounded-xl border border-slate-300/20 bg-slate-700/35 px-3 py-2 text-xs font-black text-slate-200 hover:bg-slate-700/50 disabled:opacity-50">检查配置</button>
+                      <button type="button" onClick={runMorningCheck} disabled={isMorningChecking} className="rounded-xl border border-cyan-200/25 bg-cyan-300/10 px-3 py-2 text-xs font-black text-cyan-100 transition hover:bg-cyan-300/15 disabled:opacity-50">一键晨检</button>
+                      <button type="button" onClick={generateDailyReport} className="rounded-xl border border-emerald-200/25 bg-emerald-300/10 px-3 py-2 text-xs font-black text-emerald-100 transition hover:bg-emerald-300/15">生成日报</button>
+                      <button type="button" onClick={copyDailyReport} disabled={!dailyReport} className="rounded-xl border border-violet-200/25 bg-violet-300/10 px-3 py-2 text-xs font-black text-violet-100 transition hover:bg-violet-300/15 disabled:opacity-50">复制日报</button>
+                      <button type="button" onClick={checkContext} disabled={isChecking} className="rounded-xl border border-slate-300/20 bg-slate-700/35 px-3 py-2 text-xs font-black text-slate-200 transition hover:bg-slate-700/50 disabled:opacity-50">检查配置</button>
                     </div>
                     <div className="mt-4 grid gap-3 text-xs leading-5 text-slate-400 md:grid-cols-3">
                       <div className="rounded-xl border border-white/10 bg-slate-950/45 p-3">待办：{todoStats.pending} 待处理 / {todoStats.must} 必须处理</div>
@@ -1942,7 +1948,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                 </div>
               </div>
 
-              <div className="shrink-0 border-t border-cyan-300/15 bg-slate-950/85 px-5 py-4 backdrop-blur">
+              <div className="shrink-0 border-t border-cyan-300/15 bg-slate-950/90 px-5 py-4 shadow-[0_-20px_54px_rgba(2,6,23,0.48)] backdrop-blur">
                 <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
                   <div className="text-xs leading-5 text-slate-400">
                     底部操作栏：AI 先生成建议，系统再校验，人工确认后才写入；后端仍会校验图纸、物料和排产资格。
@@ -1952,7 +1958,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                       type="button"
                       onClick={generateRuleScheduleDraft}
                       disabled={isThinking}
-                      className="rounded-2xl border border-cyan-200/25 bg-cyan-300/10 px-4 py-2.5 text-xs font-black text-cyan-100 transition hover:bg-cyan-300/15 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="rounded-2xl border border-cyan-200/25 bg-cyan-300/10 px-4 py-2.5 text-xs font-black text-cyan-100 transition hover:-translate-y-0.5 hover:bg-cyan-300/15 disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-50"
                     >
                       重新生成建议
                     </button>
@@ -1960,7 +1966,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                       type="button"
                       onClick={exportExcel}
                       disabled={!hasExportRows}
-                      className="flex items-center gap-2 rounded-2xl border border-slate-300/20 bg-white/[0.045] px-4 py-2.5 text-xs font-black text-slate-200 transition hover:bg-white/[0.07] disabled:cursor-not-allowed disabled:opacity-50"
+                      className="flex items-center gap-2 rounded-2xl border border-slate-300/20 bg-white/[0.045] px-4 py-2.5 text-xs font-black text-slate-200 transition hover:-translate-y-0.5 hover:bg-white/[0.07] disabled:cursor-not-allowed disabled:translate-y-0 disabled:opacity-50"
                     >
                       <Download className="h-4 w-4" />
                       导出排产建议
@@ -1969,7 +1975,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                       type="button"
                       onClick={applyMutations}
                       disabled={!hasMutations || isApplying || !schedulePlanExecutable}
-                      className="flex items-center gap-2 rounded-2xl bg-emerald-300 px-5 py-2.5 text-xs font-black text-slate-950 transition hover:bg-emerald-200 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
+                      className="flex items-center gap-2 rounded-2xl bg-emerald-300 px-5 py-2.5 text-xs font-black text-slate-950 shadow-[0_12px_30px_rgba(52,211,153,0.16)] transition hover:-translate-y-0.5 hover:bg-emerald-200 disabled:cursor-not-allowed disabled:translate-y-0 disabled:bg-slate-800 disabled:text-slate-500 disabled:shadow-none"
                     >
                       {isApplying ? <Loader2 className="h-4 w-4 animate-spin" /> : <LockKeyhole className="h-4 w-4" />}
                       确认应用排产草案
