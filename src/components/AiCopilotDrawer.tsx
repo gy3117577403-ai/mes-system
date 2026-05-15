@@ -408,6 +408,136 @@ function metricCard(label: string, value: number | string, detail: string, tone 
   );
 }
 
+const workbenchDays = ['周一', '周二', '周三', '周四', '周五', '周六'];
+
+function formatSignedMinutes(value?: number): string {
+  const minutes = Math.round(Number(value) || 0);
+  return `${minutes >= 0 ? '+' : ''}${minutes} 分钟`;
+}
+
+function getLoadState(row?: { minutes: number; averageMinutes: number; withinTolerance: boolean; deltaFromAverage: number }) {
+  if (!row || row.minutes === 0) {
+    return {
+      label: '待排',
+      tone: 'border-slate-600/40 bg-slate-900/55 text-slate-300',
+      bar: 'bg-slate-600',
+    };
+  }
+  if (row.withinTolerance) {
+    return {
+      label: '正常',
+      tone: 'border-emerald-300/25 bg-emerald-400/10 text-emerald-100',
+      bar: 'bg-emerald-300',
+    };
+  }
+  if (row.deltaFromAverage > 0) {
+    return {
+      label: '偏高',
+      tone: 'border-amber-300/30 bg-amber-400/10 text-amber-100',
+      bar: 'bg-amber-300',
+    };
+  }
+  return {
+    label: '偏低',
+    tone: 'border-cyan-300/25 bg-cyan-400/10 text-cyan-100',
+    bar: 'bg-cyan-300',
+  };
+}
+
+function getOrderDisplayName(order?: Order): string {
+  if (!order) return '未知订单';
+  const primary = [order.client, order.model].filter(Boolean).join(' · ');
+  return primary || shortId(order.id) || '未知订单';
+}
+
+function getOrderMinutes(order?: Order, fallback?: number): number {
+  return Math.max(0, Math.round(Number(fallback ?? order?.totalHours ?? 0) || 0));
+}
+
+function getBlockedOrderGroups(orders: Order[]) {
+  const groups = [
+    {
+      key: 'drawing',
+      label: '图纸未发',
+      hint: '需要技术先完成图纸下发',
+      tone: 'border-rose-300/25 bg-rose-400/10 text-rose-100',
+      orders: [] as Order[],
+    },
+    {
+      key: 'material',
+      label: '物料未齐',
+      hint: '需要仓库或采购确认配料',
+      tone: 'border-amber-300/25 bg-amber-400/10 text-amber-100',
+      orders: [] as Order[],
+    },
+    {
+      key: 'status',
+      label: '状态异常',
+      hint: '已完成、归档或异常状态不进入草案',
+      tone: 'border-violet-300/25 bg-violet-400/10 text-violet-100',
+      orders: [] as Order[],
+    },
+    {
+      key: 'time',
+      label: '缺少工时',
+      hint: '需要补齐计划工时后再评估',
+      tone: 'border-slate-400/25 bg-slate-700/30 text-slate-200',
+      orders: [] as Order[],
+    },
+    {
+      key: 'due',
+      label: '缺少交期',
+      hint: '需要确认交期后才能进入严格交期排序',
+      tone: 'border-cyan-300/25 bg-cyan-400/10 text-cyan-100',
+      orders: [] as Order[],
+    },
+  ];
+
+  for (const order of orders) {
+    if (order.isArchived || isOrderCompletedStatus(order.taskStatus)) {
+      groups[2].orders.push(order);
+      continue;
+    }
+    const reasons = getScheduleBlockReasons(order);
+    if (reasons.includes('DRAWING_NOT_READY')) {
+      groups[0].orders.push(order);
+      continue;
+    }
+    if (reasons.includes('MATERIAL_NOT_READY')) {
+      groups[1].orders.push(order);
+      continue;
+    }
+    if (!getOrderMinutes(order)) {
+      groups[3].orders.push(order);
+      continue;
+    }
+    if (!String(order.deliveryDate ?? '').trim()) {
+      groups[4].orders.push(order);
+    }
+  }
+
+  return groups.filter((group) => group.orders.length > 0);
+}
+
+function calculateHealthScore(
+  summary: AiCopilotContextSummary,
+  validation?: AiCopilotResponse['schedulePlanValidation']
+): number {
+  let score = 86;
+  if (!validation) score -= 10;
+  if (validation && !validation.ok) score -= 26;
+  score -= Math.min(16, summary.blockedByDrawing * 2);
+  score -= Math.min(14, summary.blockedByMaterial * 2);
+  score -= Math.min(16, summary.riskOrders * 2);
+  return Math.max(35, Math.min(98, score));
+}
+
+function healthTone(score: number): string {
+  if (score >= 82) return 'text-emerald-100 border-emerald-300/25 bg-emerald-400/10';
+  if (score >= 68) return 'text-amber-100 border-amber-300/25 bg-amber-400/10';
+  return 'text-rose-100 border-rose-300/25 bg-rose-400/10';
+}
+
 async function fetchJson<T>(url: string): Promise<T> {
   const response = await fetch(url, { cache: 'no-store' });
   if (response.status === 404) throw new Error(`${url} 返回 404，线上可能不是最新镜像。`);
@@ -1039,6 +1169,51 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
 
   const contextWarnings = activeSummary.contextWarnings ?? [];
   const readyFlagProblems = diagnostics?.readyFlags?.legacyTextReadyButFlagBlocked ?? 0;
+  const blockedOrderGroups = useMemo(() => getBlockedOrderGroups(orders), [orders]);
+  const planHealthScore = useMemo(
+    () => calculateHealthScore(activeSummary, schedulePlanValidation),
+    [activeSummary, schedulePlanValidation]
+  );
+  const scheduleTotals = useMemo(() => {
+    const totalMinutes =
+      schedulePlanValidation?.dayLoads.reduce((sum, row) => sum + row.minutes, 0) ??
+      diagnosis?.schedulePlan?.items.reduce((sum, item) => sum + (Number(item.estimatedMinutes) || 0), 0) ??
+      0;
+    const averageMinutes =
+      schedulePlanValidation?.dayLoads[0]?.averageMinutes ??
+      diagnosis?.schedulePlan?.balance?.averageMinutes ??
+      Math.round(totalMinutes / Math.max(workbenchDays.length, 1));
+    const maxDelta = schedulePlanValidation?.dayLoads.reduce((max, row) => Math.max(max, Math.abs(row.deltaFromAverage)), 0) ?? 0;
+    const balanceIndex = totalMinutes > 0 ? Math.max(0, Math.round(100 - (maxDelta / Math.max(averageMinutes, 1)) * 100)) : 0;
+    const customerCount = new Set(
+      (diagnosis?.schedulePlan?.items ?? [])
+        .map((item) => orderById.get(item.orderId)?.client)
+        .filter(Boolean)
+    ).size;
+    return {
+      totalMinutes,
+      averageMinutes,
+      tolerance: diagnosis?.schedulePlan?.balance?.toleranceMinutes ?? 500,
+      balanceIndex,
+      customerCount,
+      affectedOrders: diagnosis?.schedulePlan?.items.length ?? 0,
+    };
+  }, [diagnosis?.schedulePlan, orderById, schedulePlanValidation]);
+  const executionSteps = useMemo(() => {
+    const hasPlan = Boolean(diagnosis?.schedulePlan?.items.length);
+    const checked = Boolean(schedulePlanValidation);
+    const done = workerState === 'done' || Boolean(executionResult);
+    return [
+      { label: '任务接收', done: Boolean(prompt.trim() || diagnosis), active: workerState === 'standby' && Boolean(prompt.trim()) },
+      { label: '数据校验', done: Boolean(diagnosis || isThinking), active: isThinking },
+      { label: '规则设定', done: hasPlan || Boolean(diagnosis), active: isThinking && !hasPlan },
+      { label: '草案生成', done: hasPlan, active: isThinking },
+      { label: '冲突检测', done: checked, active: hasPlan && !checked },
+      { label: '平衡优化', done: Boolean(schedulePlanValidation?.dayLoads.length), active: false },
+      { label: '结果校验', done: Boolean(schedulePlanValidation?.ok), active: checked && !schedulePlanValidation?.ok },
+      { label: done ? '执行完成' : '等待确认', done, active: workerState === 'confirming' },
+    ];
+  }, [diagnosis, executionResult, isThinking, prompt, schedulePlanValidation, workerState]);
 
   const renderSchedulePlanPreview = () => {
     if (!diagnosis?.schedulePlan) return null;
@@ -1159,6 +1334,258 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
     );
   };
 
+  const renderScheduleWorkbench = () => {
+    if (!diagnosis?.schedulePlan) return null;
+    const validation = schedulePlanValidation;
+    const dueOrderOk = validation?.dueDateOrder.ok;
+    const scheduleWarnings = Array.from(
+      new Set((diagnosis.schedulePlan.warnings ?? []).map((warning) => toBusinessPlanNotice(warning)).filter(Boolean))
+    ) as string[];
+    const validationMessages = [
+      ...scheduleWarnings,
+      ...(validation?.errors ?? []).map((item) => item.message),
+      ...(validation?.warnings ?? []).map((item) => item.message),
+    ].filter(Boolean);
+
+    return (
+      <div className="space-y-5">
+        <section className="rounded-3xl border border-cyan-300/20 bg-gradient-to-br from-cyan-400/10 via-slate-950/70 to-slate-950/95 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <div className="text-xs font-bold uppercase tracking-[0.22em] text-cyan-200/75">Schedule Draft</div>
+              <h3 className="mt-2 text-2xl font-black text-white">{diagnosis.schedulePlan.title || '周一到周六排产草案'}</h3>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-cyan-50/80">{diagnosis.schedulePlan.summary}</p>
+            </div>
+            <div className={cn('rounded-2xl border px-4 py-3 text-right', validation?.ok ? 'border-emerald-300/25 bg-emerald-400/10' : validation ? 'border-rose-300/25 bg-rose-400/10' : 'border-cyan-300/25 bg-cyan-400/10')}>
+              <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">系统校验</div>
+              <div className="mt-1 text-lg font-black text-white">{validation ? (validation.ok ? '可确认执行' : '不可执行') : '等待草案'}</div>
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-3 md:grid-cols-4">
+            {metricCard('草案订单', diagnosis.schedulePlan.items.length, '本次计划建议纳入的订单', 'cyan')}
+            {metricCard('本周总工时', scheduleTotals.totalMinutes, '分钟，按周一到周六分摊', 'emerald')}
+            {metricCard('日均目标', scheduleTotals.averageMinutes, `允许浮动 ±${scheduleTotals.tolerance} 分钟`, 'cyan')}
+            {metricCard('负荷平衡', `${scheduleTotals.balanceIndex}%`, '越高代表各日越接近日均目标', scheduleTotals.balanceIndex >= 70 ? 'emerald' : 'amber')}
+          </div>
+        </section>
+
+        {diagnosis.schedulePlan.candidateSummary ? (
+          <section className="rounded-3xl border border-white/10 bg-slate-950/55 p-4">
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-black text-white">候选订单识别</div>
+                <p className="mt-1 text-xs leading-5 text-slate-500">就绪待排池和周一到周六已排可调整订单都会进入计划员视野；不可排订单只做说明，不进入草案。</p>
+              </div>
+              <span className="rounded-full border border-cyan-200/20 bg-cyan-300/10 px-3 py-1 text-xs font-bold text-cyan-100">
+                本次纳入 {diagnosis.schedulePlan.candidateSummary.includedCount} 单
+              </span>
+            </div>
+            <div className="grid gap-2 text-xs leading-5 text-slate-300 sm:grid-cols-2 xl:grid-cols-4">
+              {[
+                ['就绪待排池', diagnosis.schedulePlan.candidateSummary.readyPoolCount],
+                ['已排可调整', diagnosis.schedulePlan.candidateSummary.scheduledAdjustableCount],
+                ['图纸未发排除', diagnosis.schedulePlan.candidateSummary.excludedByDrawing],
+                ['物料未齐排除', diagnosis.schedulePlan.candidateSummary.excludedByMaterial],
+                ['交期需确认', diagnosis.schedulePlan.candidateSummary.excludedByInvalidDelivery ?? 0],
+                ['完成/归档/删除', diagnosis.schedulePlan.candidateSummary.excludedByDoneArchivedDeleted],
+              ].map(([label, value]) => (
+                <div key={String(label)} className="rounded-2xl border border-white/10 bg-white/[0.035] p-3">
+                  <div className="text-[11px] text-slate-500">{label}</div>
+                  <div className="mt-1 text-lg font-black tabular-nums text-white">{value} 单</div>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="rounded-3xl border border-white/10 bg-slate-950/55 p-4">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-black text-white">周一到周六排产看板</div>
+                <p className="mt-1 text-xs leading-5 text-slate-500">全局按交期从早到晚；同交期按工时高到低；负荷均衡不能破坏交期顺序。</p>
+              </div>
+              <span className={cn('rounded-full border px-3 py-1 text-xs font-black', dueOrderOk === false ? 'border-rose-300/30 bg-rose-400/10 text-rose-100' : 'border-emerald-300/25 bg-emerald-400/10 text-emerald-100')}>
+                {dueOrderOk === false ? '交期顺序不通过' : '交期顺序通过'}
+              </span>
+            </div>
+
+            <div className="grid gap-3 lg:grid-cols-2 xl:grid-cols-6">
+              {workbenchDays.map((day) => {
+                const items = diagnosis.schedulePlan?.items.filter((item) => item.targetDay === day) ?? [];
+                const minutes = items.reduce((sum, item) => sum + (Number(item.estimatedMinutes) || 0), 0);
+                const validationLoad = validation?.dayLoads.find((row) => row.day === day);
+                const loadState = getLoadState(validationLoad);
+                const loadPercent = validationLoad?.averageMinutes
+                  ? Math.min(100, Math.round((minutes / Math.max(validationLoad.averageMinutes + scheduleTotals.tolerance, 1)) * 100))
+                  : 0;
+                const dateLabel = items.find((item) => item.targetDate)?.targetDate;
+
+                return (
+                  <div key={day} className="flex min-h-[330px] flex-col rounded-2xl border border-cyan-200/15 bg-[#071522]/85 p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="text-base font-black text-white">{day}</div>
+                        <div className="mt-1 text-[11px] text-slate-500">{dateLabel || '当前计划周'}</div>
+                      </div>
+                      <span className={cn('rounded-full border px-2 py-0.5 text-[10px] font-black', loadState.tone)}>
+                        {loadState.label}
+                      </span>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+                      <div className="rounded-xl border border-white/10 bg-white/[0.035] p-2">
+                        <div className="text-slate-500">订单数</div>
+                        <div className="mt-1 font-black text-white">{items.length} 单</div>
+                      </div>
+                      <div className="rounded-xl border border-white/10 bg-white/[0.035] p-2">
+                        <div className="text-slate-500">总工时</div>
+                        <div className="mt-1 font-black text-white">{minutes} 分钟</div>
+                      </div>
+                    </div>
+                    <div className="mt-3">
+                      <div className="h-1.5 overflow-hidden rounded-full bg-slate-800">
+                        <div className={cn('h-full rounded-full', loadState.bar)} style={{ width: `${loadPercent}%` }} />
+                      </div>
+                      <div className="mt-1 text-[11px] text-slate-500">
+                        偏差：{validationLoad ? formatSignedMinutes(validationLoad.deltaFromAverage) : '待校验'}
+                      </div>
+                    </div>
+                    <div className="mt-2 text-[11px] leading-5 text-slate-500">
+                      交期：{validationLoad?.earliestDueDate || '暂无'} - {validationLoad?.latestDueDate || '暂无'}
+                    </div>
+                    <div className="mt-3 flex-1 space-y-2 overflow-hidden">
+                      {items.slice(0, 6).map((item, index) => {
+                        const order = orderById.get(item.orderId);
+                        const minutesForOrder = getOrderMinutes(order, item.estimatedMinutes);
+                        const displayDeliveryDate =
+                          (item as SchedulePlanItemForDisplay & { deliveryDate?: string | null }).deliveryDate ||
+                          order?.deliveryDate ||
+                          '待确认';
+                        return (
+                          <div key={`${day}-${item.orderId}`} className="rounded-2xl border border-white/10 bg-white/[0.045] p-3 text-xs leading-5 text-slate-300">
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="min-w-0">
+                                <div className="truncate font-black text-white" title={getOrderDisplayName(order)}>
+                                  #{item.priorityRank ?? index + 1} {getOrderDisplayName(order)}
+                                </div>
+                                <div className="mt-0.5 text-[11px] text-slate-500">
+                                  订单 <span title={item.orderId}>{shortId(item.orderId)}</span>
+                                </div>
+                              </div>
+                              <span className="shrink-0 rounded-full border border-cyan-200/20 bg-cyan-300/10 px-2 py-0.5 text-[10px] font-bold text-cyan-100">
+                                {minutesForOrder} 分钟
+                              </span>
+                            </div>
+                            <div className="mt-2 grid grid-cols-2 gap-1 text-[11px] text-slate-400">
+                              <span>交期：{displayDeliveryDate}</span>
+                              <span>状态：已发图 / 料齐</span>
+                            </div>
+                            <div className="mt-2 flex flex-wrap gap-1">
+                              {order?.isUrgent ? <span className="rounded-full bg-rose-400/15 px-2 py-0.5 text-[10px] font-bold text-rose-100">急单</span> : null}
+                              {order && isRiskOrder(order) ? <span className="rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-bold text-amber-100">交期风险</span> : null}
+                              {order && isScheduleAssigned(order) ? <span className="rounded-full bg-violet-400/15 px-2 py-0.5 text-[10px] font-bold text-violet-100">已排重平衡</span> : null}
+                            </div>
+                            <p className="mt-2 text-[11px] leading-5 text-slate-400">{cleanScheduleReason(item, order)}</p>
+                          </div>
+                        );
+                      })}
+                      {items.length > 6 ? <div className="rounded-xl border border-white/10 bg-slate-900/60 p-2 text-xs text-slate-500">还有 {items.length - 6} 单，执行前仍会按顺序写入。</div> : null}
+                      {!items.length ? <div className="rounded-xl border border-dashed border-slate-600/60 p-4 text-center text-xs text-slate-500">暂无安排</div> : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className={cn('rounded-3xl border p-4', dueOrderOk === false ? 'border-rose-300/25 bg-rose-400/10' : 'border-emerald-300/25 bg-emerald-400/10')}>
+              <div className="flex items-center gap-2">
+                {dueOrderOk === false ? <AlertTriangle className="h-5 w-5 text-rose-100" /> : <ShieldCheck className="h-5 w-5 text-emerald-100" />}
+                <div className="font-black text-white">交期顺序校验</div>
+              </div>
+              <p className="mt-2 text-sm leading-6 text-slate-200">
+                {dueOrderOk === false
+                  ? '交期顺序不通过，确认应用已被禁用。'
+                  : '交期顺序通过：前一天不会出现晚于后一天的交期订单。'}
+              </p>
+              <div className="mt-3 space-y-2 text-xs leading-5 text-slate-300">
+                {validation?.dayLoads.map((row) => (
+                  <div key={`due-${row.day}`} className="rounded-xl border border-white/10 bg-slate-950/35 p-2">
+                    <div className="font-bold text-white">{row.day}</div>
+                    <div>最早交期：{row.earliestDueDate || '暂无'}</div>
+                    <div>最晚交期：{row.latestDueDate || '暂无'}</div>
+                  </div>
+                ))}
+              </div>
+              {validation?.dueDateOrder.conflicts.length ? (
+                <div className="mt-3 space-y-2">
+                  {validation.dueDateOrder.conflicts.slice(0, 4).map((conflict, index) => (
+                    <div key={`${conflict.previousDay}-${conflict.nextDay}-${index}`} className="rounded-xl border border-rose-200/25 bg-rose-500/10 p-3 text-xs leading-5 text-rose-50">
+                      {conflict.message}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="rounded-3xl border border-white/10 bg-slate-950/55 p-4">
+              <div className="font-black text-white">校验结果与影响范围</div>
+              <div className="mt-3 grid gap-2 text-xs leading-5 text-slate-300">
+                <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">计划状态：{validation ? (validation.ok ? '可人工确认执行' : '不可执行，请重新生成') : '等待校验'}</div>
+                <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">受影响订单：{scheduleTotals.affectedOrders} 单</div>
+                <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">受影响客户：{scheduleTotals.customerCount} 个</div>
+                <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">冲突项：{validation?.errors.length ?? 0} 项需处理</div>
+              </div>
+              <p className="mt-3 text-xs leading-5 text-slate-500">AI 只生成建议草案；系统校验通过后，仍必须人工确认才会写入订单。</p>
+            </div>
+          </div>
+        </section>
+
+        {blockedOrderGroups.length ? (
+          <section className="rounded-3xl border border-white/10 bg-slate-950/55 p-4">
+            <div className="mb-3">
+              <div className="font-black text-white">不可排订单与原因</div>
+              <p className="mt-1 text-xs leading-5 text-slate-500">这些订单不会进入可执行草案，需技术、仓库或计划员先补齐条件。</p>
+            </div>
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {blockedOrderGroups.map((group) => (
+                <div key={group.key} className={cn('rounded-2xl border p-3', group.tone)}>
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="font-black text-white">{group.label}</div>
+                    <span className="rounded-full bg-slate-950/40 px-2 py-0.5 text-xs font-black">{group.orders.length} 单</span>
+                  </div>
+                  <p className="mt-1 text-[11px] leading-5 text-slate-300">{group.hint}</p>
+                  <div className="mt-3 space-y-2">
+                    {group.orders.slice(0, 4).map((order) => (
+                      <div key={`${group.key}-${order.id}`} className="rounded-xl border border-white/10 bg-slate-950/35 p-2 text-xs leading-5 text-slate-300">
+                        <div className="truncate font-bold text-white" title={getOrderDisplayName(order)}>{getOrderDisplayName(order)}</div>
+                        <div>订单 <span title={order.id}>{shortId(order.id)}</span> · 交期 {order.deliveryDate || '待确认'}</div>
+                      </div>
+                    ))}
+                    {group.orders.length > 4 ? <div className="text-xs text-slate-500">还有 {group.orders.length - 4} 单</div> : null}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {validationMessages.length ? (
+          <section className={cn('rounded-2xl border p-4 text-sm leading-6', validation?.ok === false ? 'border-rose-300/25 bg-rose-400/10 text-rose-50' : 'border-amber-300/25 bg-amber-400/10 text-amber-50')}>
+            <div className="font-black text-white">{validation?.ok === false ? '当前草案不能执行' : '计划提醒'}</div>
+            <div className="mt-2 space-y-1">
+              {validationMessages.slice(0, 8).map((message, index) => (
+                <div key={`${message}-${index}`}>{message}</div>
+              ))}
+            </div>
+          </section>
+        ) : null}
+      </div>
+    );
+  };
+
   return (
     <>
       <button
@@ -1192,7 +1619,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
             initial={{ opacity: 0, x: 42, scale: 0.98 }}
             animate={{ opacity: 1, x: 0, scale: 1 }}
             transition={{ duration: 0.22, ease: 'easeOut' }}
-            className="flex h-full w-full max-w-6xl flex-col overflow-hidden rounded-3xl border border-cyan-300/20 bg-[#06101c]/95 text-slate-100 shadow-[0_24px_80px_rgba(0,0,0,0.55)]"
+            className="flex h-full w-full max-w-[96rem] flex-col overflow-hidden rounded-3xl border border-cyan-300/20 bg-[#06101c]/95 text-slate-100 shadow-[0_24px_80px_rgba(0,0,0,0.55)]"
           >
             <header className="relative shrink-0 overflow-hidden border-b border-white/10 bg-gradient-to-r from-slate-950 via-cyan-950/40 to-slate-950 px-5 py-4">
               <div className="absolute inset-0 opacity-30 [background-image:radial-gradient(circle_at_1px_1px,rgba(125,211,252,0.18)_1px,transparent_0)] [background-size:22px_22px]" />
@@ -1227,7 +1654,35 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
 
             <div className="flex min-h-0 flex-1 flex-col">
               <div className="min-h-0 flex-1 overflow-y-auto p-5">
-                <div className="mx-auto flex max-w-5xl flex-col gap-5">
+                <div className="mx-auto flex max-w-7xl flex-col gap-5">
+                  <section className="rounded-3xl border border-cyan-300/20 bg-gradient-to-r from-slate-950 via-[#07192a] to-slate-950 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div>
+                        <div className="text-xs font-bold uppercase tracking-[0.24em] text-cyan-200/75">AI Scheduling Console</div>
+                        <h3 className="mt-2 text-2xl font-black text-white">AI 排产工作台</h3>
+                        <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-400">
+                          AI 计划员读取订单、交期、图纸物料状态与工时负荷，先生成建议草案，再由系统校验，最后由人工确认写入。
+                        </p>
+                      </div>
+                      <div className={cn('rounded-2xl border px-4 py-3', stateTone[workerState].includes('rose') ? 'border-rose-300/25 bg-rose-400/10' : 'border-cyan-300/20 bg-cyan-400/10')}>
+                        <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-slate-400">当前状态</div>
+                        <div className="mt-1 flex items-center gap-2 text-sm font-black text-white">
+                          <span className={cn('h-2.5 w-2.5 rounded-full shadow-[0_0_14px_currentColor]', stateTone[workerState])} />
+                          {stateLabel[workerState]}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="mt-5 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+                      {metricCard('计划订单', activeSummary.totalOrders, 'AI 当前可读取的订单总量', 'cyan')}
+                      {metricCard('可排订单', activeSummary.schedulableOrders, '图纸已发、物料已齐', 'emerald')}
+                      {metricCard('图纸未发', activeSummary.blockedByDrawing, '不会进入排产草案', activeSummary.blockedByDrawing ? 'amber' : 'emerald')}
+                      {metricCard('物料未齐', activeSummary.blockedByMaterial, '不会进入排产草案', activeSummary.blockedByMaterial ? 'amber' : 'emerald')}
+                      {metricCard('交期风险', activeSummary.riskOrders, '需要计划员关注', activeSummary.riskOrders ? 'red' : 'emerald')}
+                      {metricCard('最近更新', diagnosis ? formatDateTime(new Date()) : '待生成', '生成建议后实时刷新', 'cyan')}
+                    </div>
+                  </section>
+
+                  <div className="grid gap-5 xl:grid-cols-[minmax(0,1.2fr)_420px]">
                   <section className="rounded-3xl border border-cyan-300/20 bg-slate-950/55 p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]">
                     <div className="flex flex-wrap items-start justify-between gap-4">
                       <div>
@@ -1285,6 +1740,85 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                     </div>
                   </section>
 
+                  <aside className="space-y-5">
+                    <section className="rounded-3xl border border-white/10 bg-slate-950/55 p-5">
+                      <div className="flex items-center gap-2">
+                        <ShieldCheck className="h-5 w-5 text-cyan-200" />
+                        <h3 className="font-black text-white">计划规则与边界</h3>
+                      </div>
+                      <div className="mt-4 space-y-3 text-sm leading-6 text-slate-300">
+                        {[
+                          ['排产范围', '就绪待排池 + 周一到周六已排可调整订单'],
+                          ['优先级规则', '全局交期从早到晚；同交期工时高优先'],
+                          ['负荷口径', '本周总工时 / 6 天，日均目标 ±500 分钟'],
+                          ['可移动范围', '图纸已发、物料齐、未完成、未归档、未删除'],
+                          ['写入边界', 'AI 只给建议，确认后后端仍做资格校验'],
+                        ].map(([label, value]) => (
+                          <div key={label} className="rounded-2xl border border-white/10 bg-white/[0.035] p-3">
+                            <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-slate-500">{label}</div>
+                            <div className="mt-1 text-slate-200">{value}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+
+                    <section className="rounded-3xl border border-white/10 bg-slate-950/55 p-5">
+                      <div className="flex items-center gap-2">
+                        <Radio className="h-5 w-5 text-emerald-200" />
+                        <h3 className="font-black text-white">AI 执行进度</h3>
+                      </div>
+                      <div className="mt-4 space-y-3">
+                        {executionSteps.map((step, index) => (
+                          <div key={step.label} className="flex items-center gap-3">
+                            <div className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-full border text-[11px] font-black', step.done ? 'border-emerald-300/40 bg-emerald-300 text-slate-950' : step.active ? 'border-cyan-300/40 bg-cyan-300/15 text-cyan-100' : 'border-slate-600/60 bg-slate-900 text-slate-500')}>
+                              {step.done ? <CheckCircle2 className="h-4 w-4" /> : index + 1}
+                            </div>
+                            <div className={cn('text-sm font-bold', step.done ? 'text-emerald-100' : step.active ? 'text-cyan-100' : 'text-slate-500')}>
+                              {step.label}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  </aside>
+                  </div>
+
+                  <section className="grid gap-5 xl:grid-cols-[420px_minmax(0,1fr)]">
+                    <div className={cn('rounded-3xl border p-5', healthTone(planHealthScore))}>
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-xs font-bold uppercase tracking-[0.2em] text-slate-400">Plan Health</div>
+                          <h3 className="mt-2 font-black text-white">AI 计划体检</h3>
+                        </div>
+                        <div className="text-4xl font-black tabular-nums text-white">{planHealthScore}</div>
+                      </div>
+                      <div className="mt-4 grid gap-2 text-xs leading-5 text-slate-300">
+                        <div className="rounded-xl border border-white/10 bg-slate-950/35 p-3">数据完整性：{activeSummary.totalOrders ? '已读取订单上下文' : '等待订单上下文'}</div>
+                        <div className="rounded-xl border border-white/10 bg-slate-950/35 p-3">产能可行性：{schedulePlanValidation ? (schedulePlanValidation.ok ? '草案通过校验' : '存在冲突需重算') : '等待草案'}</div>
+                        <div className="rounded-xl border border-white/10 bg-slate-950/35 p-3">规则合规性：图纸/物料硬规则由后端执行层二次校验</div>
+                        <div className="rounded-xl border border-white/10 bg-slate-950/35 p-3">交期风险：{activeSummary.riskOrders} 单需关注</div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-3xl border border-white/10 bg-slate-950/55 p-5">
+                      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <div className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">Draft Overview</div>
+                          <h3 className="mt-2 font-black text-white">排产草案总览</h3>
+                        </div>
+                        <span className="rounded-full border border-cyan-200/20 bg-cyan-300/10 px-3 py-1 text-xs font-bold text-cyan-100">
+                          日均目标 {scheduleTotals.averageMinutes || 0} 分钟
+                        </span>
+                      </div>
+                      <div className="grid gap-3 md:grid-cols-4">
+                        {metricCard('本周总工时', scheduleTotals.totalMinutes, '草案订单工时合计', 'emerald')}
+                        {metricCard('日均目标', scheduleTotals.averageMinutes, `目标区间 ±${scheduleTotals.tolerance}`, 'cyan')}
+                        {metricCard('平衡指数', `${scheduleTotals.balanceIndex}%`, '基于最大偏差估算', scheduleTotals.balanceIndex >= 70 ? 'emerald' : 'amber')}
+                        {metricCard('交期顺序', schedulePlanValidation ? (schedulePlanValidation.dueDateOrder.ok ? '通过' : '不通过') : '待校验', '前后日期硬校验', schedulePlanValidation?.dueDateOrder.ok === false ? 'red' : 'emerald')}
+                      </div>
+                    </div>
+                  </section>
+
                   <section className="rounded-3xl border border-emerald-300/20 bg-emerald-300/[0.055] p-5">
                     <div className="flex flex-wrap items-start justify-between gap-4">
                       <div>
@@ -1311,7 +1845,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                     </div>
 
                     <div className="mt-5">
-                      {renderSchedulePlanPreview()}
+                      {renderScheduleWorkbench()}
                       {!hasScheduleDraft ? (
                         <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-5 text-sm leading-6 text-slate-300">
                           当前还没有可执行排产草案。你可以直接输入排产需求，或点击下方按钮生成排产草案。
@@ -1405,6 +1939,42 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                   {errorMessage ? (
                     <p className="rounded-2xl border border-rose-300/20 bg-rose-400/10 p-4 text-sm text-rose-100">{errorMessage}</p>
                   ) : null}
+                </div>
+              </div>
+
+              <div className="shrink-0 border-t border-cyan-300/15 bg-slate-950/85 px-5 py-4 backdrop-blur">
+                <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3">
+                  <div className="text-xs leading-5 text-slate-400">
+                    底部操作栏：AI 先生成建议，系统再校验，人工确认后才写入；后端仍会校验图纸、物料和排产资格。
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={generateRuleScheduleDraft}
+                      disabled={isThinking}
+                      className="rounded-2xl border border-cyan-200/25 bg-cyan-300/10 px-4 py-2.5 text-xs font-black text-cyan-100 transition hover:bg-cyan-300/15 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      重新生成建议
+                    </button>
+                    <button
+                      type="button"
+                      onClick={exportExcel}
+                      disabled={!hasExportRows}
+                      className="flex items-center gap-2 rounded-2xl border border-slate-300/20 bg-white/[0.045] px-4 py-2.5 text-xs font-black text-slate-200 transition hover:bg-white/[0.07] disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Download className="h-4 w-4" />
+                      导出排产建议
+                    </button>
+                    <button
+                      type="button"
+                      onClick={applyMutations}
+                      disabled={!hasMutations || isApplying || !schedulePlanExecutable}
+                      className="flex items-center gap-2 rounded-2xl bg-emerald-300 px-5 py-2.5 text-xs font-black text-slate-950 transition hover:bg-emerald-200 disabled:cursor-not-allowed disabled:bg-slate-800 disabled:text-slate-500"
+                    >
+                      {isApplying ? <Loader2 className="h-4 w-4 animate-spin" /> : <LockKeyhole className="h-4 w-4" />}
+                      确认应用排产草案
+                    </button>
+                  </div>
                 </div>
               </div>
 
