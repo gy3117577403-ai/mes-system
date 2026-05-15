@@ -29,6 +29,7 @@ export type BalancedSchedulePlanItem = {
   estimatedMinutes: number;
   priorityRank: number;
   deliveryDate?: string;
+  normalizedDeliveryDate?: string;
 };
 
 export type BalancedSchedulePlan = {
@@ -44,6 +45,7 @@ export type BalancedSchedulePlan = {
     excludedByDrawing: number;
     excludedByMaterial: number;
     excludedByDoneArchivedDeleted: number;
+    excludedByInvalidDelivery: number;
     allowRescheduleAssigned: boolean;
   };
   balance: {
@@ -87,22 +89,60 @@ function orderMinutes(order: BalancedScheduleOrderLike): number {
   return Math.max(0, Math.round(Number(order.planMinutes ?? order.totalHours ?? 0) || 0));
 }
 
-function deliveryKey(order: BalancedScheduleOrderLike): number {
-  const text = String(order.deliveryDate ?? '').trim();
-  if (!text) return Number.MAX_SAFE_INTEGER;
-  const normalized = text.replace(/[/.]/g, '-');
-  const match = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(normalized);
-  if (match) {
-    const [, year, month, day] = match;
-    return Number(`${year}${month.padStart(2, '0')}${day.padStart(2, '0')}`);
-  }
-  const parsed = Date.parse(text);
-  return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : Number(new Date(parsed).toISOString().slice(0, 10).replace(/-/g, ''));
+export type NormalizedScheduleDeliveryDate = {
+  key: number;
+  label: string;
+};
+
+const DEFAULT_DELIVERY_YEAR = 2026;
+
+function buildNormalizedDate(year: number, month: number, day: number): NormalizedScheduleDeliveryDate | null {
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return null;
+  if (year < 2000 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) return null;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return null;
+  const label = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  return { key: Number(label.replace(/-/g, '')), label };
 }
 
-function deliveryLabel(order: BalancedScheduleOrderLike): string {
-  const text = String(order.deliveryDate ?? '').trim();
-  return text || '未填交期';
+function normalizeExcelDateSerial(value: number): NormalizedScheduleDeliveryDate | null {
+  if (!Number.isFinite(value) || value < 20000 || value > 80000) return null;
+  const ms = Date.UTC(1899, 11, 30) + Math.round(value) * 24 * 60 * 60 * 1000;
+  const date = new Date(ms);
+  return buildNormalizedDate(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
+}
+
+export function normalizeScheduleDeliveryDate(value?: unknown, defaultYear = DEFAULT_DELIVERY_YEAR): NormalizedScheduleDeliveryDate | null {
+  if (value instanceof Date) {
+    return buildNormalizedDate(value.getFullYear(), value.getMonth() + 1, value.getDate());
+  }
+  if (typeof value === 'number') {
+    return normalizeExcelDateSerial(value);
+  }
+
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  const compact = text.replace(/\s+/g, '');
+
+  const fullDate = /^(\d{4})[年./-]?(\d{1,2})[月./-]?(\d{1,2})日?/.exec(compact);
+  if (fullDate) {
+    return buildNormalizedDate(Number(fullDate[1]), Number(fullDate[2]), Number(fullDate[3]));
+  }
+
+  const chineseMonthDay = /^(\d{1,2})月(\d{1,2})日?$/.exec(compact);
+  if (chineseMonthDay) {
+    return buildNormalizedDate(defaultYear, Number(chineseMonthDay[1]), Number(chineseMonthDay[2]));
+  }
+
+  const shortMonthDay = /^(\d{1,2})[./-](\d{1,2})$/.exec(compact);
+  if (shortMonthDay) {
+    return buildNormalizedDate(defaultYear, Number(shortMonthDay[1]), Number(shortMonthDay[2]));
+  }
+
+  const parsed = Date.parse(text);
+  if (Number.isNaN(parsed)) return null;
+  const date = new Date(parsed);
+  return buildNormalizedDate(date.getFullYear(), date.getMonth() + 1, date.getDate());
 }
 
 function stableCreatedAt(order: BalancedScheduleOrderLike): string {
@@ -119,12 +159,11 @@ function isDoneArchivedOrDeleted(order: BalancedScheduleOrderLike): boolean {
   return Boolean(order.isArchived || order.deletedAt || isOrderDone(order));
 }
 
-function buildReason(order: BalancedScheduleOrderLike, day: BalancedScheduleDay, loadAfter: number, averageMinutes: number): string {
-  const delivery = deliveryLabel(order);
+function buildReason(order: BalancedScheduleOrderLike, day: BalancedScheduleDay, loadAfter: number, averageMinutes: number, delivery: NormalizedScheduleDeliveryDate): string {
   const minutes = orderMinutes(order);
   const loadHint = loadAfter >= averageMinutes ? '当前日负荷已接近日均目标' : '当前日仍低于日均目标';
   const sourceHint = isScheduleAssigned(order) ? '该订单来自周一到周六已排产池，本次纳入重新平衡' : '该订单来自就绪待排池';
-  return `交期 ${delivery} 优先，同交期内按工时 ${minutes} 分钟优先，排入${day}；${loadHint}；${sourceHint}。`;
+  return `交期 ${delivery.label} 优先，同交期内按工时 ${minutes} 分钟优先，排入${day}；${loadHint}；${sourceHint}。`;
 }
 
 export function buildBalancedSchedulePlan(input: BuildBalancedSchedulePlanInput): {
@@ -145,26 +184,29 @@ export function buildBalancedSchedulePlan(input: BuildBalancedSchedulePlanInput)
     const reasons = getScheduleBlockReasons(order);
     return !reasons.includes('DRAWING_NOT_READY') && reasons.includes('MATERIAL_NOT_READY');
   }).length;
+  const eligibleWithDelivery = eligibleOrders.map((order) => ({
+    order,
+    delivery: normalizeScheduleDeliveryDate(order.deliveryDate),
+  }));
+  const excludedByInvalidDelivery = eligibleWithDelivery.filter((row) => !row.delivery).length;
 
-  const candidates = scannedOrders
-    .filter((order) => order && order.id)
-    .filter((order) => canEnterSchedule(order))
-    .filter((order) => !isDoneArchivedOrDeleted(order))
-    .filter((order) => allowRescheduleAssigned || !isScheduleAssigned(order))
+  const candidates = eligibleWithDelivery
+    .filter((row): row is { order: BalancedScheduleOrderLike; delivery: NormalizedScheduleDeliveryDate } => Boolean(row.delivery))
+    .filter(({ order }) => allowRescheduleAssigned || !isScheduleAssigned(order))
     .sort((a, b) => {
-      const byDelivery = deliveryKey(a) - deliveryKey(b);
+      const byDelivery = a.delivery.key - b.delivery.key;
       if (byDelivery !== 0) return byDelivery;
-      const byDeliveryText = deliveryLabel(a).localeCompare(deliveryLabel(b));
+      const byDeliveryText = a.delivery.label.localeCompare(b.delivery.label);
       if (byDeliveryText !== 0) return byDeliveryText;
-      const byMinutes = orderMinutes(b) - orderMinutes(a);
+      const byMinutes = orderMinutes(b.order) - orderMinutes(a.order);
       if (byMinutes !== 0) return byMinutes;
-      if (Boolean(a.isUrgent) !== Boolean(b.isUrgent)) return a.isUrgent ? -1 : 1;
-      const byCreatedAt = stableCreatedAt(a).localeCompare(stableCreatedAt(b));
+      if (Boolean(a.order.isUrgent) !== Boolean(b.order.isUrgent)) return a.order.isUrgent ? -1 : 1;
+      const byCreatedAt = stableCreatedAt(a.order).localeCompare(stableCreatedAt(b.order));
       if (byCreatedAt !== 0) return byCreatedAt;
-      return String(a.id).localeCompare(String(b.id));
+      return String(a.order.id).localeCompare(String(b.order.id));
     });
 
-  const totalMinutes = candidates.reduce((sum, order) => sum + orderMinutes(order), 0);
+  const totalMinutes = candidates.reduce((sum, { order }) => sum + orderMinutes(order), 0);
   const averageMinutes = targetDays.length ? Math.round(totalMinutes / targetDays.length) : 0;
   const minTargetMinutes = Math.max(0, averageMinutes - toleranceMinutes);
   const maxTargetMinutes = averageMinutes + toleranceMinutes;
@@ -173,7 +215,7 @@ export function buildBalancedSchedulePlan(input: BuildBalancedSchedulePlanInput)
   const items: BalancedSchedulePlanItem[] = [];
   let dayIndex = 0;
 
-  for (const [index, order] of candidates.entries()) {
+  for (const [index, { order, delivery }] of candidates.entries()) {
     const minutes = orderMinutes(order);
     let day = targetDays[Math.min(dayIndex, targetDays.length - 1)];
     const load = dayLoads.get(day) ?? 0;
@@ -196,14 +238,18 @@ export function buildBalancedSchedulePlan(input: BuildBalancedSchedulePlanInput)
     items.push({
       orderId: order.id,
       targetDay: day,
-      deliveryDate: order.deliveryDate || undefined,
+      deliveryDate: delivery.label,
+      normalizedDeliveryDate: delivery.label,
       estimatedMinutes: minutes,
       priorityRank: index + 1,
-      reason: buildReason(order, day, nextLoad, averageMinutes),
+      reason: buildReason(order, day, nextLoad, averageMinutes, delivery),
     });
   }
 
   const warnings: string[] = [];
+  if (excludedByInvalidDelivery > 0) {
+    warnings.push(`${excludedByInvalidDelivery} 单交期格式无法识别，需人工确认，未纳入严格交期排产草案。`);
+  }
   const loadRows = targetDays.map((day) => {
     const minutes = dayLoads.get(day) ?? 0;
     if (items.length > 0 && minutes > maxTargetMinutes) {
@@ -232,6 +278,7 @@ export function buildBalancedSchedulePlan(input: BuildBalancedSchedulePlanInput)
       excludedByDrawing,
       excludedByMaterial,
       excludedByDoneArchivedDeleted,
+      excludedByInvalidDelivery,
       allowRescheduleAssigned,
     },
     balance: {

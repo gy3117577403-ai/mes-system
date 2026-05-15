@@ -1,5 +1,11 @@
 import { canEnterSchedule, isScheduleAssigned } from '@/lib/scheduleEligibility';
-import { BALANCED_SCHEDULE_DAYS, type BalancedScheduleOrderLike, type BalancedSchedulePlan } from '@/lib/aiBalancedSchedulePlanner';
+import {
+  BALANCED_SCHEDULE_DAYS,
+  normalizeScheduleDeliveryDate,
+  type BalancedScheduleOrderLike,
+  type BalancedSchedulePlan,
+  type NormalizedScheduleDeliveryDate,
+} from '@/lib/aiBalancedSchedulePlanner';
 
 export type AiSchedulePlanValidationIssue = {
   code: string;
@@ -29,6 +35,8 @@ export type AiSchedulePlanValidation = {
     averageMinutes: number;
     deltaFromAverage: number;
     withinTolerance: boolean;
+    earliestDueDate?: string;
+    latestDueDate?: string;
   }>;
   summary: string;
 };
@@ -50,22 +58,6 @@ function dayIndex(day?: string): number {
   return BALANCED_SCHEDULE_DAYS.indexOf(day as never);
 }
 
-function normalizeDeliveryDate(value?: string | null): { key: number; label: string } | null {
-  const text = String(value ?? '').trim();
-  if (!text) return null;
-  const normalized = text.replace(/[/.]/g, '-');
-  const match = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(normalized);
-  if (match) {
-    const [, year, month, day] = match;
-    const label = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-    return { key: Number(label.replace(/-/g, '')), label };
-  }
-  const parsed = Date.parse(text);
-  if (Number.isNaN(parsed)) return null;
-  const label = new Date(parsed).toISOString().slice(0, 10);
-  return { key: Number(label.replace(/-/g, '')), label };
-}
-
 export function validateAiSchedulePlan(input: ValidateAiSchedulePlanInput): AiSchedulePlanValidation {
   const errors: AiSchedulePlanValidationIssue[] = [];
   const warnings: AiSchedulePlanValidationIssue[] = [];
@@ -76,6 +68,7 @@ export function validateAiSchedulePlan(input: ValidateAiSchedulePlanInput): AiSc
   const dayLoads = new Map<string, { orderCount: number; minutes: number; items: typeof items }>(
     BALANCED_SCHEDULE_DAYS.map((day) => [day, { orderCount: 0, minutes: 0, items: [] }])
   );
+  const itemDeliveryMap = new Map<string, NormalizedScheduleDeliveryDate>();
 
   if (items.length === 0) {
     errors.push({ code: 'EMPTY_SCHEDULE_PLAN', message: '用户要求排单，但当前草案为空，不能执行。' });
@@ -93,6 +86,12 @@ export function validateAiSchedulePlan(input: ValidateAiSchedulePlanInput): AiSc
     }
     if (!canEnterSchedule(order)) {
       errors.push({ code: 'SCHEDULE_NOT_ALLOWED', message: '草案包含图纸未发或物料未齐的订单，不能执行。', orderId: item.orderId, day: item.targetDay });
+    }
+    const delivery = normalizeScheduleDeliveryDate(order.deliveryDate ?? item.deliveryDate ?? '');
+    if (!delivery) {
+      errors.push({ code: 'INVALID_DELIVERY_DATE', message: '草案包含交期格式无法识别的订单，需人工确认，不能进入严格交期排产草案。', orderId: item.orderId, day: item.targetDay });
+    } else {
+      itemDeliveryMap.set(item.orderId, delivery);
     }
     if (!input.allowRescheduleAssigned && isScheduleAssigned(order)) {
       warnings.push({ code: 'ALREADY_SCHEDULED', message: '草案包含已排产订单；当前未启用重排模式，请人工确认是否需要移动。', orderId: item.orderId, day: item.targetDay });
@@ -112,8 +111,8 @@ export function validateAiSchedulePlan(input: ValidateAiSchedulePlanInput): AiSc
         const b = items[j];
         const orderA = orderMap.get(a.orderId);
         const orderB = orderMap.get(b.orderId);
-        const deliveryA = normalizeDeliveryDate(orderA?.deliveryDate ?? a.deliveryDate ?? '');
-        const deliveryB = normalizeDeliveryDate(orderB?.deliveryDate ?? b.deliveryDate ?? '');
+        const deliveryA = itemDeliveryMap.get(a.orderId) ?? normalizeScheduleDeliveryDate(orderA?.deliveryDate ?? a.deliveryDate ?? '');
+        const deliveryB = itemDeliveryMap.get(b.orderId) ?? normalizeScheduleDeliveryDate(orderB?.deliveryDate ?? b.deliveryDate ?? '');
         const aDay = dayIndex(a.targetDay);
         const bDay = dayIndex(b.targetDay);
         if (deliveryA && deliveryB && deliveryA.key < deliveryB.key && aDay > bDay) {
@@ -156,20 +155,20 @@ export function validateAiSchedulePlan(input: ValidateAiSchedulePlanInput): AiSc
     const left = dayLoads.get(BALANCED_SCHEDULE_DAYS[i])?.items ?? [];
     const right = dayLoads.get(BALANCED_SCHEDULE_DAYS[i + 1])?.items ?? [];
     const leftDates = left
-      .map((item) => normalizeDeliveryDate(orderMap.get(item.orderId)?.deliveryDate ?? item.deliveryDate ?? ''))
-      .filter((item): item is { key: number; label: string } => Boolean(item));
+      .map((item) => ({ item, delivery: itemDeliveryMap.get(item.orderId) ?? normalizeScheduleDeliveryDate(orderMap.get(item.orderId)?.deliveryDate ?? item.deliveryDate ?? '') }))
+      .filter((row): row is { item: (typeof items)[number]; delivery: NormalizedScheduleDeliveryDate } => Boolean(row.delivery));
     const rightDates = right
-      .map((item) => normalizeDeliveryDate(orderMap.get(item.orderId)?.deliveryDate ?? item.deliveryDate ?? ''))
-      .filter((item): item is { key: number; label: string } => Boolean(item));
-    const leftMax = leftDates.sort((a, b) => a.key - b.key).at(-1);
-    const rightMin = rightDates.sort((a, b) => a.key - b.key)[0];
-    if (leftMax && rightMin && leftMax.key > rightMin.key) {
-      const message = `${BALANCED_SCHEDULE_DAYS[i]}存在 ${leftMax.label} 交期订单，${BALANCED_SCHEDULE_DAYS[i + 1]}存在 ${rightMin.label} 交期订单，因此违反交期顺序。`;
+      .map((item) => ({ item, delivery: itemDeliveryMap.get(item.orderId) ?? normalizeScheduleDeliveryDate(orderMap.get(item.orderId)?.deliveryDate ?? item.deliveryDate ?? '') }))
+      .filter((row): row is { item: (typeof items)[number]; delivery: NormalizedScheduleDeliveryDate } => Boolean(row.delivery));
+    const leftMax = leftDates.sort((a, b) => a.delivery.key - b.delivery.key).at(-1);
+    const rightMin = rightDates.sort((a, b) => a.delivery.key - b.delivery.key)[0];
+    if (leftMax && rightMin && leftMax.delivery.key > rightMin.delivery.key) {
+      const message = `${BALANCED_SCHEDULE_DAYS[i]}存在 ${leftMax.delivery.label} 交期订单，${BALANCED_SCHEDULE_DAYS[i + 1]}存在 ${rightMin.delivery.label} 交期订单，因此违反交期顺序。`;
       dueDateConflicts.push({
         previousDay: BALANCED_SCHEDULE_DAYS[i],
         nextDay: BALANCED_SCHEDULE_DAYS[i + 1],
-        previousLatestDueDate: leftMax.label,
-        nextEarliestDueDate: rightMin.label,
+        previousLatestDueDate: leftMax.delivery.label,
+        nextEarliestDueDate: rightMin.delivery.label,
         message,
       });
       errors.push({
@@ -186,6 +185,12 @@ export function validateAiSchedulePlan(input: ValidateAiSchedulePlanInput): AiSc
   const severeOverload = averageMinutes + 1500;
   const rows = BALANCED_SCHEDULE_DAYS.map((day) => {
     const row = dayLoads.get(day) ?? { orderCount: 0, minutes: 0, items: [] };
+    const dueDates = row.items
+      .map((item) => itemDeliveryMap.get(item.orderId) ?? normalizeScheduleDeliveryDate(orderMap.get(item.orderId)?.deliveryDate ?? item.deliveryDate ?? ''))
+      .filter((item): item is NormalizedScheduleDeliveryDate => Boolean(item))
+      .sort((a, b) => a.key - b.key);
+    const earliestDueDate = dueDates[0]?.label;
+    const latestDueDate = dueDates.at(-1)?.label;
     const delta = row.minutes - averageMinutes;
     const withinTolerance = Math.abs(delta) <= tolerance;
     if (items.length > 0 && row.minutes > maxTarget) {
@@ -194,7 +199,7 @@ export function validateAiSchedulePlan(input: ValidateAiSchedulePlanInput): AiSc
     if (items.length > 0 && !input.allowOverAverageTolerance && (row.minutes > severeOverload || row.minutes > averageMinutes * 1.5)) {
       errors.push({ code: 'DAY_SEVERE_OVERLOAD', message: `${day}负荷严重偏离平均值，存在异常堆积。`, day });
     }
-    return { day, orderCount: row.orderCount, minutes: row.minutes, averageMinutes, deltaFromAverage: delta, withinTolerance };
+    return { day, orderCount: row.orderCount, minutes: row.minutes, averageMinutes, deltaFromAverage: delta, withinTolerance, earliestDueDate, latestDueDate };
   });
 
   const saturday = rows.at(-1);
@@ -209,7 +214,9 @@ export function validateAiSchedulePlan(input: ValidateAiSchedulePlanInput): AiSc
     errors,
     warnings,
     dueDateOrder: {
-      ok: dueDateConflicts.length === 0 && !errors.some((item) => item.code === 'DUE_DATE_ORDER_BROKEN' || item.code === 'DAY_DUE_DATE_BOUNDARY_BROKEN'),
+      ok:
+        dueDateConflicts.length === 0 &&
+        !errors.some((item) => item.code === 'DUE_DATE_ORDER_BROKEN' || item.code === 'DAY_DUE_DATE_BOUNDARY_BROKEN' || item.code === 'INVALID_DELIVERY_DATE'),
       conflicts: dueDateConflicts,
     },
     dayLoads: rows,

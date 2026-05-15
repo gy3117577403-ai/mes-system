@@ -1065,6 +1065,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
               <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">本次纳入草案：{diagnosis.schedulePlan.candidateSummary.includedCount} 单</div>
               <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">图纸未发排除：{diagnosis.schedulePlan.candidateSummary.excludedByDrawing} 单</div>
               <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">物料未齐排除：{diagnosis.schedulePlan.candidateSummary.excludedByMaterial} 单</div>
+              <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">交期需确认排除：{diagnosis.schedulePlan.candidateSummary.excludedByInvalidDelivery ?? 0} 单</div>
               <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">完成/归档/删除排除：{diagnosis.schedulePlan.candidateSummary.excludedByDoneArchivedDeleted} 单</div>
             </div>
             <p className="mt-3 text-xs leading-5 text-slate-500">
@@ -1079,6 +1080,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
             const items = diagnosis.schedulePlan?.items.filter((item) => item.targetDay === day) ?? [];
             const minutes = items.reduce((sum, item) => sum + (Number(item.estimatedMinutes) || 0), 0);
             const overloaded = minutes > currentBaseLimit;
+            const validationLoad = schedulePlanValidation?.dayLoads.find((row) => row.day === day);
             return (
               <div key={day} className={cn('rounded-2xl border p-3', overloaded ? 'border-amber-300/30 bg-amber-400/10' : 'border-white/10 bg-slate-950/45')}>
                 <div className="flex items-center justify-between gap-2">
@@ -1086,6 +1088,9 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                   <div className={cn('text-xs font-bold', overloaded ? 'text-amber-100' : 'text-slate-400')}>
                     {items.length} 单 / {minutes} 分钟
                   </div>
+                </div>
+                <div className="mt-1 text-[11px] leading-5 text-slate-400">
+                  交期：{validationLoad?.earliestDueDate || '暂无'} - {validationLoad?.latestDueDate || '暂无'}
                 </div>
                 <div className="mt-3 space-y-2">
                   {items.slice(0, 4).map((item) => {
@@ -1132,6 +1137,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                 <div key={row.day} className="rounded-lg border border-white/10 bg-slate-950/35 p-2">
                   <div className="font-bold text-white">{row.day}</div>
                   <div>{row.orderCount} 单 / {row.minutes} 分钟</div>
+                  <div>交期：{row.earliestDueDate || '暂无'} - {row.latestDueDate || '暂无'}</div>
                   <div>偏差：{row.deltaFromAverage >= 0 ? '+' : ''}{row.deltaFromAverage} 分钟</div>
                   <div>{row.withinTolerance ? '在 ±500 合理区间' : '超出 ±500，需关注'}</div>
                 </div>
