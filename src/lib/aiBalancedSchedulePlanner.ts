@@ -87,6 +87,24 @@ function orderMinutes(order: BalancedScheduleOrderLike): number {
   return Math.max(0, Math.round(Number(order.planMinutes ?? order.totalHours ?? 0) || 0));
 }
 
+function deliveryKey(order: BalancedScheduleOrderLike): number {
+  const text = String(order.deliveryDate ?? '').trim();
+  if (!text) return Number.MAX_SAFE_INTEGER;
+  const normalized = text.replace(/[/.]/g, '-');
+  const match = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(normalized);
+  if (match) {
+    const [, year, month, day] = match;
+    return Number(`${year}${month.padStart(2, '0')}${day.padStart(2, '0')}`);
+  }
+  const parsed = Date.parse(text);
+  return Number.isNaN(parsed) ? Number.MAX_SAFE_INTEGER : Number(new Date(parsed).toISOString().slice(0, 10).replace(/-/g, ''));
+}
+
+function deliveryLabel(order: BalancedScheduleOrderLike): string {
+  const text = String(order.deliveryDate ?? '').trim();
+  return text || '未填交期';
+}
+
 function stableCreatedAt(order: BalancedScheduleOrderLike): string {
   const raw = order.createdAt;
   if (raw instanceof Date) return raw.toISOString();
@@ -102,7 +120,7 @@ function isDoneArchivedOrDeleted(order: BalancedScheduleOrderLike): boolean {
 }
 
 function buildReason(order: BalancedScheduleOrderLike, day: BalancedScheduleDay, loadAfter: number, averageMinutes: number): string {
-  const delivery = order.deliveryDate || '未填交期';
+  const delivery = deliveryLabel(order);
   const minutes = orderMinutes(order);
   const loadHint = loadAfter >= averageMinutes ? '当前日负荷已接近日均目标' : '当前日仍低于日均目标';
   const sourceHint = isScheduleAssigned(order) ? '该订单来自周一到周六已排产池，本次纳入重新平衡' : '该订单来自就绪待排池';
@@ -134,8 +152,10 @@ export function buildBalancedSchedulePlan(input: BuildBalancedSchedulePlanInput)
     .filter((order) => !isDoneArchivedOrDeleted(order))
     .filter((order) => allowRescheduleAssigned || !isScheduleAssigned(order))
     .sort((a, b) => {
-      const byDelivery = String(a.deliveryDate ?? '').localeCompare(String(b.deliveryDate ?? ''));
+      const byDelivery = deliveryKey(a) - deliveryKey(b);
       if (byDelivery !== 0) return byDelivery;
+      const byDeliveryText = deliveryLabel(a).localeCompare(deliveryLabel(b));
+      if (byDeliveryText !== 0) return byDeliveryText;
       const byMinutes = orderMinutes(b) - orderMinutes(a);
       if (byMinutes !== 0) return byMinutes;
       if (Boolean(a.isUrgent) !== Boolean(b.isUrgent)) return a.isUrgent ? -1 : 1;
@@ -187,7 +207,7 @@ export function buildBalancedSchedulePlan(input: BuildBalancedSchedulePlanInput)
   const loadRows = targetDays.map((day) => {
     const minutes = dayLoads.get(day) ?? 0;
     if (items.length > 0 && minutes > maxTargetMinutes) {
-      warnings.push(`${day} 负荷 ${minutes} 分钟，高于日均目标 ${averageMinutes} 分钟 + ${toleranceMinutes} 分钟，请人工确认。`);
+      warnings.push(`${day} 负荷 ${minutes} 分钟，高于日均目标 ${averageMinutes} 分钟 + ${toleranceMinutes} 分钟；由于交期优先，负荷均衡只能在不破坏交期顺序的前提下调整。`);
     }
     return {
       day,

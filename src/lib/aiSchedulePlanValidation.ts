@@ -12,6 +12,16 @@ export type AiSchedulePlanValidation = {
   ok: boolean;
   errors: AiSchedulePlanValidationIssue[];
   warnings: AiSchedulePlanValidationIssue[];
+  dueDateOrder: {
+    ok: boolean;
+    conflicts: Array<{
+      previousDay: string;
+      nextDay: string;
+      previousLatestDueDate: string;
+      nextEarliestDueDate: string;
+      message: string;
+    }>;
+  };
   dayLoads: Array<{
     day: string;
     orderCount: number;
@@ -40,9 +50,26 @@ function dayIndex(day?: string): number {
   return BALANCED_SCHEDULE_DAYS.indexOf(day as never);
 }
 
+function normalizeDeliveryDate(value?: string | null): { key: number; label: string } | null {
+  const text = String(value ?? '').trim();
+  if (!text) return null;
+  const normalized = text.replace(/[/.]/g, '-');
+  const match = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(normalized);
+  if (match) {
+    const [, year, month, day] = match;
+    const label = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+    return { key: Number(label.replace(/-/g, '')), label };
+  }
+  const parsed = Date.parse(text);
+  if (Number.isNaN(parsed)) return null;
+  const label = new Date(parsed).toISOString().slice(0, 10);
+  return { key: Number(label.replace(/-/g, '')), label };
+}
+
 export function validateAiSchedulePlan(input: ValidateAiSchedulePlanInput): AiSchedulePlanValidation {
   const errors: AiSchedulePlanValidationIssue[] = [];
   const warnings: AiSchedulePlanValidationIssue[] = [];
+  const dueDateConflicts: AiSchedulePlanValidation['dueDateOrder']['conflicts'] = [];
   const tolerance = Math.max(0, Math.round(Number(input.averageToleranceMinutes) || 500));
   const items = Array.isArray(input.schedulePlan?.items) ? input.schedulePlan.items : [];
   const orderMap = new Map(input.orders.map((order) => [order.id, order]));
@@ -85,11 +112,11 @@ export function validateAiSchedulePlan(input: ValidateAiSchedulePlanInput): AiSc
         const b = items[j];
         const orderA = orderMap.get(a.orderId);
         const orderB = orderMap.get(b.orderId);
-        const deliveryA = String(orderA?.deliveryDate ?? a.deliveryDate ?? '');
-        const deliveryB = String(orderB?.deliveryDate ?? b.deliveryDate ?? '');
+        const deliveryA = normalizeDeliveryDate(orderA?.deliveryDate ?? a.deliveryDate ?? '');
+        const deliveryB = normalizeDeliveryDate(orderB?.deliveryDate ?? b.deliveryDate ?? '');
         const aDay = dayIndex(a.targetDay);
         const bDay = dayIndex(b.targetDay);
-        if (deliveryA && deliveryB && deliveryA < deliveryB && aDay > bDay) {
+        if (deliveryA && deliveryB && deliveryA.key < deliveryB.key && aDay > bDay) {
           errors.push({
             code: 'DUE_DATE_ORDER_BROKEN',
             message: '交期顺序错误：早交期订单被排到了晚交期订单之后。',
@@ -97,12 +124,28 @@ export function validateAiSchedulePlan(input: ValidateAiSchedulePlanInput): AiSc
             day: a.targetDay,
           });
         }
-        if (deliveryA && deliveryB && deliveryA === deliveryB && minutesOf(orderA) > minutesOf(orderB) && aDay > bDay) {
+        if (deliveryA && deliveryB && deliveryA.key > deliveryB.key && aDay < bDay) {
+          errors.push({
+            code: 'DUE_DATE_ORDER_BROKEN',
+            message: '交期顺序错误：后交期订单被排到了前交期订单前面。',
+            orderId: a.orderId,
+            day: a.targetDay,
+          });
+        }
+        if (deliveryA && deliveryB && deliveryA.key === deliveryB.key && minutesOf(orderA) > minutesOf(orderB) && aDay > bDay) {
           errors.push({
             code: 'SAME_DUE_LARGE_ORDER_DELAYED',
             message: '同交期工时高的订单被排得更晚，不符合大工时优先规则。',
             orderId: a.orderId,
             day: a.targetDay,
+          });
+        }
+        if (deliveryA && deliveryB && deliveryA.key === deliveryB.key && aDay === bDay && minutesOf(orderA) < minutesOf(orderB)) {
+          errors.push({
+            code: 'SAME_DUE_LARGE_ORDER_DELAYED',
+            message: '同一天同交期内，工时高的订单应排在工时低的订单前面。',
+            orderId: b.orderId,
+            day: b.targetDay,
           });
         }
       }
@@ -112,14 +155,26 @@ export function validateAiSchedulePlan(input: ValidateAiSchedulePlanInput): AiSc
   for (let i = 0; i < BALANCED_SCHEDULE_DAYS.length - 1; i += 1) {
     const left = dayLoads.get(BALANCED_SCHEDULE_DAYS[i])?.items ?? [];
     const right = dayLoads.get(BALANCED_SCHEDULE_DAYS[i + 1])?.items ?? [];
-    const leftDates = left.map((item) => String(orderMap.get(item.orderId)?.deliveryDate ?? item.deliveryDate ?? '')).filter(Boolean);
-    const rightDates = right.map((item) => String(orderMap.get(item.orderId)?.deliveryDate ?? item.deliveryDate ?? '')).filter(Boolean);
-    const leftMax = leftDates.sort().at(-1);
-    const rightMin = rightDates.sort()[0];
-    if (leftMax && rightMin && leftMax > rightMin) {
+    const leftDates = left
+      .map((item) => normalizeDeliveryDate(orderMap.get(item.orderId)?.deliveryDate ?? item.deliveryDate ?? ''))
+      .filter((item): item is { key: number; label: string } => Boolean(item));
+    const rightDates = right
+      .map((item) => normalizeDeliveryDate(orderMap.get(item.orderId)?.deliveryDate ?? item.deliveryDate ?? ''))
+      .filter((item): item is { key: number; label: string } => Boolean(item));
+    const leftMax = leftDates.sort((a, b) => a.key - b.key).at(-1);
+    const rightMin = rightDates.sort((a, b) => a.key - b.key)[0];
+    if (leftMax && rightMin && leftMax.key > rightMin.key) {
+      const message = `${BALANCED_SCHEDULE_DAYS[i]}存在 ${leftMax.label} 交期订单，${BALANCED_SCHEDULE_DAYS[i + 1]}存在 ${rightMin.label} 交期订单，因此违反交期顺序。`;
+      dueDateConflicts.push({
+        previousDay: BALANCED_SCHEDULE_DAYS[i],
+        nextDay: BALANCED_SCHEDULE_DAYS[i + 1],
+        previousLatestDueDate: leftMax.label,
+        nextEarliestDueDate: rightMin.label,
+        message,
+      });
       errors.push({
         code: 'DAY_DUE_DATE_BOUNDARY_BROKEN',
-        message: `${BALANCED_SCHEDULE_DAYS[i]}存在比${BALANCED_SCHEDULE_DAYS[i + 1]}更晚交期的订单，不能执行。`,
+        message,
         day: BALANCED_SCHEDULE_DAYS[i],
       });
     }
@@ -134,7 +189,7 @@ export function validateAiSchedulePlan(input: ValidateAiSchedulePlanInput): AiSc
     const delta = row.minutes - averageMinutes;
     const withinTolerance = Math.abs(delta) <= tolerance;
     if (items.length > 0 && row.minutes > maxTarget) {
-      warnings.push({ code: 'DAY_OVER_AVERAGE_TOLERANCE', message: `${day}负荷 ${row.minutes} 分钟，超过日均 ${averageMinutes} 分钟 + ${tolerance} 分钟。`, day });
+      warnings.push({ code: 'DAY_OVER_AVERAGE_TOLERANCE', message: `${day}负荷 ${row.minutes} 分钟，超过日均 ${averageMinutes} 分钟 + ${tolerance} 分钟。为了保证交期优先，负荷均衡只能在同交期或不破坏交期顺序的范围内调整。`, day });
     }
     if (items.length > 0 && !input.allowOverAverageTolerance && (row.minutes > severeOverload || row.minutes > averageMinutes * 1.5)) {
       errors.push({ code: 'DAY_SEVERE_OVERLOAD', message: `${day}负荷严重偏离平均值，存在异常堆积。`, day });
@@ -153,6 +208,10 @@ export function validateAiSchedulePlan(input: ValidateAiSchedulePlanInput): AiSc
     ok,
     errors,
     warnings,
+    dueDateOrder: {
+      ok: dueDateConflicts.length === 0 && !errors.some((item) => item.code === 'DUE_DATE_ORDER_BROKEN' || item.code === 'DAY_DUE_DATE_BOUNDARY_BROKEN'),
+      conflicts: dueDateConflicts,
+    },
     dayLoads: rows,
     summary: ok
       ? `排产草案通过校验：总工时 ${totalMinutes} 分钟，日均目标 ${averageMinutes} 分钟，允许浮动 ±${tolerance} 分钟。`

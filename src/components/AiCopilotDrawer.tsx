@@ -1076,6 +1076,19 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
           <div className={cn('mt-3 rounded-xl border p-3 text-xs leading-5', schedulePlanValidation.ok ? 'border-emerald-300/25 bg-emerald-400/10 text-emerald-100' : 'border-rose-300/25 bg-rose-400/10 text-rose-100')}>
             <div className="font-black">{schedulePlanValidation.ok ? '排产质量校验通过' : '当前排单草案未通过计划逻辑校验，不能执行。'}</div>
             <div className="mt-1">{schedulePlanValidation.summary}</div>
+            <div className={cn('mt-3 rounded-lg border p-3', schedulePlanValidation.dueDateOrder.ok ? 'border-emerald-200/20 bg-emerald-300/10' : 'border-rose-200/25 bg-rose-400/10')}>
+              <div className="font-black">{schedulePlanValidation.dueDateOrder.ok ? '交期顺序通过' : '交期顺序不通过'}</div>
+              <p className="mt-1 text-[11px] leading-5 opacity-85">
+                为了保证交期优先，负荷均衡只能在同交期范围内或不破坏前后交期顺序的前提下调整。
+              </p>
+              {schedulePlanValidation.dueDateOrder.conflicts.length ? (
+                <div className="mt-2 space-y-1">
+                  {schedulePlanValidation.dueDateOrder.conflicts.slice(0, 3).map((conflict, index) => (
+                    <div key={`${conflict.previousDay}-${conflict.nextDay}-${index}`}>{conflict.message}</div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
             <div className="mt-3 grid gap-2 md:grid-cols-3">
               {schedulePlanValidation.dayLoads.map((row) => (
                 <div key={row.day} className="rounded-lg border border-white/10 bg-slate-950/35 p-2">
