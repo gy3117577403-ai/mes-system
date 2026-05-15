@@ -417,6 +417,8 @@ export default function KanbanApp() {
     return {
       currentView: viewMode === 'workshop' ? 'workshop' : mainAppView,
       layoutMode,
+      planWeekSelected: importPlanWeek !== null,
+      planWeekLabel: importPlanWeek === null ? null : `计划归属周 ${importPlanWeek}`,
       visibleOrderIds: visibleOrders.slice(0, 200).map((order) => order.id),
       loadedOrderCount: orders.length,
       localSummary: {
@@ -435,7 +437,7 @@ export default function KanbanApp() {
         baselineModeRecommended: true,
       },
     };
-  }, [filteredOrders, layoutMode, mainAppView, orders, user?.role, viewMode]);
+  }, [filteredOrders, importPlanWeek, layoutMode, mainAppView, orders, user?.role, viewMode]);
 
   const redAlertTasks = useMemo(() => filteredOrders.filter(t => getCardStatus(t) === 'red' || t.taskStatus === 'anomaly'), [filteredOrders]);
   const invalidScheduledOrders = useMemo(

@@ -455,6 +455,8 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
       ...uiContext,
       selectedTaskId,
       selectedTaskName: selectedTask?.name ?? null,
+      planWeekSelected: uiContext?.planWeekSelected,
+      planWeekLabel: uiContext?.planWeekLabel,
       visibleOrderIds: (uiContext?.visibleOrderIds ?? orders.slice(0, 200).map((order) => order.id)).slice(0, 200),
       loadedOrderCount: uiContext?.loadedOrderCount ?? orders.length,
       localSummary: uiContext?.localSummary ?? {
@@ -1016,6 +1018,24 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
             共 {diagnosis.schedulePlan.items.length} 条建议
           </div>
         </div>
+        {diagnosis.schedulePlan.candidateSummary ? (
+          <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/45 p-4">
+            <div className="mb-3 text-sm font-black text-white">候选订单识别</div>
+            <div className="grid gap-2 text-xs leading-5 text-slate-300 sm:grid-cols-2 xl:grid-cols-3">
+              <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">就绪待排池：{diagnosis.schedulePlan.candidateSummary.readyPoolCount} 单</div>
+              <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">周一到周六已排可调整：{diagnosis.schedulePlan.candidateSummary.scheduledAdjustableCount} 单</div>
+              <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">本次纳入草案：{diagnosis.schedulePlan.candidateSummary.includedCount} 单</div>
+              <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">图纸未发排除：{diagnosis.schedulePlan.candidateSummary.excludedByDrawing} 单</div>
+              <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">物料未齐排除：{diagnosis.schedulePlan.candidateSummary.excludedByMaterial} 单</div>
+              <div className="rounded-xl border border-white/10 bg-white/[0.035] p-3">完成/归档/删除排除：{diagnosis.schedulePlan.candidateSummary.excludedByDoneArchivedDeleted} 单</div>
+            </div>
+            <p className="mt-3 text-xs leading-5 text-slate-500">
+              {diagnosis.schedulePlan.candidateSummary.allowRescheduleAssigned
+                ? '本次按生产计划员权限纳入已排订单重新平衡。'
+                : '本次按用户要求不移动已排订单，仅处理待排订单。'}
+            </p>
+          </div>
+        ) : null}
         <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {['周一', '周二', '周三', '周四', '周五', '周六'].map((day) => {
             const items = diagnosis.schedulePlan?.items.filter((item) => item.targetDay === day) ?? [];

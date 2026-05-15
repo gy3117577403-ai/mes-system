@@ -1,4 +1,4 @@
-import { canEnterSchedule, isScheduleAssigned } from '@/lib/scheduleEligibility';
+import { canEnterSchedule, getScheduleBlockReasons, isScheduleAssigned } from '@/lib/scheduleEligibility';
 
 export const BALANCED_SCHEDULE_DAYS = ['周一', '周二', '周三', '周四', '周五', '周六'] as const;
 
@@ -36,6 +36,16 @@ export type BalancedSchedulePlan = {
   summary: string;
   items: BalancedSchedulePlanItem[];
   warnings: string[];
+  candidateSummary: {
+    scannedOrderCount: number;
+    readyPoolCount: number;
+    scheduledAdjustableCount: number;
+    includedCount: number;
+    excludedByDrawing: number;
+    excludedByMaterial: number;
+    excludedByDoneArchivedDeleted: number;
+    allowRescheduleAssigned: boolean;
+  };
   balance: {
     totalMinutes: number;
     dayCount: number;
@@ -87,11 +97,16 @@ function isOrderDone(order: BalancedScheduleOrderLike): boolean {
   return ['COMPLETED', 'completed', 'DONE', 'done'].includes(String(order.taskStatus ?? ''));
 }
 
+function isDoneArchivedOrDeleted(order: BalancedScheduleOrderLike): boolean {
+  return Boolean(order.isArchived || order.deletedAt || isOrderDone(order));
+}
+
 function buildReason(order: BalancedScheduleOrderLike, day: BalancedScheduleDay, loadAfter: number, averageMinutes: number): string {
   const delivery = order.deliveryDate || '未填交期';
   const minutes = orderMinutes(order);
   const loadHint = loadAfter >= averageMinutes ? '当前日负荷已接近日均目标' : '当前日仍低于日均目标';
-  return `交期 ${delivery} 优先，同交期内按工时 ${minutes} 分钟优先，排入${day}；${loadHint}。`;
+  const sourceHint = isScheduleAssigned(order) ? '该订单来自周一到周六已排产池，本次纳入重新平衡' : '该订单来自就绪待排池';
+  return `交期 ${delivery} 优先，同交期内按工时 ${minutes} 分钟优先，排入${day}；${loadHint}；${sourceHint}。`;
 }
 
 export function buildBalancedSchedulePlan(input: BuildBalancedSchedulePlanInput): {
@@ -100,11 +115,23 @@ export function buildBalancedSchedulePlan(input: BuildBalancedSchedulePlanInput)
 } {
   const targetDays = normalizeTargetDays(input.targetDays);
   const toleranceMinutes = Math.max(0, Math.round(Number(input.averageToleranceMinutes) || 500));
-  const allowRescheduleAssigned = input.allowRescheduleAssigned === true;
-  const candidates = input.orders
+  const allowRescheduleAssigned = input.allowRescheduleAssigned !== false;
+  const scannedOrders = input.orders.filter((order) => order && order.id);
+  const activeOrders = scannedOrders.filter((order) => !isDoneArchivedOrDeleted(order));
+  const eligibleOrders = activeOrders.filter((order) => canEnterSchedule(order));
+  const readyPoolCount = eligibleOrders.filter((order) => !isScheduleAssigned(order)).length;
+  const scheduledAdjustableCount = eligibleOrders.filter((order) => isScheduleAssigned(order)).length;
+  const excludedByDoneArchivedDeleted = scannedOrders.filter(isDoneArchivedOrDeleted).length;
+  const excludedByDrawing = activeOrders.filter((order) => getScheduleBlockReasons(order).includes('DRAWING_NOT_READY')).length;
+  const excludedByMaterial = activeOrders.filter((order) => {
+    const reasons = getScheduleBlockReasons(order);
+    return !reasons.includes('DRAWING_NOT_READY') && reasons.includes('MATERIAL_NOT_READY');
+  }).length;
+
+  const candidates = scannedOrders
     .filter((order) => order && order.id)
     .filter((order) => canEnterSchedule(order))
-    .filter((order) => !order.isArchived && !order.deletedAt && !isOrderDone(order))
+    .filter((order) => !isDoneArchivedOrDeleted(order))
     .filter((order) => allowRescheduleAssigned || !isScheduleAssigned(order))
     .sort((a, b) => {
       const byDelivery = String(a.deliveryDate ?? '').localeCompare(String(b.deliveryDate ?? ''));
@@ -173,10 +200,20 @@ export function buildBalancedSchedulePlan(input: BuildBalancedSchedulePlanInput)
   const schedulePlan: BalancedSchedulePlan = {
     title: '交期优先均衡排产草案',
     summary: items.length
-      ? `已按交期升序、同交期工时降序生成 ${items.length} 条草案；本周候选总工时 ${totalMinutes} 分钟，日均目标 ${averageMinutes} 分钟，目标浮动 ±${toleranceMinutes} 分钟。`
+      ? `已按交期升序、同交期工时降序生成 ${items.length} 条草案；候选包含就绪待排 ${readyPoolCount} 单、已排可调整 ${allowRescheduleAssigned ? scheduledAdjustableCount : 0} 单；本周候选总工时 ${totalMinutes} 分钟，日均目标 ${averageMinutes} 分钟，目标浮动 ±${toleranceMinutes} 分钟。`
       : '当前没有满足图纸已发、物料齐套且可排产的候选订单。',
     items,
     warnings,
+    candidateSummary: {
+      scannedOrderCount: scannedOrders.length,
+      readyPoolCount,
+      scheduledAdjustableCount: allowRescheduleAssigned ? scheduledAdjustableCount : 0,
+      includedCount: items.length,
+      excludedByDrawing,
+      excludedByMaterial,
+      excludedByDoneArchivedDeleted,
+      allowRescheduleAssigned,
+    },
     balance: {
       totalMinutes,
       dayCount: targetDays.length,

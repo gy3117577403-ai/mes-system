@@ -68,6 +68,8 @@ export type MainAppView = 'kanban' | 'dashboard';
 export type AiPlannerUiContext = {
   currentView?: string;
   layoutMode?: string;
+  planWeekSelected?: boolean;
+  planWeekLabel?: string | null;
   selectedTaskId?: string | null;
   selectedTaskName?: string | null;
   visibleOrderIds?: string[];

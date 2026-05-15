@@ -77,6 +77,7 @@ export type AiSchedulePlan = {
   summary: string;
   items: AiSchedulePlanItem[];
   warnings: string[];
+  candidateSummary?: BalancedSchedulePlan['candidateSummary'];
   balance?: BalancedSchedulePlan['balance'];
 };
 
@@ -148,6 +149,8 @@ function sanitizeUiContext(input?: AiPlannerUiContext | null): AiPlannerUiContex
   return {
     currentView: limitString(input.currentView, 80),
     layoutMode: limitString(input.layoutMode, 80),
+    planWeekSelected: input.planWeekSelected === true,
+    planWeekLabel: input.planWeekLabel === null ? null : limitString(input.planWeekLabel, 80),
     selectedTaskId: input.selectedTaskId === null ? null : limitString(input.selectedTaskId, 80),
     selectedTaskName: input.selectedTaskName === null ? null : limitString(input.selectedTaskName, 120),
     visibleOrderIds,
@@ -374,9 +377,12 @@ function buildRuleSchedulePlan(
     blockedGroups: [
       {
         reasonType: 'OTHER',
-        count: Math.max(0, orders.length - schedulePlan.items.length),
+        count:
+          (schedulePlan.candidateSummary?.excludedByDrawing ?? 0) +
+          (schedulePlan.candidateSummary?.excludedByMaterial ?? 0) +
+          (schedulePlan.candidateSummary?.excludedByDoneArchivedDeleted ?? 0),
         orderIds: [],
-        suggestion: '图纸未发或物料未齐的订单不会进入本次排产草案。',
+        suggestion: '图纸未发、物料未齐、已完成、已归档或已删除的订单不会进入本次排产草案。',
       },
     ],
     questionsForHuman: [
@@ -400,7 +406,7 @@ function withRuleSchedulePlan(
   reasonPrefix?: string,
   intent: ScheduleIntent = extractScheduleIntent('')
 ): AiCopilotResponse {
-  if (!shouldBuild || result.schedulePlan?.items?.length) {
+  if (!shouldBuild) {
     return result;
   }
   const rule = buildRuleSchedulePlan(parseCompactOrders(context), currentBaseLimit, reasonPrefix, intent);
@@ -440,6 +446,19 @@ function withScheduleValidation(result: AiCopilotResponse, context: string, inte
     schedulePlanValidation: validation,
     proposedMutations: result.proposedMutations.filter((mutation) => mutation.type !== 'ASSIGN_ORDER_DAY' && mutation.type !== 'UPDATE_ORDER_DATE'),
     unreasonableAlerts: uniqueNonEmpty([...validation.errors.map((item) => item.message), ...result.unreasonableAlerts]),
+  };
+}
+
+function withUiContextScheduleNotes(result: AiCopilotResponse, uiContext?: AiPlannerUiContext): AiCopilotResponse {
+  if (!result.schedulePlan || uiContext?.planWeekSelected !== false) return result;
+  const message = '当前未选择计划归属周，本次仅基于当前看板进行排产建议。';
+  return {
+    ...result,
+    unreasonableAlerts: uniqueNonEmpty([message, ...result.unreasonableAlerts]),
+    schedulePlan: {
+      ...result.schedulePlan,
+      warnings: uniqueNonEmpty([message, ...result.schedulePlan.warnings]),
+    },
   };
 }
 
@@ -533,7 +552,7 @@ function assignedDayFromYmd(ymd: string): string {
 }
 
 function isSchedulePlanningPrompt(prompt: string): boolean {
-  return /排单|排产|周一|周二|周三|周四|周五|周六|按交期排|按工时排|一键排|帮我排产|生成本周排产建议|排到周/.test(prompt);
+  return /排单|排产|安排|重排|重新排|调整|平衡|优化|周一|周二|周三|周四|周五|周六|按交期排|按工时排|一键排|帮我排产|生成本周排产建议|排到周/.test(prompt);
 }
 
 type ScheduleIntent = {
@@ -548,11 +567,13 @@ type ScheduleIntent = {
 function extractScheduleIntent(userPrompt: string): ScheduleIntent {
   const prompt = String(userPrompt ?? '');
   const toleranceMatch = /(?:上下浮动|浮动|±)\s*(\d{2,5})/.exec(prompt);
+  const wantsScheduling = isSchedulePlanningPrompt(prompt);
+  const keepScheduledFixed = /不要动已排|不动已排|不要调整已排|保留已排|只排待排|只排未排|只看就绪待排|只排就绪待排|只处理待排池|只处理未排/.test(prompt);
   return {
-    wantsScheduling: isSchedulePlanningPrompt(prompt),
-    dueDateFirst: /交期优先|按交期|交期一定优先|交期从早到晚|交期升序/.test(prompt) || isSchedulePlanningPrompt(prompt),
+    wantsScheduling,
+    dueDateFirst: /交期优先|按交期|交期一定优先|交期从早到晚|交期升序/.test(prompt) || wantsScheduling,
     allowOverAverageTolerance: /允许超负荷|允许加班|可超产能|超出工时也可以|允许超出/.test(prompt),
-    allowRescheduleAssigned: /重排|重新排|调整已排|全部重排/.test(prompt),
+    allowRescheduleAssigned: wantsScheduling && !keepScheduledFixed,
     toleranceMinutes: toleranceMatch ? Math.max(0, Math.round(Number(toleranceMatch[1]) || 500)) : 500,
     targetDays: ['周一', '周二', '周三', '周四', '周五', '周六'],
   };
@@ -902,7 +923,7 @@ export async function interactWithAiCopilotAction(
     );
     return {
       ok: true,
-      data: withContextWarnings(withScheduleValidation(data, contextResult.context, scheduleIntent), contextResult.warnings),
+      data: withContextWarnings(withUiContextScheduleNotes(withScheduleValidation(data, contextResult.context, scheduleIntent), sanitizedUiContext), contextResult.warnings),
       contextSummary: contextResult.summary,
       audit: { enabled: false, persistenceWarning: 'AI Key ?????????????????' },
     };
@@ -967,7 +988,7 @@ export async function interactWithAiCopilotAction(
 
   const pageContextText = JSON.stringify(sanitizedUiContext ?? { unavailable: true });
   const scheduleInstruction =
-    '排产任务硬要求：当用户要求排单、排产、按交期排、安排到周一到周六或生成本周排产建议时，必须返回 schedulePlan 和 proposedMutations。schedulePlan.items 的 targetDay 只能是周一、周二、周三、周四、周五、周六。对应 proposedMutations 请使用 { "type": "ASSIGN_ORDER_DAY", "orderId": "...", "assignedDay": "周一", "plannedDate": "YYYY-MM-DD", "reason": "..." }。只允许选择 scheduleEligible=true 的订单；图纸未下发不得排产；物料未齐不得排产；SOP 缺失只提醒，不拦截；不能编造不存在的订单 ID；每条建议必须说明原因；所有写入都必须等待人工确认，后端仍会重新校验 canEnterSchedule。schedulePlan JSON 结构为 { "title": "本周排产草案", "summary": "...", "items": [{ "orderId": "...", "targetDay": "周一", "targetDate": "YYYY-MM-DD", "reason": "...", "estimatedMinutes": 120, "priorityRank": 1 }], "warnings": [] }。';
+    '排产任务硬要求：当用户要求排单、排产、重排、调整、平衡、优化、按交期排、安排到周一到周六或生成本周排产建议时，必须返回 schedulePlan 和 proposedMutations。AI 计划员的候选范围默认是全周可排订单：就绪待排池 + 周一到周六已排产订单；除非用户明确说不要动已排订单或只排待排池，否则可以重新移动已排订单。schedulePlan.items 的 targetDay 只能是周一、周二、周三、周四、周五、周六。对应 proposedMutations 请使用 { "type": "ASSIGN_ORDER_DAY", "orderId": "...", "assignedDay": "周一", "plannedDate": "YYYY-MM-DD", "reason": "..." }。只允许选择 scheduleEligible=true 的订单；图纸未下发不得排产；物料未齐不得排产；已完成、已归档、已删除订单不得排产；SOP 缺失只提醒，不拦截；不能编造不存在的订单 ID；每条建议必须说明原因；所有写入都必须等待人工确认，后端仍会重新校验 canEnterSchedule。schedulePlan JSON 结构为 { "title": "本周排产草案", "summary": "...", "items": [{ "orderId": "...", "targetDay": "周一", "targetDate": "YYYY-MM-DD", "reason": "...", "estimatedMinutes": 120, "priorityRank": 1 }], "warnings": [] }。';
   const balancedScheduleInstruction =
     '专业均衡排产规则：生成排产草案时必须严格按交期从早到晚；不允许后交期订单排到前交期订单前面；同一天交期内，工时高的订单优先；先计算本周候选订单总工时，再用总工时除以 6 得到日均目标；每天负荷尽量围绕日均目标上下浮动 500 分钟；大单可以造成单日适度超出，但不能把大量订单堆到某一天；不允许前几天低负荷、最后一天严重爆仓；不允许周六负荷远高于其他天。如果无法同时满足交期和均衡，必须说明冲突，不要硬生成可执行草案。';
   const system =
@@ -1034,17 +1055,22 @@ export async function interactWithAiCopilotAction(
     if (!res.ok) {
       const errorText = await res.text().catch(() => '');
       console.error('DeepSeek API 响应失败:', res.status, errorText);
+      const data = withRuleSchedulePlan(
+        fallbackAiCopilotResponse(
+          `AI 调度大脑响应异常 (HTTP ${res.status})。请检查 API 密钥、模型权限或账户余额。`,
+          ['API 接口连接受阻，当前展示系统均衡规则排产建议'],
+          contextResult.summary,
+          sanitizedUiContext
+        ),
+        contextResult.context,
+        currentBaseLimit,
+        shouldBuildSchedulePlan,
+        'AI 接口异常，使用系统均衡规则',
+        scheduleIntent
+      );
       return {
         ok: true,
-      data: withContextWarnings(
-          fallbackAiCopilotResponse(
-            `AI 调度大脑响应异常 (HTTP ${res.status})。请检查 API 密钥、模型权限或账户余额。`,
-            ['API 接口连接受阻，当前展示系统规则体检结果'],
-            contextResult.summary,
-            sanitizedUiContext
-          ),
-          contextResult.warnings
-        ),
+        data: withContextWarnings(withUiContextScheduleNotes(withScheduleValidation(data, contextResult.context, scheduleIntent), sanitizedUiContext), contextResult.warnings),
         contextSummary: contextResult.summary,
         rawModelPreview: errorText.slice(0, 500),
       };
@@ -1056,12 +1082,17 @@ export async function interactWithAiCopilotAction(
     } catch (jsonError) {
       const message = safeErrorMessage(jsonError);
       console.error('DeepSeek API 响应不是合法 JSON:', jsonError);
+      const data = withRuleSchedulePlan(
+        fallbackAiCopilotResponse('AI 接口返回格式异常，无法读取响应 JSON。', ['API 响应体不是合法 JSON，当前展示系统均衡规则排产建议'], contextResult.summary, sanitizedUiContext),
+        contextResult.context,
+        currentBaseLimit,
+        shouldBuildSchedulePlan,
+        'AI 接口格式异常，使用系统均衡规则',
+        scheduleIntent
+      );
       return {
         ok: true,
-        data: withContextWarnings(
-          fallbackAiCopilotResponse('AI 接口返回格式异常，无法读取响应 JSON。', ['API 响应体不是合法 JSON'], contextResult.summary, sanitizedUiContext),
-          contextResult.warnings
-        ),
+        data: withContextWarnings(withUiContextScheduleNotes(withScheduleValidation(data, contextResult.context, scheduleIntent), sanitizedUiContext), contextResult.warnings),
         contextSummary: contextResult.summary,
         rawModelPreview: message.slice(0, 500),
       };
@@ -1069,17 +1100,22 @@ export async function interactWithAiCopilotAction(
 
     if (body.error?.message) {
       console.error('DeepSeek API 返回业务错误:', body.error.message);
+      const data = withRuleSchedulePlan(
+        fallbackAiCopilotResponse(
+          `AI 调度大脑返回错误：${body.error.message.slice(0, 180)}。请检查 API 密钥、模型权限或账户余额。`,
+          ['API 返回业务错误，当前展示系统均衡规则排产建议'],
+          contextResult.summary,
+          sanitizedUiContext
+        ),
+        contextResult.context,
+        currentBaseLimit,
+        shouldBuildSchedulePlan,
+        'AI 接口业务错误，使用系统均衡规则',
+        scheduleIntent
+      );
       return {
         ok: true,
-        data: withContextWarnings(
-          fallbackAiCopilotResponse(
-            `AI 调度大脑返回错误：${body.error.message.slice(0, 180)}。请检查 API 密钥、模型权限或账户余额。`,
-            ['API 返回业务错误，当前展示系统规则体检结果'],
-            contextResult.summary,
-            sanitizedUiContext
-          ),
-          contextResult.warnings
-        ),
+        data: withContextWarnings(withUiContextScheduleNotes(withScheduleValidation(data, contextResult.context, scheduleIntent), sanitizedUiContext), contextResult.warnings),
         contextSummary: contextResult.summary,
         rawModelPreview: body.error.message.slice(0, 500),
       };
@@ -1088,14 +1124,19 @@ export async function interactWithAiCopilotAction(
     const rawContent = body.choices?.[0]?.message?.content;
     if (!rawContent) {
       console.error('DeepSeek API 返回空内容:', body);
+      const data = withRuleSchedulePlan(
+        fallbackAiCopilotResponse('AI 调度大脑返回为空，未能自动渲染大盘。请稍后再试或换个说法。', [
+          'AI 输出为空，当前展示系统均衡规则排产建议',
+        ], contextResult.summary, sanitizedUiContext),
+        contextResult.context,
+        currentBaseLimit,
+        shouldBuildSchedulePlan,
+        'AI 输出为空，使用系统均衡规则',
+        scheduleIntent
+      );
       return {
         ok: true,
-        data: withContextWarnings(
-          fallbackAiCopilotResponse('AI 调度大脑返回为空，未能自动渲染大盘。请稍后再试或换个说法。', [
-            'AI 输出为空',
-          ], contextResult.summary, sanitizedUiContext),
-          contextResult.warnings
-        ),
+        data: withContextWarnings(withUiContextScheduleNotes(withScheduleValidation(data, contextResult.context, scheduleIntent), sanitizedUiContext), contextResult.warnings),
         contextSummary: contextResult.summary,
       };
     }
@@ -1107,15 +1148,15 @@ export async function interactWithAiCopilotAction(
         contextResult.context,
         currentBaseLimit,
         shouldBuildSchedulePlan,
-        '?????????????????????',
+        '模型建议已由系统均衡规则校准',
         scheduleIntent
       );
       const data = withContextWarnings(
-        withScheduleValidation(
+        withUiContextScheduleNotes(withScheduleValidation(
           normalized.plannerReport ? normalized : { ...normalized, plannerReport: buildFallbackPlannerReport(contextResult.summary, undefined, sanitizedUiContext) },
           contextResult.context,
           scheduleIntent
-        ),
+        ), sanitizedUiContext),
         contextResult.warnings
       );
       await finishAudit('COMPLETED', {
@@ -1147,17 +1188,22 @@ export async function interactWithAiCopilotAction(
       };
     } catch (parseError) {
       console.error('AI 返回的数据无法解析为严格 JSON:', parseError);
+      const data = withRuleSchedulePlan(
+        fallbackAiCopilotResponse(
+          'AI 专家推演成功，但返回的数据结构格式异常，未能自动渲染大盘。请稍后再试或换个说法。',
+          ['AI 输出格式非标准 JSON，当前展示系统均衡规则排产建议'],
+          contextResult.summary,
+          sanitizedUiContext
+        ),
+        contextResult.context,
+        currentBaseLimit,
+        shouldBuildSchedulePlan,
+        'AI 输出格式异常，使用系统均衡规则',
+        scheduleIntent
+      );
       return {
         ok: true,
-        data: withContextWarnings(
-          fallbackAiCopilotResponse(
-            'AI 专家推演成功，但返回的数据结构格式异常，未能自动渲染大盘。请稍后再试或换个说法。',
-            ['AI 输出格式非标准 JSON'],
-            contextResult.summary,
-            sanitizedUiContext
-          ),
-          contextResult.warnings
-        ),
+        data: withContextWarnings(withUiContextScheduleNotes(withScheduleValidation(data, contextResult.context, scheduleIntent), sanitizedUiContext), contextResult.warnings),
         contextSummary: contextResult.summary,
         rawModelPreview: rawContent.slice(0, 500),
       };
@@ -1165,14 +1211,19 @@ export async function interactWithAiCopilotAction(
   } catch (error) {
     const message = safeErrorMessage(error);
     console.error('[interactWithAiCopilotAction] DeepSeek request failed:', error);
+    const data = withRuleSchedulePlan(
+      fallbackAiCopilotResponse('AI 调度大脑连接异常。请检查网络、API 密钥或账户状态。', [
+        'AI 接口调用异常，当前展示系统均衡规则排产建议',
+      ], contextResult.summary, sanitizedUiContext),
+      contextResult.context,
+      currentBaseLimit,
+      shouldBuildSchedulePlan,
+      'AI 连接异常，使用系统均衡规则',
+      scheduleIntent
+    );
     return {
       ok: true,
-      data: withContextWarnings(
-        fallbackAiCopilotResponse('AI 调度大脑连接异常。请检查网络、API 密钥或账户状态。', [
-          'AI 接口调用异常，无法进行大盘评估',
-        ], contextResult.summary, sanitizedUiContext),
-        contextResult.warnings
-      ),
+      data: withContextWarnings(withUiContextScheduleNotes(withScheduleValidation(data, contextResult.context, scheduleIntent), sanitizedUiContext), contextResult.warnings),
       contextSummary: contextResult.summary,
       rawModelPreview: message.slice(0, 500),
     };
@@ -1186,12 +1237,12 @@ export async function generateRuleSchedulePlanAction(
   const sanitizedUiContext = sanitizeUiContext(uiContext);
   try {
     const contextResult = await buildSchedulerContext(currentBaseLimit);
-    const intent = extractScheduleIntent('??????????????????????????????????????500??');
-    const rule = buildRuleSchedulePlan(parseCompactOrders(contextResult.context), currentBaseLimit, '????????????', intent);
+    const intent = extractScheduleIntent('把所有能排的订单统一按交期重新排，本周负荷尽量均衡，每天上下浮动500分钟');
+    const rule = buildRuleSchedulePlan(parseCompactOrders(contextResult.context), currentBaseLimit, '系统均衡规则草案', intent);
     const data: AiCopilotResponse = withContextWarnings(
       withScheduleValidation(
         {
-          reply: `????????????${rule.schedulePlan.summary}` ,
+          reply: `已生成系统均衡规则排产草案。${rule.schedulePlan.summary}` ,
           unreasonableAlerts: rule.schedulePlan.warnings,
           proposedMutations: rule.proposedMutations,
           exportDataSummary: [],
