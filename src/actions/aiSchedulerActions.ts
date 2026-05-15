@@ -183,7 +183,7 @@ function sanitizeUiContext(input?: AiPlannerUiContext | null): AiPlannerUiContex
 
 function buildFallbackPlannerReport(
   summary?: AiCopilotContextSummary,
-  reason = 'AI 模型未返回结构化计划员报告',
+  reason = '当前按已保存订单数据生成计划体检',
   uiContext?: AiPlannerUiContext
 ): AiPlannerReport {
   const selectedTaskId = uiContext?.selectedTaskId ?? '';
@@ -201,8 +201,8 @@ function buildFallbackPlannerReport(
               : '当前为通用规则体检。';
   return {
     conclusion: summary
-      ? `系统规则体检：当前读取订单 ${summary.totalOrders} 条，可排产 ${summary.schedulableOrders} 条，图纸未发 ${summary.blockedByDrawing} 条，物料未齐 ${summary.blockedByMaterial} 条，交期风险 ${summary.riskOrders} 条。${taskHint}${reason}`
-      : `系统规则体检：${reason}`,
+      ? `计划体检：当前读取订单 ${summary.totalOrders} 条，可排产 ${summary.schedulableOrders} 条，图纸未发 ${summary.blockedByDrawing} 条，物料未齐 ${summary.blockedByMaterial} 条，交期风险 ${summary.riskOrders} 条。${taskHint}${reason}`
+      : `计划体检：${reason}`,
     priorityActions: [
       ...(summary?.riskOrders
         ? [
@@ -337,7 +337,7 @@ function buildWeekDates(): Record<ChineseScheduleDay, string> {
 function buildRuleSchedulePlan(
   orders: CompactSchedulerOrder[],
   currentBaseLimit: number,
-  reasonPrefix = '系统规则草案',
+  planNotice?: string,
   intent: ScheduleIntent = extractScheduleIntent('')
 ): { schedulePlan: AiSchedulePlan; proposedMutations: AiCopilotMutation[]; plannerReport: AiPlannerReport } {
   const balanced = buildBalancedSchedulePlan({
@@ -352,7 +352,7 @@ function buildRuleSchedulePlan(
     items: balanced.schedulePlan.items.map((item) => ({
       ...item,
       targetDate: weekDates[item.targetDay as ChineseScheduleDay],
-      reason: `${reasonPrefix}：${item.reason}`,
+      reason: item.reason,
     })),
   };
   const proposedMutations: AiCopilotMutation[] = schedulePlan.items.map((item) => ({
@@ -363,7 +363,7 @@ function buildRuleSchedulePlan(
   }));
 
   const plannerReport: AiPlannerReport = {
-    conclusion: `当前为系统规则生成的排产草案，不是模型智能分析。${schedulePlan.summary}`,
+    conclusion: `${planNotice ? `${planNotice} ` : ''}${schedulePlan.summary}`,
     priorityActions: [
       {
         level: schedulePlan.items.length ? 'MUST' : 'WATCH',
@@ -398,6 +398,21 @@ function buildRuleSchedulePlan(
   return { schedulePlan, proposedMutations, plannerReport };
 }
 
+function friendlyRuleScheduleNotice(reason?: string): string | null {
+  const text = String(reason ?? '').trim();
+  if (!text) return null;
+  if (/Key|密钥|未配置/.test(text)) {
+    return '当前未启用 AI 模型，系统已根据当前订单、交期、工时和产能生成排产建议。';
+  }
+  if (/格式|JSON|输出|返回|解析/.test(text)) {
+    return 'AI 返回内容未形成标准排产草案，系统已根据当前订单、交期、工时和产能重新生成规则排产建议。';
+  }
+  if (/接口|连接|响应|业务错误|HTTP/.test(text)) {
+    return 'AI 服务暂时不可用，系统已根据当前订单、交期、工时和产能生成排产建议。';
+  }
+  return '系统已根据当前订单、交期、工时和产能生成排产建议。';
+}
+
 function withRuleSchedulePlan(
   result: AiCopilotResponse,
   context: string,
@@ -409,10 +424,11 @@ function withRuleSchedulePlan(
   if (!shouldBuild) {
     return result;
   }
-  const rule = buildRuleSchedulePlan(parseCompactOrders(context), currentBaseLimit, reasonPrefix, intent);
+  const notice = friendlyRuleScheduleNotice(reasonPrefix);
+  const rule = buildRuleSchedulePlan(parseCompactOrders(context), currentBaseLimit, notice ?? undefined, intent);
   return {
     ...result,
-    reply: `${result.reply}\n\n${rule.schedulePlan.summary}`,
+    reply: `${result.reply}\n\n${notice ? `${notice}\n\n` : ''}${rule.schedulePlan.summary}`,
     proposedMutations: [
       ...result.proposedMutations.filter((mutation) => mutation.type !== 'ASSIGN_ORDER_DAY' && mutation.type !== 'UPDATE_ORDER_DATE'),
       ...rule.proposedMutations,
@@ -912,20 +928,20 @@ export async function interactWithAiCopilotAction(
   const shouldBuildSchedulePlan = scheduleIntent.wantsScheduling;
   const apiKey = (process.env.DEEPSEEK_API_KEY ?? '').trim();
   if (!apiKey) {
-    const reply = 'AI ?????????????????????????????????????????????????????';
+    const reply = '当前未启用 AI 模型，系统将依据已保存订单、交期、工时和产能生成计划建议。';
     const data = withRuleSchedulePlan(
-      fallbackAiCopilotResponse(reply, ['?? DEEPSEEK_API_KEY????????????'], contextResult.summary, sanitizedUiContext),
+      fallbackAiCopilotResponse(reply, ['当前未启用 AI 模型，已改用系统排产规则生成建议'], contextResult.summary, sanitizedUiContext),
       contextResult.context,
       currentBaseLimit,
       shouldBuildSchedulePlan,
-      'AI Key 缺失，使用系统均衡规则',
+      'AI 模型未启用',
       scheduleIntent
     );
     return {
       ok: true,
       data: withContextWarnings(withUiContextScheduleNotes(withScheduleValidation(data, contextResult.context, scheduleIntent), sanitizedUiContext), contextResult.warnings),
       contextSummary: contextResult.summary,
-      audit: { enabled: false, persistenceWarning: 'AI Key ?????????????????' },
+      audit: { enabled: false, persistenceWarning: '当前未启用 AI 模型，本次不会创建 AI 审计记录' },
     };
   }
 
@@ -1058,14 +1074,14 @@ export async function interactWithAiCopilotAction(
       const data = withRuleSchedulePlan(
         fallbackAiCopilotResponse(
           `AI 调度大脑响应异常 (HTTP ${res.status})。请检查 API 密钥、模型权限或账户余额。`,
-          ['API 接口连接受阻，当前展示系统均衡规则排产建议'],
+          ['AI 服务暂时不可用，已根据当前订单、交期、工时和产能生成排产建议'],
           contextResult.summary,
           sanitizedUiContext
         ),
         contextResult.context,
         currentBaseLimit,
         shouldBuildSchedulePlan,
-        'AI 接口异常，使用系统均衡规则',
+        'AI 服务暂时不可用',
         scheduleIntent
       );
       return {
@@ -1083,11 +1099,11 @@ export async function interactWithAiCopilotAction(
       const message = safeErrorMessage(jsonError);
       console.error('DeepSeek API 响应不是合法 JSON:', jsonError);
       const data = withRuleSchedulePlan(
-        fallbackAiCopilotResponse('AI 接口返回格式异常，无法读取响应 JSON。', ['API 响应体不是合法 JSON，当前展示系统均衡规则排产建议'], contextResult.summary, sanitizedUiContext),
+        fallbackAiCopilotResponse('AI 返回内容未形成标准排产草案，系统已根据当前订单、交期、工时和产能重新生成规则排产建议。', ['AI 返回内容未形成标准排产草案，已重新生成排产建议'], contextResult.summary, sanitizedUiContext),
         contextResult.context,
         currentBaseLimit,
         shouldBuildSchedulePlan,
-        'AI 接口格式异常，使用系统均衡规则',
+        'AI 返回内容未形成标准排产草案',
         scheduleIntent
       );
       return {
@@ -1103,14 +1119,14 @@ export async function interactWithAiCopilotAction(
       const data = withRuleSchedulePlan(
         fallbackAiCopilotResponse(
           `AI 调度大脑返回错误：${body.error.message.slice(0, 180)}。请检查 API 密钥、模型权限或账户余额。`,
-          ['API 返回业务错误，当前展示系统均衡规则排产建议'],
+          ['AI 服务暂时不可用，已根据当前订单、交期、工时和产能生成排产建议'],
           contextResult.summary,
           sanitizedUiContext
         ),
         contextResult.context,
         currentBaseLimit,
         shouldBuildSchedulePlan,
-        'AI 接口业务错误，使用系统均衡规则',
+        'AI 服务暂时不可用',
         scheduleIntent
       );
       return {
@@ -1126,12 +1142,12 @@ export async function interactWithAiCopilotAction(
       console.error('DeepSeek API 返回空内容:', body);
       const data = withRuleSchedulePlan(
         fallbackAiCopilotResponse('AI 调度大脑返回为空，未能自动渲染大盘。请稍后再试或换个说法。', [
-          'AI 输出为空，当前展示系统均衡规则排产建议',
+          'AI 返回内容为空，已根据当前订单、交期、工时和产能生成排产建议',
         ], contextResult.summary, sanitizedUiContext),
         contextResult.context,
         currentBaseLimit,
         shouldBuildSchedulePlan,
-        'AI 输出为空，使用系统均衡规则',
+        'AI 返回内容为空',
         scheduleIntent
       );
       return {
@@ -1148,7 +1164,7 @@ export async function interactWithAiCopilotAction(
         contextResult.context,
         currentBaseLimit,
         shouldBuildSchedulePlan,
-        '模型建议已由系统均衡规则校准',
+        undefined,
         scheduleIntent
       );
       const data = withContextWarnings(
@@ -1190,15 +1206,15 @@ export async function interactWithAiCopilotAction(
       console.error('AI 返回的数据无法解析为严格 JSON:', parseError);
       const data = withRuleSchedulePlan(
         fallbackAiCopilotResponse(
-          'AI 专家推演成功，但返回的数据结构格式异常，未能自动渲染大盘。请稍后再试或换个说法。',
-          ['AI 输出格式非标准 JSON，当前展示系统均衡规则排产建议'],
+          'AI 返回内容未形成标准排产草案，系统已根据当前订单、交期、工时和产能重新生成规则排产建议。',
+          ['AI 返回内容未形成标准排产草案，已重新生成排产建议'],
           contextResult.summary,
           sanitizedUiContext
         ),
         contextResult.context,
         currentBaseLimit,
         shouldBuildSchedulePlan,
-        'AI 输出格式异常，使用系统均衡规则',
+        'AI 返回内容未形成标准排产草案',
         scheduleIntent
       );
       return {
@@ -1213,12 +1229,12 @@ export async function interactWithAiCopilotAction(
     console.error('[interactWithAiCopilotAction] DeepSeek request failed:', error);
     const data = withRuleSchedulePlan(
       fallbackAiCopilotResponse('AI 调度大脑连接异常。请检查网络、API 密钥或账户状态。', [
-        'AI 接口调用异常，当前展示系统均衡规则排产建议',
+        'AI 服务暂时不可用，已根据当前订单、交期、工时和产能生成排产建议',
       ], contextResult.summary, sanitizedUiContext),
       contextResult.context,
       currentBaseLimit,
       shouldBuildSchedulePlan,
-      'AI 连接异常，使用系统均衡规则',
+      'AI 服务暂时不可用',
       scheduleIntent
     );
     return {
@@ -1238,11 +1254,11 @@ export async function generateRuleSchedulePlanAction(
   try {
     const contextResult = await buildSchedulerContext(currentBaseLimit);
     const intent = extractScheduleIntent('把所有能排的订单统一按交期重新排，本周负荷尽量均衡，每天上下浮动500分钟');
-    const rule = buildRuleSchedulePlan(parseCompactOrders(contextResult.context), currentBaseLimit, '系统均衡规则草案', intent);
+    const rule = buildRuleSchedulePlan(parseCompactOrders(contextResult.context), currentBaseLimit, '已根据当前订单、交期、工时和产能生成排产建议。', intent);
     const data: AiCopilotResponse = withContextWarnings(
       withScheduleValidation(
         {
-          reply: `已生成系统均衡规则排产草案。${rule.schedulePlan.summary}` ,
+          reply: `已生成排产草案。${rule.schedulePlan.summary}` ,
           unreasonableAlerts: rule.schedulePlan.warnings,
           proposedMutations: rule.proposedMutations,
           exportDataSummary: [],
@@ -1258,7 +1274,7 @@ export async function generateRuleSchedulePlanAction(
       ok: true,
       data,
       contextSummary: contextResult.summary,
-      audit: { enabled: false, persistenceWarning: '规则草案未调用模型，也不会创建 AI 审计记录' },
+      audit: { enabled: false, persistenceWarning: '本次仅生成排产草案，不会创建 AI 审计记录' },
     };
   } catch (error) {
     const message = safeErrorMessage(error);

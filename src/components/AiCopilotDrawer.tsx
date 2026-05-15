@@ -210,6 +210,9 @@ const cleanSourceRiskLabel: Record<string, string> = {
   LOW: '当前更像历史遗留',
 };
 
+const technicalPlanTextPattern =
+  /(AI\s*输出格式异常|输出格式异常|JSON|非标准|fallback|系统规则补充|系统均衡规则|proposedMutations|validation(?:\.ok)?|schedulePlan|canEnterSchedule|debug|[A-Z]{2,}_[A-Z_]{2,})/i;
+
 type TodoFilter = 'ALL' | AiPlannerTodoStatus;
 type PlannerTab = 'morning' | 'tasks' | 'todos' | 'report' | 'execution' | 'diagnostics';
 
@@ -320,6 +323,38 @@ function compactOrderIds(ids?: string[]): string {
   if (list.length === 0) return '未指定订单';
   const shown = list.slice(0, 3).map(shortId).join('、');
   return list.length > 3 ? `${shown} 等 ${list.length} 单` : shown;
+}
+
+type SchedulePlanItemForDisplay = NonNullable<AiCopilotResponse['schedulePlan']>['items'][number];
+
+function toBusinessPlanNotice(text: string): string | null {
+  const value = String(text ?? '').trim();
+  if (!value) return null;
+  if (!technicalPlanTextPattern.test(value)) return value;
+  if (/格式|JSON|输出/.test(value)) {
+    return 'AI 返回内容未形成标准排产草案，系统已根据当前订单、交期、工时和产能重新生成规则排产建议。';
+  }
+  return '已根据当前订单、交期、工时和产能生成排产建议。';
+}
+
+function buildBusinessScheduleReason(item: SchedulePlanItemForDisplay, order?: Order): string {
+  const planItemWithDue = item as SchedulePlanItemForDisplay & { deliveryDate?: string | null };
+  const due = String(planItemWithDue.deliveryDate || order?.deliveryDate || '未填交期');
+  const minutes = Math.max(0, Math.round(Number(item.estimatedMinutes ?? order?.totalHours ?? 0) || 0));
+  const source = order && isScheduleAssigned(order) ? '该订单来自已排池，本次按交期重新平衡。' : '该订单来自就绪待排池。';
+  const workload =
+    minutes >= 1200
+      ? '该订单工时较高，按同交期大工时优先原则靠前安排。'
+      : '该订单用于补齐当日负荷，帮助保持本周排产均衡。';
+  return `交期 ${due} 优先，排入${item.targetDay}；${workload}${source}图纸已发、物料齐套，满足排产条件。`;
+}
+
+function cleanScheduleReason(item: SchedulePlanItemForDisplay, order?: Order): string {
+  const reason = String(item.reason ?? '').trim();
+  if (!reason || technicalPlanTextPattern.test(reason)) {
+    return buildBusinessScheduleReason(item, order);
+  }
+  return reason;
 }
 
 function cleanLabel(map: Record<string, string>, value?: string | null): string {
@@ -1007,6 +1042,9 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
 
   const renderSchedulePlanPreview = () => {
     if (!diagnosis?.schedulePlan) return null;
+    const scheduleWarnings = Array.from(
+      new Set((diagnosis.schedulePlan.warnings ?? []).map((warning) => toBusinessPlanNotice(warning)).filter(Boolean))
+    ) as string[];
     return (
       <div className="rounded-2xl border border-cyan-300/20 bg-cyan-400/10 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1056,7 +1094,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                       <div key={`${day}-${item.orderId}`} className="rounded-xl border border-white/10 bg-white/[0.035] p-2 text-xs leading-5 text-slate-300">
                         <div className="font-bold text-white">{order ? `${order.client || '客户'} · ${order.model || '型号'}` : shortId(item.orderId)}</div>
                         <div>订单：<span title={item.orderId}>{shortId(item.orderId)}</span></div>
-                        <div>原因：{item.reason || '按交期和工时建议排产'}</div>
+                        <div>原因：{cleanScheduleReason(item, order)}</div>
                       </div>
                     );
                   })}
@@ -1067,9 +1105,9 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
             );
           })}
         </div>
-        {diagnosis.schedulePlan.warnings.length ? (
+        {scheduleWarnings.length ? (
           <div className="mt-3 rounded-xl border border-amber-300/25 bg-amber-400/10 p-3 text-xs leading-5 text-amber-100">
-            {diagnosis.schedulePlan.warnings.slice(0, 3).map((warning, index) => <div key={`${warning}-${index}`}>{warning}</div>)}
+            {scheduleWarnings.slice(0, 3).map((warning, index) => <div key={`${warning}-${index}`}>{warning}</div>)}
           </div>
         ) : null}
         {schedulePlanValidation ? (
@@ -1270,7 +1308,7 @@ export default function AiCopilotDrawer({ currentBaseLimit, orders, onApplied, u
                       {renderSchedulePlanPreview()}
                       {!hasScheduleDraft ? (
                         <div className="rounded-2xl border border-white/10 bg-white/[0.035] p-5 text-sm leading-6 text-slate-300">
-                          当前还没有可执行排产草案。你可以直接输入排产需求，或点击下方按钮生成系统规则排产建议。
+                          当前还没有可执行排产草案。你可以直接输入排产需求，或点击下方按钮生成排产草案。
                           <div className="mt-4">
                             <button
                               type="button"
