@@ -49,6 +49,7 @@ interface HeaderProps {
   theme: AppTheme;
   setTheme: React.Dispatch<React.SetStateAction<AppTheme>>;
   orders: Order[];
+  visibleOrderCount?: number;
   isProcessing: boolean;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   handleFileUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -95,6 +96,7 @@ export default function Header({
   theme,
   setTheme,
   orders,
+  visibleOrderCount,
   isProcessing,
   fileInputRef,
   handleFileUpload,
@@ -129,6 +131,10 @@ export default function Header({
   const { user, logout } = useAuth();
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement>(null);
+  const activeOrderTotal = orders.length;
+  const currentVisibleOrderCount =
+    typeof visibleOrderCount === 'number' ? Math.max(0, visibleOrderCount) : activeOrderTotal;
+  const hasOrderFilterGap = currentVisibleOrderCount !== activeOrderTotal;
 
   const handleEditCapacity = () => {
     const input = window.prompt('请输入新的每日排产工时上限（分钟）：', String(dailyCapacity));
@@ -373,7 +379,15 @@ export default function Header({
                 headerMuted(theme)
               )}
             >
-              计<strong className="text-cyan-500 sm:text-sm">{orders.length}</strong>单
+              计
+              <strong className="text-cyan-500 sm:text-sm">{currentVisibleOrderCount}</strong>
+              {hasOrderFilterGap && (
+                <>
+                  <span className="mx-0.5 text-slate-500">/</span>
+                  <strong className="text-slate-400 sm:text-sm">{activeOrderTotal}</strong>
+                </>
+              )}
+              单
             </span>
             <span
               className={cn(

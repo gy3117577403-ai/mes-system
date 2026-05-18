@@ -185,6 +185,15 @@ export type FetchInitialDataResult = {
   layoutMode: LayoutMode;
 };
 
+export type ImportOrdersOverwriteWeekResult = {
+  ok: boolean;
+  error?: string;
+  archivedCount?: number;
+  upsertedCount?: number;
+  receivedCount?: number;
+  skippedCompletedCount?: number;
+};
+
 function isRecordNotFoundP2025(e: unknown): boolean {
   return (
     typeof e === 'object' &&
@@ -401,7 +410,7 @@ export async function createOrderAction(
 export async function importOrdersOverwriteWeekAction(
   orders: unknown[],
   targetWeekStart: number
-): Promise<{ ok: boolean; error?: string; archivedCount?: number; upsertedCount?: number }> {
+): Promise<ImportOrdersOverwriteWeekResult> {
   const parsed = importOrdersOverwriteWeekZ.safeParse({ orders, targetWeekStart });
   if (!parsed.success) {
     return { ok: false, error: parsed.error.issues.map((i) => i.message).join('; ') };
@@ -411,6 +420,7 @@ export async function importOrdersOverwriteWeekAction(
 
   try {
     let softDeletedObsoleteCount = 0;
+    let skippedCompletedCount = 0;
     const upsertedCount = await prisma.$transaction(async (tx) => {
       const mondayYmd = formatMsToShanghaiLocale(weekStartMs).slice(0, 10);
       let plannedMsStr: string;
@@ -464,8 +474,7 @@ export async function importOrdersOverwriteWeekAction(
       }
 
       /** 步驟 C：跳過白名單鍵後再 upsert，完工行永不插入 */
-      const pairMap = new Map<string, { client: string; model: string }>();
-      const lastRawByPair = new Map<string, (typeof list)[number]>();
+      let n = 0;
       for (const raw of list) {
         const normalizedRaw = { ...(raw as Record<string, unknown>), ...normalizeOrderReadyFlags(raw as Record<string, unknown>) };
         const o = normalizeOrder({
@@ -473,19 +482,10 @@ export async function importOrdersOverwriteWeekAction(
           plannedDate: plannedMsStr,
         });
         const ck = importPairKey(o.client, o.model);
-        if (completedPairWhitelist.has(ck)) continue;
-        pairMap.set(ck, { client: o.client.trim(), model: o.model.trim() });
-        lastRawByPair.set(ck, raw);
-      }
-
-      const dedupedRaws = [...lastRawByPair.values()];
-      let n = 0;
-      for (const raw of dedupedRaws) {
-        const normalizedRaw = { ...(raw as Record<string, unknown>), ...normalizeOrderReadyFlags(raw as Record<string, unknown>) };
-        const o = normalizeOrder({
-          ...(normalizedRaw as Partial<Order> & { id: string }),
-          plannedDate: plannedMsStr,
-        });
+        if (completedPairWhitelist.has(ck)) {
+          skippedCompletedCount += 1;
+          continue;
+        }
         if (!canEnterSchedule(o)) {
           o.assignedDay = 'Unscheduled';
           o.plannedDate = undefined;
@@ -509,7 +509,13 @@ export async function importOrdersOverwriteWeekAction(
       return n;
     });
 
-    return { ok: true, archivedCount: softDeletedObsoleteCount, upsertedCount };
+    return {
+      ok: true,
+      archivedCount: softDeletedObsoleteCount,
+      upsertedCount,
+      receivedCount: list.length,
+      skippedCompletedCount,
+    };
   } catch (e) {
     console.error('[importOrdersOverwriteWeekAction]', e);
     return { ok: false, error: e instanceof Error ? e.message : String(e) };

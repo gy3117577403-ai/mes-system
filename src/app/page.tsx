@@ -86,6 +86,62 @@ function compareKanbanLeftPoolOrders(a: Order, b: Order): number {
   return deliveryDateEpochMsForKanbanSort(a.deliveryDate) - deliveryDateEpochMsForKanbanSort(b.deliveryDate);
 }
 
+function applyOrderDisplayFilters(orderList: Order[], searchQuery: string, statusFilter: string): Order[] {
+  const query = searchQuery.trim().toLowerCase();
+  return orderList.filter((t) => {
+    if (query) {
+      if (!t.client.toLowerCase().includes(query) && !t.model.toLowerCase().includes(query)) {
+        return false;
+      }
+    }
+    if (statusFilter !== 'all') {
+      if (statusFilter === 'completed' && !isOrderCompletedStatus(t.taskStatus)) return false;
+      if (statusFilter === 'normal' && t.taskStatus !== 'normal') return false;
+      if (statusFilter === 'anomaly' && t.taskStatus !== 'anomaly') return false;
+      if (statusFilter === 'pendingQC' && t.taskStatus !== 'PendingQC') return false;
+      if (statusFilter === 'rework' && t.taskStatus !== 'Rework') return false;
+    }
+    return true;
+  });
+}
+
+function buildOrderDisplayDiagnostics(orderList: Order[], visibleOrders: Order[]) {
+  const dayCounts = DAYS.reduce<Record<string, number>>((acc, day) => {
+    acc[day.key] = visibleOrders.filter((order) => order.assignedDay === day.key).length;
+    return acc;
+  }, {});
+
+  return {
+    databaseActiveTotal: orderList.length,
+    visibleTotal: visibleOrders.length,
+    hiddenByCurrentFilters: Math.max(0, orderList.length - visibleOrders.length),
+    pools: {
+      tech: visibleOrders.filter(
+        (order) =>
+          !isOrderCompletedStatus(order.taskStatus) &&
+          order.taskStatus !== 'PendingQC' &&
+          order.assignedDay === 'Unscheduled' &&
+          getRequiredPool(order) === 'TECH_POOL'
+      ).length,
+      material: visibleOrders.filter(
+        (order) =>
+          !isOrderCompletedStatus(order.taskStatus) &&
+          order.taskStatus !== 'PendingQC' &&
+          order.assignedDay === 'Unscheduled' &&
+          getRequiredPool(order) === 'MATERIAL_POOL'
+      ).length,
+      ready: visibleOrders.filter(
+        (order) =>
+          !isOrderCompletedStatus(order.taskStatus) &&
+          order.taskStatus !== 'PendingQC' &&
+          order.assignedDay === 'Unscheduled' &&
+          getRequiredPool(order) === 'READY_OR_SCHEDULE_POOL'
+      ).length,
+      days: dayCounts,
+    },
+  };
+}
+
 const ALARM_MSG: Record<AlarmKind, string> = {
   Material: '物料准备',
   Maintenance: '设备维修',
@@ -385,24 +441,7 @@ export default function KanbanApp() {
   };
 
   const filteredOrders = useMemo(() => {
-    return orders.filter(t => {
-      // 搜索过滤
-      if (searchQuery) {
-        const query = searchQuery.toLowerCase();
-        if (!t.client.toLowerCase().includes(query) && !t.model.toLowerCase().includes(query)) {
-          return false;
-        }
-      }
-      // 状态过滤
-      if (statusFilter !== 'all') {
-        if (statusFilter === 'completed' && !isOrderCompletedStatus(t.taskStatus)) return false;
-        if (statusFilter === 'normal' && t.taskStatus !== 'normal') return false;
-        if (statusFilter === 'anomaly' && t.taskStatus !== 'anomaly') return false;
-        if (statusFilter === 'pendingQC' && t.taskStatus !== 'PendingQC') return false;
-        if (statusFilter === 'rework' && t.taskStatus !== 'Rework') return false;
-      }
-      return true;
-    });
+    return applyOrderDisplayFilters(orders, searchQuery, statusFilter);
   }, [orders, searchQuery, statusFilter]);
 
   const aiPlannerUiContext = useMemo<AiPlannerUiContext>(() => {
@@ -1259,10 +1298,33 @@ export default function KanbanApp() {
         if (!res.ok) {
           toast.error(res.error ?? '导入保存失败');
         } else {
+          const latest = await fetchInitialData();
+          applyFetchResult(latest);
+          const refreshedOrders = latest.orders ?? [];
+          const visibleOrders = applyOrderDisplayFilters(refreshedOrders, searchQuery, statusFilter);
+          const diagnostics = buildOrderDisplayDiagnostics(refreshedOrders, visibleOrders);
+          const hidden = diagnostics.hiddenByCurrentFilters;
+          console.info('[import-count-diagnostic]', {
+            excelParsedCount: newOrders.length,
+            actionReceivedCount: res.receivedCount ?? newOrders.length,
+            databaseWrittenCount: res.upsertedCount ?? 0,
+            archivedCount: res.archivedCount ?? 0,
+            skippedCompletedCount: res.skippedCompletedCount ?? 0,
+            currentPageVisibleCount: diagnostics.visibleTotal,
+            databaseActiveTotal: diagnostics.databaseActiveTotal,
+            hiddenByCurrentFilters: hidden,
+            pools: diagnostics.pools,
+          });
           toast.success(
-            `成功导入 ${newOrders.length} 条订单（按周覆盖）。同周废弃未完成计划已软删除 ${res.archivedCount ?? 0} 条。\n可点击【⚡ 全局 AI 智能排产】进行分配。`
+            [
+              `Excel 解析 ${newOrders.length} 条，数据库成功写入 ${res.upsertedCount ?? 0} 条。`,
+              `当前页面显示 ${diagnostics.visibleTotal} / 总计 ${diagnostics.databaseActiveTotal} 条。`,
+              hidden > 0 ? `另有 ${hidden} 条因搜索或状态筛选未显示。` : '当前筛选未隐藏订单。',
+              (res.skippedCompletedCount ?? 0) > 0 ? `已保护 ${res.skippedCompletedCount} 条同周已完成订单，未覆盖。` : null,
+              `同周旧未完成计划已归档 ${res.archivedCount ?? 0} 条。`,
+            ].filter(Boolean).join('\n'),
+            { duration: 9000 }
           );
-          await handleSyncRefresh();
         }
       } else {
         toast.success('未解析到有效订单行');
@@ -1409,6 +1471,7 @@ export default function KanbanApp() {
         theme={theme}
         setTheme={setThemePersist}
         orders={orders}
+        visibleOrderCount={filteredOrders.length}
         isProcessing={isProcessing}
         fileInputRef={fileInputRef}
         handleFileUpload={handleFileUpload}
