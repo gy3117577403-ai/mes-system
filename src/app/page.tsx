@@ -50,6 +50,7 @@ import {
   addWorkerAction,
   createActivityLogAction,
   patchMesSettingsAction,
+  softDeleteOrderAction,
   softDeleteOrdersAction,
   restoreInvalidScheduledOrdersAction,
   repairMisclassifiedReadyOrdersAction,
@@ -66,6 +67,7 @@ import {
 } from '@/lib/scheduleEligibility';
 import {
   getShanghaiBatchImportMondayYmd,
+  plannedDateAnchorEpochMs,
   parseShanghaiWallClockToEpochMs,
 } from '@/lib/datetimeShanghai';
 import { normalizeOrderReadyFlags } from '@/lib/readyFlagNormalization';
@@ -140,6 +142,44 @@ function buildOrderDisplayDiagnostics(orderList: Order[], visibleOrders: Order[]
       days: dayCounts,
     },
   };
+}
+
+const WEEK_MS = 7 * 86_400_000;
+
+function getPlanWeekMeta(offset: number) {
+  const mondayYmd = getShanghaiBatchImportMondayYmd(offset);
+  const startMs = parseShanghaiWallClockToEpochMs(mondayYmd, '00:00:00');
+  const label =
+    offset === -1
+      ? '上周'
+      : offset === 0
+        ? '本周'
+        : offset === 1
+          ? '下周'
+          : offset === 2
+            ? '下下周'
+            : `第 ${offset} 周`;
+  return {
+    offset,
+    mondayYmd,
+    startMs,
+    endMs: startMs + WEEK_MS - 1,
+    label: `${label}（${mondayYmd} 起）`,
+  };
+}
+
+function getOrderPlanWeekAnchorMs(order: Order): number | null {
+  const planned = plannedDateAnchorEpochMs(order.plannedDate ?? null);
+  if (planned != null) return planned;
+  const created = Number(order.createdAt);
+  return Number.isFinite(created) ? created : null;
+}
+
+function filterOrdersByPlanWeek(orderList: Order[], week: ReturnType<typeof getPlanWeekMeta>): Order[] {
+  return orderList.filter((order) => {
+    const anchor = getOrderPlanWeekAnchorMs(order);
+    return anchor != null && anchor >= week.startMs && anchor <= week.endMs;
+  });
 }
 
 const ALARM_MSG: Record<AlarmKind, string> = {
@@ -440,14 +480,20 @@ export default function KanbanApp() {
     return 'yellow';
   };
 
+  const selectedPlanWeek = useMemo(() => getPlanWeekMeta(weekOffset), [weekOffset]);
+
+  const weekScopedOrders = useMemo(() => {
+    return filterOrdersByPlanWeek(orders, selectedPlanWeek);
+  }, [orders, selectedPlanWeek]);
+
   const filteredOrders = useMemo(() => {
-    return applyOrderDisplayFilters(orders, searchQuery, statusFilter);
-  }, [orders, searchQuery, statusFilter]);
+    return applyOrderDisplayFilters(weekScopedOrders, searchQuery, statusFilter);
+  }, [weekScopedOrders, searchQuery, statusFilter]);
 
   const aiPlannerUiContext = useMemo<AiPlannerUiContext>(() => {
-    const visibleOrders = viewMode === 'workshop' || (user?.role === 'Boss' && mainAppView === 'dashboard') ? orders : filteredOrders;
-    const blockedByDrawing = orders.filter((order) => getScheduleBlockReasons(order).includes('DRAWING_NOT_READY')).length;
-    const blockedByMaterial = orders.filter((order) => {
+    const visibleOrders = viewMode === 'workshop' || (user?.role === 'Boss' && mainAppView === 'dashboard') ? weekScopedOrders : filteredOrders;
+    const blockedByDrawing = visibleOrders.filter((order) => getScheduleBlockReasons(order).includes('DRAWING_NOT_READY')).length;
+    const blockedByMaterial = visibleOrders.filter((order) => {
       const reasons = getScheduleBlockReasons(order);
       return !reasons.includes('DRAWING_NOT_READY') && reasons.includes('MATERIAL_NOT_READY');
     }).length;
@@ -456,18 +502,18 @@ export default function KanbanApp() {
     return {
       currentView: viewMode === 'workshop' ? 'workshop' : mainAppView,
       layoutMode,
-      planWeekSelected: importPlanWeek !== null,
-      planWeekLabel: importPlanWeek === null ? null : `计划归属周 ${importPlanWeek}`,
+      planWeekSelected: true,
+      planWeekLabel: selectedPlanWeek.label,
       visibleOrderIds: visibleOrders.slice(0, 200).map((order) => order.id),
-      loadedOrderCount: orders.length,
+      loadedOrderCount: visibleOrders.length,
       localSummary: {
-        totalOrders: orders.length,
-        schedulableOrders: orders.filter(canEnterSchedule).length,
+        totalOrders: visibleOrders.length,
+        schedulableOrders: visibleOrders.filter(canEnterSchedule).length,
         blockedByDrawing,
         blockedByMaterial,
-        scheduledOrders: orders.filter(isScheduleAssigned).length,
-        urgentOrders: orders.filter((order) => order.isUrgent).length,
-        riskOrders: orders.filter((order) => {
+        scheduledOrders: visibleOrders.filter(isScheduleAssigned).length,
+        urgentOrders: visibleOrders.filter((order) => order.isUrgent).length,
+        riskOrders: visibleOrders.filter((order) => {
           if (!order.deliveryDate || isOrderCompletedStatus(order.taskStatus)) return false;
           return order.deliveryDate < today && !isScheduleAssigned(order);
         }).length,
@@ -476,7 +522,7 @@ export default function KanbanApp() {
         baselineModeRecommended: true,
       },
     };
-  }, [filteredOrders, importPlanWeek, layoutMode, mainAppView, orders, user?.role, viewMode]);
+  }, [filteredOrders, layoutMode, mainAppView, selectedPlanWeek.label, user?.role, viewMode, weekScopedOrders]);
 
   const redAlertTasks = useMemo(() => filteredOrders.filter(t => getCardStatus(t) === 'red' || t.taskStatus === 'anomaly'), [filteredOrders]);
   const invalidScheduledOrders = useMemo(
@@ -839,7 +885,7 @@ export default function KanbanApp() {
         taskStatus: 'normal',
         cutStatus: 'pending',
         boxNumber: null,
-        createdAt: Date.now(),
+        createdAt: Number(plannedMsStr),
         totalQty: newOrderForm.qty,
         reportedQty: 0,
         drawingUrl: '',
@@ -868,6 +914,32 @@ export default function KanbanApp() {
       showAlert("错误", "新增失败：" + e.message);
     }
   };
+
+  const handleDeleteOrder = useCallback(
+    (order: Order) => {
+      showConfirm(
+        '删除订单确认',
+        `将从当前看板删除订单：${order.client} / ${order.model}\n\n该操作只会软删除订单，不会清空其他周计划。是否继续？`,
+        () => {
+          setDialog((prev) => ({ ...prev, isOpen: false }));
+          setIsProcessing(true);
+          void (async () => {
+            const res = await softDeleteOrderAction(order.id);
+            if (!res.ok) {
+              toast.error(res.error ?? '删除订单失败');
+              setIsProcessing(false);
+              return;
+            }
+            setOrders((prev) => prev.filter((item) => item.id !== order.id));
+            appendActivityLog('订单删除', `已删除订单 ${order.client} / ${order.model}`);
+            toast.success('已删除该订单');
+            setIsProcessing(false);
+          })();
+        }
+      );
+    },
+    [appendActivityLog]
+  );
 
   const triggerClearCompletedData = () => {
     const completedOrders = orders.filter((t) => isOrderCompletedStatus(t.taskStatus));
@@ -1298,10 +1370,16 @@ export default function KanbanApp() {
         if (!res.ok) {
           toast.error(res.error ?? '导入保存失败');
         } else {
+          const targetWeek = getPlanWeekMeta(planWeek);
+          setWeekOffset(planWeek);
           const latest = await fetchInitialData();
           applyFetchResult(latest);
           const refreshedOrders = latest.orders ?? [];
-          const visibleOrders = applyOrderDisplayFilters(refreshedOrders, searchQuery, statusFilter);
+          const visibleOrders = applyOrderDisplayFilters(
+            filterOrdersByPlanWeek(refreshedOrders, targetWeek),
+            searchQuery,
+            statusFilter
+          );
           const diagnostics = buildOrderDisplayDiagnostics(refreshedOrders, visibleOrders);
           const hidden = diagnostics.hiddenByCurrentFilters;
           console.info('[import-count-diagnostic]', {
@@ -1312,14 +1390,15 @@ export default function KanbanApp() {
             skippedCompletedCount: res.skippedCompletedCount ?? 0,
             currentPageVisibleCount: diagnostics.visibleTotal,
             databaseActiveTotal: diagnostics.databaseActiveTotal,
+            selectedPlanWeek: targetWeek.label,
             hiddenByCurrentFilters: hidden,
             pools: diagnostics.pools,
           });
           toast.success(
             [
               `Excel 解析 ${newOrders.length} 条，数据库成功写入 ${res.upsertedCount ?? 0} 条。`,
-              `当前页面显示 ${diagnostics.visibleTotal} / 总计 ${diagnostics.databaseActiveTotal} 条。`,
-              hidden > 0 ? `另有 ${hidden} 条因搜索或状态筛选未显示。` : '当前筛选未隐藏订单。',
+              `已切换到 ${targetWeek.label}，当前页面显示 ${diagnostics.visibleTotal} / 总计 ${diagnostics.databaseActiveTotal} 条。`,
+              hidden > 0 ? `另有 ${hidden} 条因看板周、搜索或状态筛选未显示。` : '当前看板周和筛选条件未隐藏订单。',
               (res.skippedCompletedCount ?? 0) > 0 ? `已保护 ${res.skippedCompletedCount} 条同周已完成订单，未覆盖。` : null,
               `同周旧未完成计划已归档 ${res.archivedCount ?? 0} 条。`,
             ].filter(Boolean).join('\n'),
@@ -1641,6 +1720,7 @@ export default function KanbanApp() {
           getCardStatus={getCardStatus}
           updateOrderData={updateOrderData}
           saveOrderPatch={saveOrderPatch}
+          onDeleteOrder={handleDeleteOrder}
           triggerBatchAISchedule={triggerBatchAISchedule}
           onDragEnd={onDragEnd}
           dailyCapacity={dailyCapacity}

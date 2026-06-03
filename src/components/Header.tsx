@@ -666,7 +666,7 @@ export default function Header({
             </button>
 
             <label className="flex shrink-0 flex-col justify-center gap-0.5">
-              <span className="sr-only">录入与 AI 排产周</span>
+              <span className="sr-only">看板周切换</span>
               <select
                 value={weekOffset}
                 onChange={(e) => setWeekOffset(Number(e.target.value))}
@@ -676,20 +676,20 @@ export default function Header({
                     ? 'border-slate-700 bg-slate-800 text-slate-200'
                     : 'border-gray-300 bg-white text-gray-900'
                 )}
-                title="单条录入 / AI 排产绑定至该周周一（上海时区）"
-                aria-label="录入与 AI 排产周"
+                title="切换当前看板周；单条录入与 AI 默认绑定到该周"
+                aria-label="看板周切换"
               >
                 <option value={0} className={theme === 'dark' ? 'bg-slate-900' : ''}>
-                  本周（录入／AI）
+                  本周看板
                 </option>
                 <option value={1} className={theme === 'dark' ? 'bg-slate-900' : ''}>
-                  下周（录入／AI）
+                  下周看板
                 </option>
                 <option value={2} className={theme === 'dark' ? 'bg-slate-900' : ''}>
-                  下下周（录入／AI）
+                  下下周看板
                 </option>
                 <option value={-1} className={theme === 'dark' ? 'bg-slate-900' : ''}>
-                  上周补录
+                  上周看板
                 </option>
               </select>
             </label>

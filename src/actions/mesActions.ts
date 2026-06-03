@@ -381,8 +381,10 @@ export async function createOrderAction(
       ...(parsed.data as Partial<Order> & { id: string }),
       ...normalizeOrderReadyFlags(parsed.data as Record<string, unknown>),
     };
+    const createdAtCandidate = Number(normalizedData.createdAt);
     const o = normalizeOrder({
       ...normalizedData,
+      createdAt: Number.isFinite(createdAtCandidate) ? createdAtCandidate : Number(plannedMsStr),
       plannedDate: plannedMsStr,
     });
     if (!canEnterSchedule(o)) {
@@ -476,7 +478,12 @@ export async function importOrdersOverwriteWeekAction(
       /** 步驟 C：跳過白名單鍵後再 upsert，完工行永不插入 */
       let n = 0;
       for (const raw of list) {
-        const normalizedRaw = { ...(raw as Record<string, unknown>), ...normalizeOrderReadyFlags(raw as Record<string, unknown>) };
+        const rowWeekAnchorMs = weekStartMs + n;
+        const normalizedRaw = {
+          ...(raw as Record<string, unknown>),
+          createdAt: rowWeekAnchorMs,
+          ...normalizeOrderReadyFlags(raw as Record<string, unknown>),
+        };
         const o = normalizeOrder({
           ...(normalizedRaw as Partial<Order> & { id: string }),
           plannedDate: plannedMsStr,
@@ -1079,6 +1086,32 @@ export async function softDeleteOrdersAction(mode: 'completed' | 'all'): Promise
     return { ok: true };
   } catch (e) {
     console.error('[softDeleteOrdersAction]', e);
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+export async function softDeleteOrderAction(orderId: string): Promise<{ ok: boolean; error?: string }> {
+  const idRes = orderIdZ.safeParse(orderId);
+  if (!idRes.success) {
+    return { ok: false, error: idRes.error.issues.map((i) => i.message).join('; ') };
+  }
+
+  try {
+    const result = await prisma.order.updateMany({
+      where: {
+        id: idRes.data,
+        deletedAt: null,
+        isArchived: false,
+      },
+      data: { deletedAt: nowEpochMsForMesStorage() },
+    });
+    if (result.count === 0) {
+      return { ok: false, error: '订单不存在或已删除' };
+    }
+    revalidatePath('/');
+    return { ok: true };
+  } catch (e) {
+    console.error('[softDeleteOrderAction]', e);
     return { ok: false, error: e instanceof Error ? e.message : String(e) };
   }
 }

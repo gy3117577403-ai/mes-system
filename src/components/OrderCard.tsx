@@ -13,6 +13,7 @@ import {
   CheckCircle2,
   Flag,
   Upload,
+  Trash2,
 } from 'lucide-react';
 import { Order } from '@/types';
 import { UserRole } from '@/types/auth';
@@ -25,9 +26,6 @@ import {
 } from '@/lib/rbac';
 import { isOrderCompletedStatus } from '@/lib/orderStatus';
 import {
-  canEnterSchedule,
-  formatScheduleBlockReason,
-  getScheduleBlockReasons,
   isDrawingReadyForSchedule,
   isMaterialReadyForSchedule,
 } from '@/lib/scheduleEligibility';
@@ -129,6 +127,7 @@ interface EnhancedOrderCardProps {
   status: string;
   updateTask: (orderId: string, field: string, value: any) => void;
   saveOrderPatch: (orderId: string, patch: Record<string, unknown>) => void;
+  onDeleteOrder?: (order: Order) => void;
   rbac?: OrderCardRbacProps;
   layoutMode?: LayoutMode;
   theme?: AppTheme;
@@ -152,6 +151,7 @@ export default function EnhancedOrderCard({
   status,
   updateTask,
   saveOrderPatch,
+  onDeleteOrder,
   rbac,
   layoutMode = 'card',
   theme = 'dark',
@@ -167,6 +167,7 @@ export default function EnhancedOrderCard({
   const eng = isEngineeringRole(role);
   const wh = isWarehouseRole(role);
   const boss = isBoss(role);
+  const canDeleteOrder = (boss || role === 'Planner') && typeof onDeleteOrder === 'function';
 
   const drawingDisabled = isCompleted || plannerRo || empRo || wh;
   const materialsDisabled = isCompleted || plannerRo || empRo || eng;
@@ -224,14 +225,8 @@ export default function EnhancedOrderCard({
 
   const drawingLooksReady = isDrawingReadyForSchedule(task);
   const materialsLooksKit = isMaterialReadyForSchedule(task);
-  const blockReasons = getScheduleBlockReasons(task);
-  const scheduleEligible = canEnterSchedule(task);
   const drawingDisplayValue = drawingLooksReady ? '已发' : '未发图';
   const materialDisplayValue = materialsLooksKit ? '料齐' : '未配料';
-  const showReadyDebug =
-    process.env.NEXT_PUBLIC_SHOW_READY_DEBUG === 'true' &&
-    process.env.NODE_ENV !== 'production' &&
-    boss;
 
   useEffect(() => {
     if (task.isMaterialReady !== false || ['料齐', '已配料'].includes(task.materials)) {
@@ -347,6 +342,22 @@ export default function EnhancedOrderCard({
             <span className="text-[9px] font-black text-red-600 bg-red-100 dark:bg-red-950/80 px-1 rounded shrink-0">
               急
             </span>
+          )}
+          {canDeleteOrder && (
+            <button
+              type="button"
+              onMouseDown={(event) => event.stopPropagation()}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                onDeleteOrder?.(task);
+              }}
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-rose-500/45 bg-rose-950/30 text-rose-300 transition hover:bg-rose-500 hover:text-white"
+              title="删除订单"
+              aria-label={`删除订单 ${task.model}`}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
           )}
         </div>
       </div>
@@ -481,6 +492,22 @@ export default function EnhancedOrderCard({
           urgent ? 'ring-2 ring-red-500 shadow-[0_0_22px_rgba(239,68,68,0.28)]' : ''
         }`}
       >
+      {canDeleteOrder && (
+        <button
+          type="button"
+          onMouseDown={(event) => event.stopPropagation()}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            onDeleteOrder?.(task);
+          }}
+          className="absolute bottom-2 right-2 z-40 flex h-7 w-7 items-center justify-center rounded-lg border border-rose-500/40 bg-slate-950/85 text-rose-300 opacity-0 shadow-lg shadow-rose-950/30 backdrop-blur transition hover:bg-rose-500 hover:text-white focus:opacity-100 group-hover:opacity-100"
+          title="删除订单"
+          aria-label={`删除订单 ${task.model}`}
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      )}
       {isCompleted && (
         <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 -rotate-12 text-gray-400 font-black text-4xl opacity-40 pointer-events-none tracking-widest z-0">
           已完成
@@ -619,16 +646,6 @@ export default function EnhancedOrderCard({
             <span className="truncate" title={task.errorReason}>
               {task.errorReason}
             </span>
-          </div>
-        )}
-
-        {showReadyDebug && (
-          <div
-            className="mb-2 rounded-lg border border-slate-700/70 bg-slate-950/70 px-2 py-1 text-[10px] font-mono text-slate-400"
-            title={`isDrawingReady=${String(task.isDrawingReady)}; isMaterialReady=${String(task.isMaterialReady)}; canEnterSchedule=${String(scheduleEligible)}; blockReasons=${blockReasons.join(',') || 'none'}`}
-          >
-            ready debug: drawing={String(task.isDrawingReady)} material={String(task.isMaterialReady)} eligible=
-            {String(scheduleEligible)} reasons={blockReasons.map(formatScheduleBlockReason).join(',') || 'none'}
           </div>
         )}
 
